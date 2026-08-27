@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.asar
+*.asar.unpacked/
+
+# nunca versionar: config tem caminhos, ids de sessão e dados de servidor
+config.json
+.credentials.json
+*.pem
+*.key
+id_rsa*
+
+.DS_Store
+Thumbs.db
+*.log

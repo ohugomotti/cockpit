@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'none'; base-uri 'none'; object-src 'none';">
+<title>Cockpit</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="avisos"></div>
+<div id="abasLocal"></div>
+
+<div id="titlebar">
+  <div class="tb-drag"></div>
+  <div class="tb-center" id="tbTitle">Cockpit</div>
+  <div class="tb-right">
+    <button class="tb-btn" id="btnAddPane" title="Novo painel ao lado (⌘T)"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
+  </div>
+</div>
+
+<div id="shell">
+  <nav id="activitybar">
+    <button class="act active" data-view="explorer" title="Arquivos (⌘B)">
+      <svg viewBox="0 0 24 24"><path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </button>
+    <button class="act ic-claude" data-view="hclaude" title="Conversas do Claude">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgClaude"></svg>
+    </button>
+    <button class="act ic-codex" data-view="hcodex" title="Conversas do Codex">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgCodex"></svg>
+    </button>
+    <button class="act" data-view="settings" title="Ajustes">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+    </button>
+  </nav>
+
+  <aside id="sidebar">
+    <div class="side-view" data-view="explorer">
+      <div class="side-head"><span id="projName">—</span><button class="mini" id="btnPickFolder">Trocar</button></div>
+      <div id="tree" class="tree"></div>
+    </div>
+    <div class="side-view hidden" data-view="hclaude">
+      <div class="side-head"><span>Conversas do Claude</span><button class="mini" data-reload="claude"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="conta-cartao" id="contaClaude"></div>
+      <div class="uso-side" id="usoClaude"></div>
+      <div class="abas-grupo" id="abasClaude"></div>
+      <input class="side-busca" data-busca="claude" placeholder="Buscar conversa…">
+      <div class="chats-btns">
+        <button class="new-chat" data-new="claude"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+        <button class="new-grupo" data-novo-grupo title="Criar grupo"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></button>
+      </div>
+      <div class="hist" id="histClaude"></div>
+    </div>
+    <div class="side-view hidden" data-view="hcodex">
+      <div class="side-head"><span>Conversas do Codex</span><button class="mini" data-reload="codex"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="conta-cartao" id="contaCodex"></div>
+      <div class="uso-side" id="usoCodex"></div>
+      <div class="abas-grupo" id="abasCodex"></div>
+      <input class="side-busca" data-busca="codex" placeholder="Buscar conversa…">
+      <div class="chats-btns">
+        <button class="new-chat" data-new="codex"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+        <button class="new-grupo" data-novo-grupo title="Criar grupo"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></button>
+      </div>
+      <div class="hist" id="histCodex"></div>
+    </div>
+    <div class="side-view hidden" data-view="settings">
+      <div class="side-head"><span>Ajustes</span></div>
+      <div class="settings">
+        <label>Tema</label>
+        <div class="temas">
+          <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Escuro</button>
+          <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
+          <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
+        </div>
+
+        <label>Sua foto</label>
+        <div class="foto-linha">
+          <div class="foto-prev" id="fotoPrev"></div>
+          <div class="foto-btns">
+            <button class="btn-wide" id="btnFoto">Escolher foto</button>
+            <button class="btn-wide" id="btnFotoTirar">Tirar</button>
+          </div>
+        </div>
+
+        <label>Pasta padrão dos painéis novos</label>
+        <div class="path-box" id="defCwd">—</div>
+        <button class="btn-wide" id="btnDefCwd">Escolher</button>
+        <label>Lista de conversas</label>
+        <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>
+        <p class="hint">Desligado, a lista traz só o que você conversou aqui ou no VSCode. Ligado, entram também as do robô do WhatsApp e dos agendados.</p>
+
+        <div class="sep"></div>
+        <p class="hint"><b>Acesso total ligado.</b> Os painéis enxergam o computador inteiro, não só a pasta escolhida. A pasta serve só como ponto de partida.</p>
+        <p class="hint">Codex usa a sua conta e config do <span class="mono">~/.codex</span>. Claude usa o Claude Code que já está instalado, com suas skills e memória.</p>
+        <div class="sep"></div>
+        <p class="hint mono" id="verLine"></p>
+      </div>
+    </div>
+  </aside>
+  <div id="dragbar"></div>
+
+  <div id="boasvindas">
+    <div class="bv-cx">
+      <h1 class="bv-tit">Qual modelo você vai trabalhar agora?</h1>
+      <div class="bv-bts">
+        <button class="bv-bt" data-motor="claude">
+          <span class="bv-ico" id="bvClaude"></span>
+          <span class="bv-n">Claude Code</span>
+        </button>
+        <button class="bv-bt" data-motor="codex">
+          <span class="bv-ico" id="bvCodex"></span>
+          <span class="bv-n">Codex</span>
+        </button>
+      </div>
+      <button class="bv-bt bv-dois">
+        <span class="bv-ico peq" id="bvDoisA"></span>
+        <span class="bv-mais">+</span>
+        <span class="bv-ico peq" id="bvDoisB"></span>
+        <span class="bv-n">Os dois lado a lado</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="panes"></div>
+</div>
+
+<div class="modal global hidden" id="modalGrupo"><div class="modal-cx"></div></div>
+<div class="pop-global hidden" id="popGrupo"></div>
+
+<template id="tplPane">
+  <section class="pane">
+    <header class="pane-hd">
+      <div class="p-chave" title="Trocar entre Claude e Codex">
+        <button class="ch-lado" data-motor="claude"><span></span>Claude</button>
+        <button class="ch-lado" data-motor="codex"><span></span>Codex</button>
+        <span class="ch-bolha"></span>
+      </div>
+      <button class="p-cwd" title="Trocar pasta deste painel"></button>
+      <button class="p-git hidden" title="Branch do git"></button>
+      <span class="p-spacer"></span>
+      <span class="p-tokens" title="Tamanho da conversa agora, comparado ao que cabe neste modelo"></span>
+      <span class="p-dot dot off"></span>
+      <button class="p-close" title="Fechar painel"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></svg></button>
+    </header>
+    <div class="modal p-modal hidden"><div class="modal-cx"></div></div>
+    <div class="modal p-visor hidden"><div class="visor-cx">
+      <div class="visor-top"><span class="visor-nome"></span>
+        <button class="visor-abrir" title="Abrir no Mac"></button>
+        <button class="visor-x" title="Fechar (Esc)"></button></div>
+      <div class="visor-corpo"></div>
+    </div></div>
+    <div class="pane-nome"><span class="pn-txt"></span><button class="pn-edit" title="Renomear conversa"></button></div>
+    <div class="pane-chat">
+      <div class="pane-empty">
+        <div class="pe-logo"></div>
+        <div class="pe-txt">Escreva embaixo pra começar</div>
+      </div>
+    </div>
+    <div class="pane-perm hidden">
+      <div class="pp-txt"></div>
+      <div class="pp-btns"><button class="pp-yes">Permitir</button><button class="pp-sempre hidden">Sempre permitir</button><button class="pp-no">Negar</button></div>
+    </div>
+    <div class="pane-cmp">
+      <div class="p-fila hidden"></div>
+      <div class="p-anexos hidden"></div>
+      <div class="cmp-top">
+        <textarea class="p-input" rows="1" placeholder="Escreva aqui…"></textarea>
+      </div>
+      <div class="cmp-bar">
+        <button class="cb p-plus" title="Anexar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
+        <button class="cb p-slash" title="Ações e comandos">/</button>
+        <button class="cb p-mic" title="Gravar áudio e virar texto"></button>
+        <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
+        <button class="p-compactar hidden" title="Resumir a conversa para liberar espaço">
+          <svg class="an" viewBox="0 0 36 36">
+            <circle class="an-fundo" cx="18" cy="18" r="15"></circle>
+            <circle class="an-fio" cx="18" cy="18" r="15"></circle>
+          </svg>
+          <span class="cp-txt"></span>
+        </button>
+        <span class="cmp-gap"></span>
+        <button class="p-model" title="Trocar o modelo e o esforço"></button>
+        <button class="modo-btn p-modo" title="O que ele pode fazer sem perguntar">
+          <span class="modo-ic"></span><span class="modo-nome">Sem pedir permissão</span>
+        </button>
+        <button class="p-stop hidden" title="Parar"><svg viewBox="0 0 24 24" class="ic" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
+        <button class="p-send" title="Enviar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7" /> <path d="M12 19V5" /></svg></button>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

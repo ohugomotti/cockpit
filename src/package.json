@@ -1,0 +1,13 @@
+{
+  "name": "cockpit",
+  "version": "1.0.0",
+  "description": "Codex e Claude lado a lado, com acesso a tudo no Mac",
+  "main": "main.js",
+  "author": "Homero Motti",
+  "license": "MIT",
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.15",
+    "@xterm/xterm": "^5.5.0",
+    "marked": "^12.0.2"
+  }
+}
