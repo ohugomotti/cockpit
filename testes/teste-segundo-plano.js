@@ -5,9 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
+const { RAIZ, versaoAnterior } = require('./raiz');
 function pegar(txt, assinatura, nome) {
   const i = txt.indexOf(assinatura);
   if (i < 0) throw new Error('nao achei ' + nome);
@@ -19,7 +17,7 @@ function pegar(txt, assinatura, nome) {
   throw new Error('nao fechei ' + nome);
 }
 
-const appTxt = fs.readFileSync(path.join(RAIZ_PROJETO, 'src', 'renderer', 'app.js'), 'utf8');
+const appTxt = fs.readFileSync(path.join(RAIZ, 'src', 'renderer', 'app.js'), 'utf8');
 
 function montar() {
   const cfg = {

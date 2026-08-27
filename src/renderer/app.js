@@ -158,6 +158,320 @@ function sairDaAbertura() {
   if (bv) { bv.remove(); $('#panes').style.display = ''; }
 }
 
+/* ======================= DITADO AO VIVO =======================
+   Voce fala e o texto vai aparecendo no campo, sem esperar terminar.
+
+   Como funciona: capturamos o som cru (16 kHz, mono) e, a cada ~1s, mandamos a
+   FRASE INTEIRA ate agora pro whisper em modo rapido. O que ele devolve e a
+   legenda provisoria. Quando voce faz uma pausa, a frase e dada por encerrada,
+   o texto dela vira definitivo e a proxima comeca do zero.
+
+   Por que a frase inteira, e nao so o pedaco novo? Porque o whisper nao e um
+   modelo de fluxo continuo: um pedaco de 1s solto, sem o que veio antes, sai
+   errado quase sempre. Reenviar a frase custa mais CPU e paga com precisao.
+
+   Por que cortar na pausa? Senao a frase cresceria sem fim e cada rodada
+   ficaria mais lenta que a anterior, ate a legenda nao acompanhar mais a fala.
+
+   Uma legenda por vez: se a anterior ainda nao voltou, a rodada e pulada. Sem
+   isso a fila cresce e o texto na tela fica cada vez mais atrasado. */
+
+const TAXA_DITADO = 16000;         // o que o modelo espera
+const MS_ENTRE_RODADAS = 900;      // no maximo uma legenda nova por vez
+const MS_PAUSA_FECHA = 850;        // silencio que encerra a frase
+const SEG_MAX_FRASE = 18;          // frase longa demais e fechada na marra
+const MIN_SEG_PRA_MANDAR = 0.6;    // menos que isto nao rende texto nenhum
+/* Piso de silencio: NAO pode ser numero fixo. Medido nesta maquina, um
+   microfone entrega RMS ~0,0035 falando - com um piso fixo de 0,012 nada
+   contaria como fala, nenhuma frase fecharia e o ditado ficaria mudo. Entao o
+   ruido do ambiente e medido enquanto voce fala e o limiar acompanha. */
+const RUIDO_MIN = 0.0012;          // piso absoluto: abaixo disto e' linha morta
+const RUIDO_FATOR = 3.5;           // fala = este tanto acima do ruido de fundo
+
+/* Nivel de som do bloco (RMS). Serve pra duas coisas: saber quando ha silencio,
+   e desenhar a barrinha no botao - sem ela nao da pra saber se o microfone esta
+   captando, e era esse o susto de "o botao nao funciona". */
+function nivelRms(bloco) {
+  let s = 0;
+  for (let i = 0; i < bloco.length; i++) s += bloco[i] * bloco[i];
+  return Math.sqrt(s / (bloco.length || 1));
+}
+
+function juntarAmostras(pedacos) {
+  let n = 0;
+  for (const p of pedacos) n += p.length;
+  const out = new Int16Array(n);
+  let i = 0;
+  for (const p of pedacos) { out.set(p, i); i += p.length; }
+  return out;
+}
+
+function juntarTexto(a, b) {
+  const t = String(b || '').trim();
+  if (!t) return a;
+  return a ? (a.replace(/\s+$/, '') + ' ' + t) : t;
+}
+
+/* O que ja esta fechado, na ordem em que foi falado. Cada frase entra com o
+   texto provisorio (o do modelo rapido, que ja estava na tela) e depois troca
+   pelo caprichado quando ele chega - sem nunca sumir da tela no meio. */
+function textoDasFrases(d) {
+  let s = '';
+  for (const f of d.frases) s = juntarTexto(s, f.final != null ? f.final : f.provisorio);
+  return s;
+}
+
+function ligarDitado(P, btMic, el) {
+  let D = null;   // sessao de ditado em andamento
+
+  const crescerCampo = (inp2) => {
+    inp2.style.height = 'auto';
+    inp2.style.height = Math.min(inp2.scrollHeight, 190) + 'px';
+  };
+
+  /* Escreve no campo sem atropelar o que a pessoa digitou: se o valor mudou por
+     fora entre uma legenda e outra, o que estiver la vira a nova base. */
+  const escrever = (d, texto) => {
+    const inp2 = $('.p-input', el);
+    if (!inp2) return;
+    if (d.ultimoEscrito != null && inp2.value !== d.ultimoEscrito) {
+      d.base = inp2.value;                     // teclou durante o ditado
+      texto = d.base + textoDasFrases(d) + d.parcial;
+    }
+    inp2.value = texto;
+    d.ultimoEscrito = texto;
+    crescerCampo(inp2);
+    P.rascunho = texto;
+  };
+
+  const pararDitado = async (motivo) => {
+    if (!D) return;
+    const d = D; D = null; P._ditado = null;
+    clearInterval(d.timer);
+    try { d.proc.onaudioprocess = null; } catch {}
+    try { d.proc.disconnect(); d.fonte.disconnect(); d.mudo.disconnect(); } catch {}
+    try { d.trilha.getTracks().forEach((t) => t.stop()); } catch {}   // apaga a luz do microfone
+    try { d.ctx.close(); } catch {}
+    btMic.classList.remove('gravando');
+    btMic.style.removeProperty('--nivel');
+    btMic.title = 'Ditar: falar e virar texto';
+    try { window.api.audioDitadoCancelar({ paneId: P.id }); } catch {}
+
+    if (motivo === 'cancelado' || P.morto) return;
+
+    btMic.classList.add('pensando');
+    try {
+      // o pedaco que ficou em aberto (voce parou no meio de uma frase)
+      const resto = juntarAmostras(d.frase);
+      if (resto.length > TAXA_DITADO * 0.35) {
+        const f = { provisorio: d.parcial.trim(), final: null };
+        d.frases.push(f);
+        const r = await window.api.audioDitadoFinal({ paneId: P.id, amostras: resto });
+        f.final = (r && r.texto != null) ? String(r.texto).trim() : f.provisorio;
+        if (r && r.error && !textoDasFrases(d).trim()) mostrarAviso({ texto: r.error, tipo: 'erro' });
+      }
+      // frases que fecharam ha pouco e ainda estao sendo caprichadas
+      for (let i = 0; i < 120 && d.finaisNaRua > 0; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    } catch {} finally { btMic.classList.remove('pensando'); }
+
+    if (P.morto) return;
+    d.parcial = '';
+    escrever(d, d.base + textoDasFrases(d));
+    if (!textoDasFrases(d).trim()) {
+      // nao saiu nada: dizer POR QUE, em vez de so "nao entendi"
+      /* dizer QUAL e o problema. "Nao entendi" nao ajuda quem esta com o
+         microfone baixo demais - e era esse o caso na medicao. */
+      mostrarAviso({
+        texto: d.picoGeral < 0.004
+          ? 'N\u00e3o captei som nenhum. Veja se o microfone certo est\u00e1 escolhido no Windows.'
+          : (d.picoGeral < 0.03
+            ? 'O microfone captou muito baixo. Aumente o volume dele no Windows, ou fale mais perto.'
+            : 'N\u00e3o entendi o que foi falado. Tente falar um pouco mais devagar.'),
+        tipo: 'alerta',
+      });
+    }
+    const inp2 = $('.p-input', el);
+    if (inp2) { inp2.focus(); crescerCampo(inp2); }
+  };
+  // fechar o painel / trocar de aba tem que apagar o microfone
+  P.pararGravacao = () => { pararDitado('cancelado'); };
+  P.pararDitado = pararDitado;
+
+  btMic.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (D) { pararDitado('botao'); return; }
+
+    const disp = await window.api.audioDisponivel();
+    if (!disp || !disp.ok) {
+      mostrarAviso({ texto: 'A transcri\u00e7\u00e3o de \u00e1udio ainda n\u00e3o est\u00e1 instalada nesta m\u00e1quina.', tipo: 'alerta' });
+      return;
+    }
+    // o modelo demora ~11s pra acordar na primeira vez: comeca agora, enquanto
+    // a pessoa ainda esta falando a primeira frase
+    try { window.api.audioAquecer(); } catch {}
+
+    let trilha;
+    try {
+      trilha = await navigator.mediaDevices.getUserMedia({
+        // supressao de ruido agressiva come voz baixa e a transcricao volta
+        // vazia; ja o ganho automatico ajuda quem fala longe do microfone
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true },
+      });
+    } catch (err) {
+      mostrarAviso({
+        texto: (err && err.name === 'NotAllowedError')
+          ? 'O Windows n\u00e3o deixou usar o microfone. Libere em Privacidade > Microfone.'
+          : 'N\u00e3o consegui abrir o microfone: ' + ((err && err.name) || 'erro'),
+        tipo: 'erro',
+      });
+      return;
+    }
+    if (P.morto) { try { trilha.getTracks().forEach((t) => t.stop()); } catch {} return; }
+
+    /* Daqui em diante o microfone JA ESTA ABERTO. Qualquer tropeco tem que
+       fechar a trilha antes de sair: sem isto a captura ficava ligada sem tela,
+       sem botao aceso e sem jeito de parar a nao ser fechando o app. */
+    let ctx, fonte, proc, mudo;
+    try {
+      try { ctx = new AudioContext({ sampleRate: TAXA_DITADO }); }
+      catch { ctx = new AudioContext(); }
+      fonte = ctx.createMediaStreamSource(trilha);
+      proc = ctx.createScriptProcessor(4096, 1, 1);
+      /* o ScriptProcessor so roda se estiver ligado na saida - mas com volume
+         ZERO, senao o microfone sai pelo alto-falante e vira microfonia */
+      mudo = ctx.createGain();
+      mudo.gain.value = 0;
+      fonte.connect(proc); proc.connect(mudo); mudo.connect(ctx.destination);
+    } catch (err) {
+      try { trilha.getTracks().forEach((t) => t.stop()); } catch {}
+      try { ctx && ctx.close(); } catch {}
+      mostrarAviso({ texto: 'Não consegui preparar o áudio: ' + ((err && err.message) || 'erro'), tipo: 'erro' });
+      return;
+    }
+
+    const inpAgora = $('.p-input', el);
+    D = {
+      ctx, fonte, proc, mudo, trilha,
+      base: inpAgora && inpAgora.value ? inpAgora.value.replace(/\s*$/, '') + ' ' : '',
+      frases: [], parcial: '', ultimoEscrito: null,
+      frase: [], amostrasNaFrase: 0,
+      falouNaFrase: false, msSilencio: 0, picoGeral: 0,
+      ruidoFundo: 0, blocosVistos: 0,
+      pedindo: false, ultimoEnvio: 0, mandadoAte: 0, timer: 0,
+      finaisNaRua: 0,
+    };
+    P._ditado = D;
+
+    proc.onaudioprocess = (ev) => {
+      if (!D) return;
+      const ent = ev.inputBuffer.getChannelData(0);
+      // o navegador pode entregar outra taxa: reamostra na mao se precisar
+      const razao = ctx.sampleRate / TAXA_DITADO;
+      const n = Math.max(1, Math.floor(ent.length / razao));
+      const bloco = new Int16Array(n);
+      let pico = 0;
+      for (let i = 0; i < n; i++) {
+        const v = ent[Math.min(ent.length - 1, Math.floor(i * razao))];
+        const a = v < 0 ? -v : v;
+        if (a > pico) pico = a;
+        bloco[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+      }
+      D.frase.push(bloco);
+      D.amostrasNaFrase += n;
+      if (pico > D.picoGeral) D.picoGeral = pico;
+
+      const rms = nivelRms(ent);
+      /* piso de ruido: comeca no primeiro bloco e depois so' desce devagar, pra
+         acompanhar o ambiente sem ser puxado pra cima pela propria voz */
+      /* O piso nasce no CHAO e sobe devagar. Nascendo do primeiro bloco, quem
+         ja comeca falando cravava o piso no nivel da propria voz e ficava ~5s
+         sem ser ouvido. Errar pra baixo so custa uma rodada a mais; errar pra
+         cima deixa o ditado surdo. */
+      D.blocosVistos++;
+      if (rms < D.ruidoFundo || !D.ruidoFundo) D.ruidoFundo = D.ruidoFundo
+        ? (D.ruidoFundo * 0.8 + rms * 0.2) : Math.max(RUIDO_MIN, rms * 0.2);
+      else D.ruidoFundo = D.ruidoFundo * 0.995 + rms * 0.005;
+      const limiar = Math.max(RUIDO_MIN * 2, D.ruidoFundo * RUIDO_FATOR);
+
+      // a barrinha mostra a voz EM RELACAO ao limiar: cheia = ele te ouve bem
+      btMic.style.setProperty('--nivel', Math.min(1, rms / (limiar * 2.5)).toFixed(2));
+      const durMs = (n / TAXA_DITADO) * 1000;
+      if (rms > limiar) { D.falouNaFrase = true; D.msSilencio = 0; }
+      else D.msSilencio += durMs;
+    };
+
+    btMic.classList.add('gravando');
+    btMic.title = 'Ditando\u2026 clique para parar';
+
+    // o relogio do ditado: decide quando pedir legenda e quando fechar a frase
+    D.timer = setInterval(async () => {
+      if (!D || D.pedindo) return;
+      const d = D;
+      const segNaFrase = d.amostrasNaFrase / TAXA_DITADO;
+      const agora = Date.now();
+      /* microfone ligado e ninguem falando: joga o silencio fora em vez de
+         deixar crescer ate o teto e gastar um passe caprichado em cima de nada.
+         Guarda o ultimo meio segundo, pra nao cortar o comeco da proxima fala. */
+      if (!d.falouNaFrase && segNaFrase > 2) {
+        const guardar = Math.round(TAXA_DITADO * 0.5);
+        const tudo = juntarAmostras(d.frase);
+        const cauda = tudo.slice(Math.max(0, tudo.length - guardar));
+        d.frase = [cauda]; d.amostrasNaFrase = cauda.length; d.mandadoAte = 0;
+        return;
+      }
+      // o teto so vale pra frase em que houve fala de verdade
+      const fechar = d.falouNaFrase
+        && (d.msSilencio >= MS_PAUSA_FECHA || segNaFrase >= SEG_MAX_FRASE);
+
+      if (!fechar) {
+        if (agora - d.ultimoEnvio < MS_ENTRE_RODADAS) return;
+        if (segNaFrase < MIN_SEG_PRA_MANDAR) return;
+        if (!d.falouNaFrase) return;                      // so ruido: nao gasta rodada
+        if (d.amostrasNaFrase === d.mandadoAte) return;   // nada novo desde a ultima
+      } else if (segNaFrase < MIN_SEG_PRA_MANDAR) {
+        // pausa numa frase curta demais: joga fora e recomeca
+        d.frase = []; d.amostrasNaFrase = 0; d.falouNaFrase = false; d.msSilencio = 0;
+        return;
+      }
+
+      const amostras = juntarAmostras(d.frase);
+
+      if (fechar) {
+        /* A frase entra JA na lista, com o texto provisorio que esta na tela, e
+           o passe caprichado vai por fora. Sem isso, os ~4s dele seguravam a
+           legenda da frase seguinte e a tela ficava parada enquanto a pessoa
+           continuava falando. */
+        const f = { provisorio: d.parcial.trim(), final: null };
+        d.frases.push(f);
+        d.parcial = '';
+        d.frase = []; d.amostrasNaFrase = 0; d.mandadoAte = 0;
+        d.falouNaFrase = false; d.msSilencio = 0;
+        escrever(d, d.base + textoDasFrases(d));
+        d.finaisNaRua++;
+        window.api.audioDitadoFinal({ paneId: P.id, amostras }).then((r) => {
+          f.final = (r && r.texto != null) ? String(r.texto).trim() : f.provisorio;
+          if (D === d) escrever(d, d.base + textoDasFrases(d) + d.parcial);
+        }).catch(() => { f.final = f.provisorio; })
+          .then(() => { d.finaisNaRua--; });
+        return;
+      }
+
+      d.pedindo = true; d.ultimoEnvio = agora; d.mandadoAte = d.amostrasNaFrase;
+      try {
+        const r = await window.api.audioDitado({ paneId: P.id, amostras });
+        if (!D || D !== d) return;             // parou enquanto transcrevia
+        if (r && (r.ocupado || r.descartado)) return;
+        if (r && r.error) return;              // erro solto nao apaga a legenda
+        const texto = (r && r.texto) || '';
+        d.parcial = texto ? ((d.frases.length ? ' ' : '') + texto) : '';
+        escrever(d, d.base + textoDasFrases(d) + d.parcial);
+      } catch {} finally { d.pedindo = false; }
+    }, 250);
+  });
+}
+
 function newPane(opts = {}) {
   sairDaAbertura();
   const id = 'p' + bootId + '_' + (++paneSeq);
@@ -246,6 +560,10 @@ function newPane(opts = {}) {
     timerRascunho = setTimeout(savePanes, 900);   // guarda o rascunho, sem gravar a cada tecla
   });
   inp.addEventListener('keydown', (e) => {
+    // no CLI o Shift+Tab troca o modo de permissao. Aqui ele nao era tratado:
+    // virava o "voltar foco" do navegador, o cursor saia do campo e parecia
+    // que o app tinha travado.
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); e.stopPropagation(); girarModo(P); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(P); }
     if (e.key === 'Escape') { fecharMenus(); fecharTerminalDoPainel(P); fecharModal(P); if (P.busy) window.api.paneInterrupt({ paneId: id, engine: P.engine }); }
     // seta pra cima com o campo vazio (ou navegando) traz o que voce ja mandou
@@ -355,68 +673,10 @@ function newPane(opts = {}) {
     pintarEnvio();
   });
 
-  // microfone: grava, transcreve aqui no PC e joga o texto no campo
+  // microfone: ditado AO VIVO. O texto vai aparecendo no campo enquanto voce fala.
   const btMic = $('.p-mic', el);
-  btMic.innerHTML = ico('mic');
-  let gravador = null, pedacos = [], trilha = null;
-  const pararGravacao = () => {
-    clearTimeout(P._micLimite);
-    try { gravador && gravador.state !== 'inactive' && gravador.stop(); } catch {}
-    try { trilha && trilha.getTracks().forEach((t) => t.stop()); } catch {}   // desliga o microfone de verdade
-    trilha = null;
-    btMic.classList.remove('gravando');
-  };
-  // só depois de existir: fechar o painel precisa desligar o microfone
-  P.pararGravacao = pararGravacao;
-  btMic.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (gravador && gravador.state === 'recording') { pararGravacao(); return; }
-    const disp = await window.api.audioDisponivel();
-    if (!disp || !disp.ok) {
-      mostrarAviso({ texto: 'A transcrição de áudio ainda não está instalada nesta máquina.', tipo: 'alerta' });
-      return;
-    }
-    try { trilha = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch { mostrarAviso({ texto: 'Não consegui usar o microfone. Verifique a permissão do Windows.', tipo: 'erro' }); return; }
-    pedacos = [];
-    window.api.audioAquecer();   // ja vai carregando o modelo enquanto voce fala
-    gravador = new MediaRecorder(trilha);
-    gravador.ondataavailable = (ev) => { if (ev.data && ev.data.size) pedacos.push(ev.data); };
-    gravador.onstop = async () => {
-      btMic.classList.remove('gravando');
-      if (P.morto) return;   // painel fechou: nao gasta CPU transcrevendo pro vazio
-      btMic.classList.add('pensando');
-      try {
-        const blob = new Blob(pedacos, { type: gravador.mimeType || 'audio/webm' });
-        if (blob.size < 1200) { mostrarAviso({ texto: 'Gravação muito curta.', tipo: 'alerta' }); return; }
-        // Uint8Array atravessa o IPC direto; Array.from inflava cada byte num
-        // numero e travava o app em gravacao longa
-        const buf = new Uint8Array(await blob.arrayBuffer());
-        const r = await window.api.audioTranscrever({ bytes: buf, mime: blob.type });
-        if (r && r.error) { mostrarAviso({ texto: r.error, tipo: 'erro' }); return; }
-        if (P.morto) return;   // fechou enquanto transcrevia
-      const inp2 = $('.p-input', el);
-      if (!inp2) return;
-        const texto = (r && r.texto) || '';
-        inp2.value = inp2.value ? (inp2.value.replace(/\s*$/, '') + ' ' + texto) : texto;
-        inp2.focus();
-        inp2.style.height = 'auto'; inp2.style.height = Math.min(inp2.scrollHeight, 190) + 'px';
-      } finally {
-        btMic.classList.remove('pensando');
-      }
-    };
-    gravador.start();
-    btMic.classList.add('gravando');
-    btMic.title = 'Gravando… clique para parar e transcrever';
-    // corta sozinho em 5 min: gravacao esquecida viraria um arquivo enorme
-    clearTimeout(P._micLimite);
-    P._micLimite = setTimeout(() => {
-      if (gravador && gravador.state === 'recording') {
-        pararGravacao();
-        mostrarAviso({ texto: 'Gravação encerrada em 5 minutos (limite).', tipo: 'alerta' });
-      }
-    }, 5 * 60 * 1000);
-  });
+  btMic.innerHTML = ico('mic') + '<span class="mic-nivel"></span>';
+  ligarDitado(P, btMic, el);
 
   // botao +  (anexar)
   $('.p-plus', el).addEventListener('click', (e) => { e.stopPropagation(); menuAnexo(P); });
@@ -426,13 +686,243 @@ function newPane(opts = {}) {
   btnCwd.textContent = (aba && aba.tipo === 'ssh') ? ('🖧 ' + aba.nome) : nomePasta(P.cwd);
   fillModels(P); paintEngine(P); pintarModo(P);
 
-  if (panes.size > 1) $('#panes').appendChild(makeSplitter());
-  $('#panes').appendChild(el);
+  // nasce numa coluna so' dele; empilhar e' decisao sua, arrastando
+  P.coluna = (opts.coluna != null) ? opts.coluna
+    : (panes.size ? Math.max(...[...panes.values()].map(q => (q.coluna == null ? 0 : q.coluna))) + 1 : 0);
+  ligarArrastarPainel(P);
+  montarColunas();
   setFocus(P);
   inp.focus();
   setTimeout(() => el.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' }), 60);
   setTimeout(savePanes, 30);
   return P;
+}
+
+/* ===================== COLUNAS =====================
+   Antes os paineis eram uma fila unica na horizontal. Agora cada painel
+   pertence a uma COLUNA (P.coluna), e uma coluna pode ter varias sessoes
+   empilhadas - como as abas do VS Code em grupos de editor.
+   Painel novo nasce numa coluna so' dele; empilhar e' decisao sua, arrastando. */
+
+function colunasDaTela() {
+  const mapa = new Map();
+  for (const P of panes.values()) {
+    const c = (P.coluna == null) ? 999 : P.coluna;
+    if (!mapa.has(c)) mapa.set(c, []);
+    mapa.get(c).push(P);
+  }
+  return [...mapa.entries()].sort((a, b) => a[0] - b[0]).map(([, ps]) => ps);
+}
+
+/* renumera as colunas pra 0,1,2... - sem buracos depois de fechar painel */
+function arrumarNumeroDasColunas() {
+  const grupos = colunasDaTela();
+  grupos.forEach((ps, i) => ps.forEach(P => { P.coluna = i; }));
+  return grupos;
+}
+
+/* a largura ajustada fica com os paineis da coluna: o elemento .coluna e'
+   descartado e recriado a cada montarColunas() */
+function guardarLarguraDaColuna(col) {
+  if (!col || !col.classList || !col.classList.contains('coluna')) return;
+  const px = Math.round(col.getBoundingClientRect().width);
+  const n = Number(col.dataset.coluna);
+  for (const P of panes.values()) if (P.coluna === n) P.larguraColuna = px;
+}
+
+/* divisor horizontal: separa duas sessoes DENTRO da mesma coluna */
+function makeSplitterH() {
+  const s = document.createElement('div');
+  s.className = 'pane-split-h';
+  s.title = 'Arraste para ajustar a altura · clique duas vezes para dividir igual';
+  s.addEventListener('dblclick', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const col = s.parentElement;
+    if (col) for (const p of col.querySelectorAll('.pane')) p.style.flex = '';
+    savePanes();
+  });
+  s.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const prev = s.previousElementSibling, next = s.nextElementSibling;
+    if (!prev || !next) return;
+    const y0 = e.clientY, h1 = prev.getBoundingClientRect().height, h2 = next.getBoundingClientRect().height;
+    const move = (ev) => {
+      const d = ev.clientY - y0;
+      // 160: abaixo disso o campo de escrever comeca a ser cortado pelo painel
+      const a = Math.max(160, h1 + d), b = Math.max(160, h2 - d);
+      prev.style.flex = '0 0 ' + a + 'px'; next.style.flex = '0 0 ' + b + 'px';
+    };
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.style.cursor = ''; savePanes(); };
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  });
+  return s;
+}
+
+/* Monta a tela inteira a partir de panes + P.coluna. Substitui o antigo
+   "enfileira painel atras de painel". Guarda e devolve o cursor, porque mover
+   elemento no DOM apaga o foco de tudo que esta dentro dele. */
+/* Restaurar uma aba cria os paineis um a um, e cada um pedia uma remontagem
+   INTEIRA da tela (innerHTML='' + reanexar tudo). Com 5 paineis davam 10
+   remontagens, cada uma piscando e mexendo em rolagem e foco. Durante o lote,
+   as chamadas ficam guardadas e a montagem acontece UMA vez, no fim. */
+let montagemAdiada = 0;
+let montagemPedida = false;
+async function comMontagemAdiada(fn) {
+  montagemAdiada++;
+  // AWAIT: sem ele o 'finally' rodava no primeiro await de dentro e o lote
+  // acabava ja no primeiro painel - a economia era so' aparente
+  try { return await fn(); }
+  finally {
+    montagemAdiada--;
+    if (!montagemAdiada && montagemPedida) { montagemPedida = false; montarColunas(); }
+  }
+}
+
+function montarColunas() {
+  if (montagemAdiada) { montagemPedida = true; return; }
+  const caixa = $('#panes');
+  if (!caixa) return;
+  const tinhaFoco = document.activeElement;
+  const sel = tinhaFoco && typeof tinhaFoco.selectionStart === 'number'
+    ? { ini: tinhaFoco.selectionStart, fim: tinhaFoco.selectionEnd } : null;
+
+  // reanexar um elemento no DOM zera o scrollTop dele. Sem guardar, toda
+  // remontagem jogava a conversa de volta pro COMECO.
+  const rolagens = new Map();
+  for (const P of panes.values()) {
+    if (P.chat && P.chat.isConnected) {
+      rolagens.set(P.id, { topo: P.chat.scrollTop, noFim: estavaNoFim(P) });
+    }
+  }
+  const grupos = arrumarNumeroDasColunas();
+  caixa.innerHTML = '';
+  caixa.appendChild(faixaDeColunaNova(0));   // soltar aqui cria coluna na frente
+  grupos.forEach((ps, i) => {
+    if (i) caixa.appendChild(makeSplitter());
+    const col = document.createElement('div');
+    col.className = 'coluna';
+    col.dataset.coluna = String(i);
+    // a largura que voce ajustou vive no painel, nao no elemento da coluna:
+    // a coluna e' recriada a cada montagem e levava o ajuste junto
+    const larg = ps.find(q => q.larguraColuna);
+    if (larg) col.style.flex = '0 0 ' + larg.larguraColuna + 'px';
+    ps.forEach((P, j) => {
+      if (j) col.appendChild(makeSplitterH());
+      col.appendChild(P.el);
+      P.el.classList.toggle('empilhado', ps.length > 1);
+    });
+    ligarSoltarNaColuna(col, i);
+    caixa.appendChild(col);
+    caixa.appendChild(faixaDeColunaNova(i + 1));   // e uma depois de cada coluna
+  });
+
+  // devolve cada conversa pra onde ela estava - e quem estava no fim CONTINUA
+  // no fim, mesmo que a altura tenha mudado na remontagem
+  for (const P of panes.values()) {
+    const r = rolagens.get(P.id);
+    if (!r || !P.chat) continue;
+    if (r.noFim) irProFim(P); else P.chat.scrollTop = r.topo;
+  }
+  if (tinhaFoco && tinhaFoco.isConnected && typeof tinhaFoco.focus === 'function') {
+    try { tinhaFoco.focus(); if (sel) tinhaFoco.setSelectionRange(sel.ini, sel.fim); } catch {}
+  }
+}
+
+/* ---- arrastar a sessao de uma coluna pra outra ---- */
+let arrastando = null;
+/* Medido: o que NAO encolhe num painel soma ~146px (nome + cabecalho + campo de
+   escrever). Acima de 3 por coluna a conversa some e o campo e' cortado. */
+const MAX_POR_COLUNA = 3;
+
+function ligarArrastarPainel(P) {
+  const alca = $('.pane-nome', P.el);
+  if (!alca) return;
+  alca.setAttribute('draggable', 'true');
+  alca.addEventListener('dragstart', (e) => {
+    arrastando = P.id;
+    P.el.classList.add('arrastando');
+    try { e.dataTransfer.setData('text/plain', P.id); e.dataTransfer.effectAllowed = 'move'; } catch {}
+  });
+  alca.addEventListener('dragend', () => {
+    arrastando = null;
+    P.el.classList.remove('arrastando');
+    for (const el of document.querySelectorAll('.coluna.alvo, .faixa-nova.alvo')) el.classList.remove('alvo');
+  });
+}
+
+/* Faixa fina entre as colunas. Soltar uma sessao aqui tira ela da pilha e cria
+   uma COLUNA nova nesta posicao - sem isso, empilhar era um caminho sem volta. */
+function faixaDeColunaNova(posicao) {
+  const f = document.createElement('div');
+  f.className = 'faixa-nova';
+  f.title = 'Solte aqui para esta conversa virar uma coluna só dela';
+  f.addEventListener('dragover', (e) => {
+    if (!arrastando) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch {}
+    for (const c of document.querySelectorAll('.coluna.alvo, .faixa-nova.alvo')) {
+      if (c !== f) c.classList.remove('alvo');
+    }
+    f.classList.add('alvo');
+  });
+  f.addEventListener('dragleave', () => f.classList.remove('alvo'));
+  f.addEventListener('drop', (e) => {
+    if (!arrastando) return;
+    e.preventDefault(); e.stopPropagation();
+    f.classList.remove('alvo');
+    const P = panes.get(arrastando);
+    arrastando = null;
+    if (!P) return;
+    const sozinhaAqui = [...panes.values()].filter(q => q.coluna === P.coluna).length === 1;
+    if (sozinhaAqui && (P.coluna === posicao || P.coluna === posicao - 1)) return;  // ja e' isso
+    // abre espaco: quem estava daqui pra frente anda uma casa
+    for (const q of panes.values()) if (q !== P && q.coluna >= posicao) q.coluna += 1;
+    P.coluna = posicao;
+    P.el.style.flex = '';
+    for (const q of panes.values()) q.el.style.flex = '';
+    montarColunas(); savePanes();
+    note(P, 'Esta conversa virou uma coluna só dela.');
+  });
+  return f;
+}
+
+function ligarSoltarNaColuna(col, indice) {
+  col.addEventListener('dragover', (e) => {
+    if (!arrastando) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch {}
+    // apaga as outras antes: saindo por cima de um filho o 'dragleave' nao vem,
+    // e voce via a coluna de origem acesa junto com a de destino
+    for (const c of document.querySelectorAll('.coluna.alvo, .faixa-nova.alvo')) {
+      if (c !== col) c.classList.remove('alvo');
+    }
+    col.classList.add('alvo');
+  });
+  col.addEventListener('dragleave', (e) => {
+    if (e.target === col) col.classList.remove('alvo');
+  });
+  col.addEventListener('drop', (e) => {
+    if (!arrastando) return;
+    e.preventDefault(); e.stopPropagation();
+    col.classList.remove('alvo');
+    const P = panes.get(arrastando);
+    arrastando = null;
+    if (!P || P.coluna === indice) return;
+    const jaLa = [...panes.values()].filter(q => q.coluna === indice).length;
+    if (jaLa >= MAX_POR_COLUNA) {
+      note(P, 'Já são ' + MAX_POR_COLUNA + ' conversas nesta coluna. Com mais que isso o campo de escrever não cabe.', true);
+      return;
+    }
+    const saiuDe = P.coluna;
+    P.coluna = indice;
+    // altura travada em pixel nao pode viajar junto: numa coluna nova ela deixa
+    // buraco, e numa coluna cheia empurra o campo de escrever pra fora
+    P.el.style.flex = '';
+    for (const q of panes.values()) if (q.coluna === indice || q.coluna === saiuDe) q.el.style.flex = '';
+    montarColunas(); savePanes();
+    note(P, 'Esta conversa foi para a coluna ' + (indice + 1) + '.');
+  });
 }
 
 function makeSplitter() {
@@ -441,20 +931,26 @@ function makeSplitter() {
   s.title = 'Arraste para ajustar · clique duas vezes para deixar todos do mesmo tamanho';
   s.addEventListener('dblclick', (e) => {
     e.preventDefault(); e.stopPropagation();
-    for (const q of panes.values()) q.el.style.flex = '';
+    for (const c of document.querySelectorAll('#panes .coluna')) c.style.flex = '';
+    for (const P of panes.values()) P.larguraColuna = 0;   // volta todas ao padrao
     savePanes();
   });
   s.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const prev = s.previousElementSibling, next = s.nextElementSibling;
-    if (!prev || !next) return;
+    if (!prev || !next) return;   // agora prev/next sao COLUNAS
     const startX = e.clientX, w1 = prev.getBoundingClientRect().width, w2 = next.getBoundingClientRect().width;
     const move = (ev) => {
       const d = ev.clientX - startX;
       const a = Math.max(280, w1 + d), b = Math.max(280, w2 - d);
       prev.style.flex = '0 0 ' + a + 'px'; next.style.flex = '0 0 ' + b + 'px';
     };
-    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.style.cursor = ''; savePanes(); };
+    const up = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      document.body.style.cursor = '';
+      guardarLarguraDaColuna(prev); guardarLarguraDaColuna(next);   // sobrevive a remontagem
+      savePanes();
+    };
     document.body.style.cursor = 'col-resize';
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   });
@@ -480,7 +976,8 @@ function guardarPrompt(txt) {
 function fichaDoPainel(P) {
   // paneId: sem um id estavel na ficha nao da' pra saber QUAL painel da lista
   // salva corresponde a este - e a mesclagem virava sobrescrita
-  return ({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, titulo: P.titulo,
+  return ({ paneId: P.id, coluna: (P.coluna == null ? 0 : P.coluna),
+    larguraColuna: P.larguraColuna || 0, engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, titulo: P.titulo,
     sessaoId: P.sessaoId || P.resumeId || null, file: P.sessaoFile || '', remoto: !!(P.sessaoRemota || remotoDoPane(P)),
     rascunho: (($('.p-input', P.el) || {}).value || '').slice(0, 4000),
     // conversa que trocou de motor e ainda nao mandou a 1a mensagem: sem guardar
@@ -532,7 +1029,12 @@ const panesFundo = new Map();
 const acharPainel = (id) => panes.get(id) || panesFundo.get(id);
 /* o teto de 12 e' de MOTORES vivos, nao de caixas na tela: sem contar os de
    segundo plano dava pra passar do limite sem perceber */
-const totalDePaineis = () => panes.size + panesFundo.size;
+/* O teto de 12 e' de MOTORES vivos, nao de conversas guardadas. Agora que toda
+   aba fica com a tela montada em memoria, somar tudo faria 14 paineis em 6 abas
+   estourarem o limite e voce nao conseguiria abrir NENHUM painel novo. Conta:
+   os desta aba + os de outras abas que ainda estao com o motor rodando. */
+const totalDePaineis = () => panes.size
+  + [...panesFundo.values()].filter(P => P.busy || P.started || (P.terms && P.terms.size)).length;
 /* quantos painéis estão trabalhando em cada aba (pra bolinha na barra de abas) */
 function trabalhandoPorAba() {
   const conta = {};
@@ -543,6 +1045,8 @@ function trabalhandoPorAba() {
 }
 /* aba com painel PARADO esperando voce autorizar - e' outra coisa de
    "trabalhando", e precisa chamar mais atencao, nao menos */
+/* (obs: agora TODO painel fica em panesFundo ao sair da aba, entao estas duas
+   contas olham P.busy / P.pedindoPerm, nunca a mera presenca no mapa) */
 function esperandoPorAba() {
   const conta = {};
   for (const P of panesFundo.values()) if (P.pedindoPerm) conta[P.abaId] = (conta[P.abaId] || 0) + 1;
@@ -595,8 +1099,10 @@ async function trocarMotor(P, novo) {
     // retomar uma conversa que nao existe pra ele (--resume com id do outro)
     P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
     // contador de contexto e' do outro motor: continuar mostrando mente
+    // o painel vai reiniciar: o microfone nao pode continuar ligado sozinho
+    if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
     P.tokens = 0; P.janela = 0; pintarTokens(P);
-    P.blocks.clear();
+    P.blocks.clear(); esquecerPassos(P);
     cfg.lastEngine = novo; window.api.setConfig(cfg);
     fillModels(P); paintEngine(P); pintarModo(P); setDot(P, 'off');
     // a conversa continua: o motor novo recebe o que já foi dito
@@ -640,9 +1146,22 @@ function fillModels(P) {
 }
 function posicionarChave() {}   // o destaque do lado ativo é só CSS
 
+/* A pasta ja aparece na aba la em cima. Ela so' precisa ficar no painel quando
+   a aba tem MAIS DE UMA pasta (ex: Members = backend + frontend), porque ai a
+   aba sozinha nao diz em qual delas este painel esta. */
+function mostrarPastaNoPainel(P) {
+  const bt = $('.p-cwd', P.el);
+  if (!bt) return;
+  const aba = abaPorId(P.abaId) || abaAtual();
+  // aba remota SEMPRE mostra: e' ali que aparece em qual servidor o painel esta
+  const mostrar = !!aba && (aba.tipo === 'ssh' || pastasDaAba(aba).length > 1);
+  bt.classList.toggle('hidden', !mostrar);
+}
+
 function paintEngine(P) {
   const vazio = $('.pe-logo', P.el);
   if (vazio) vazio.innerHTML = svgMotor(P.engine);
+  mostrarPastaNoPainel(P);
   posicionarChave(P);
   P.el.classList.toggle('eng-codex', P.engine === 'codex');
   P.el.classList.toggle('eng-claude', P.engine === 'claude');
@@ -680,6 +1199,8 @@ async function closePane(id) {
   if (panes.size === 1) { note(P, 'Este é o último painel.'); return; }
   if (P.ro) { try { P.ro.disconnect(); } catch {} }
   clearInterval(P.relogio); P.relogio = 0;
+  clearTimeout(P.timerNome); P.timerNome = 0;
+  pararIrProFim(P);
   soltarNavArquivos(P);
   P.morto = true;
   if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
@@ -687,10 +1208,9 @@ async function closePane(id) {
   if (tj && tj._itens) { tj._itens.delete(id); }
   matarTerminaisDoPainel(P);
   await window.api.paneStop({ paneId: id, engine: P.engine });
-  const sp = P.el.previousElementSibling || P.el.nextElementSibling;
-  if (sp && sp.classList.contains('pane-split')) sp.remove();
   P.el.remove(); panes.delete(id);
   for (const q of panes.values()) q.el.style.flex = '';
+  montarColunas();
   if (focusPane === P) setFocus([...panes.values()][0]);
   savePanes();
 }
@@ -699,27 +1219,38 @@ async function closePane(id) {
    nada, porque a conversa volta sozinha com --resume na próxima mensagem. */
 async function guardarPaineisDaAba() {
   for (const P of panes.values()) {
-    const segueVivo = !!(P.busy || (P.terms && P.terms.size));
+    // trabalhando (ou com terminal aberto) = o MOTOR continua rodando tambem
+    const motorContinua = !!(P.busy || (P.terms && P.terms.size));
     if (P.ro) { try { P.ro.disconnect(); } catch {} P.ro = null; }
     soltarNavArquivos(P);
 
-    if (segueVivo) {
-      // tira da tela SEM matar nada: o processo continua, o terminal continua e
-      // os eventos continuam chegando (o onPaneEvent acha pelo panesFundo).
-      // O innerHTML='' la embaixo limpa os divisores que sobrarem.
-      P.el.remove();
-      panesFundo.set(P.id, P);
-      continue;
-    }
-    fecharTerminalDoPainel(P);
-
-    clearInterval(P.relogio); P.relogio = 0;
-    P.morto = true;
+    /* o painel continua vivo no fundo, mas o MICROFONE nao pode continuar
+       ligado sem ninguem olhando: o ditado para aqui e o que ja virou texto
+       fica no campo, esperando voce voltar */
     if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
-    matarTerminaisDoPainel(P);
+
+    // TODO painel fica guardado com a tela montada. Antes, quem estava parado
+    // era destruido e remontado do zero na volta - por isso "todos os chats
+    // carregavam" a cada troca de aba. Guardar o desenho custa memoria, nao
+    // processo, e faz a volta ser instantanea.
+    P.el.remove();
+    panesFundo.set(P.id, P);
+    if (motorContinua) continue;
+
+    /* Parado: desliga so' o MOTOR. A conversa fica na tela e religa com
+       --resume na proxima mensagem, sem recarregar nada.
+
+       O que vinha aqui embaixo antes era o caminho de DESTRUIR o painel
+       (P.morto = true, matar os terminais, parar de novo). Ele fazia sentido
+       quando sair da aba jogava o painel fora; depois que a leva 17 passou a
+       guardar todos, virou uma armadilha: o painel voltava desenhado mas morto
+       por dentro, e dezesseis caminhos do app desistem quando P.morto e
+       verdadeiro - o ditado, o nome automatico da conversa, o relogio do turno.
+       Painel guardado nao morre. */
     await window.api.paneStop({ paneId: P.id, engine: P.engine });
+    desligarMotor(P);   // guarda o endereco da conversa antes de desligar
   }
-  $('#panes').innerHTML = '';
+  $('#panes').innerHTML = '';   // so' os divisores; os paineis ja sairam inteiros
   panes.clear();
   focusPane = null;
 }
@@ -739,9 +1270,28 @@ function reordenarPaineis(fichasSalvas) {
     if (P) { ordem.push(P); sobrando.delete(P.id); }
   }
   for (const P of sobrando.values()) ordem.push(P);   // sem ficha: vai pro fim
+  // a ordem do MAPA manda na ordem da tela (montarColunas percorre panes)
+  if (ordem.length) {
+    panes.clear();
+    for (const P of ordem) panes.set(P.id, P);
+    montarColunas();
+    return;
+  }
   if (ordem.length < 2) return;
+  // mover um elemento no DOM APAGA o foco de tudo que esta dentro dele. Sem
+  // guardar e devolver, trocar de aba deixava o cursor em lugar nenhum e voce
+  // digitava sem que nada aparecesse.
+  const tinhaFoco = document.activeElement;
+  const rolagem = tinhaFoco && typeof tinhaFoco.selectionStart === 'number'
+    ? { ini: tinhaFoco.selectionStart, fim: tinhaFoco.selectionEnd } : null;
   for (const sp of [...caixa.querySelectorAll('.pane-split')]) sp.remove();
   ordem.forEach((P, i) => { if (i) caixa.appendChild(makeSplitter()); caixa.appendChild(P.el); });
+  if (tinhaFoco && tinhaFoco.isConnected && typeof tinhaFoco.focus === 'function') {
+    try {
+      tinhaFoco.focus();
+      if (rolagem) tinhaFoco.setSelectionRange(rolagem.ini, rolagem.fim);   // nao perde onde o cursor estava
+    } catch {}
+  }
   // o MAPA tambem: o savePanes grava na ordem de insercao, nao na ordem da tela.
   // Sem isto a ordem certa da tela era desfeita na proxima gravacao.
   panes.clear();
@@ -756,13 +1306,17 @@ function trazerPaineisDoFundo(abaId) {
     if (P.abaId !== abaId) continue;
     panesFundo.delete(P.id);
     panes.set(P.id, P);
-    if (panes.size > 1) caixa.appendChild(makeSplitter());
-    caixa.appendChild(P.el);
     try { P.ro = new ResizeObserver(() => posicionarChave(P)); P.ro.observe($('.p-chave', P.el)); } catch {}
     // fora da tela o scroll nao anda: sem isto voce voltava no COMECO da conversa
-    scroll(P, true);
+    irProFim(P);
     if (P.busy) trabalhando(P);   // recria o bloco e religa o relogio do turno
     quantos++;
+  }
+  if (quantos) {
+    montarColunas();
+    // montarColunas ja devolve a rolagem, mas quem volta do segundo plano
+    // tinha scrollHeight ZERO enquanto estava fora da tela: garante o fim aqui
+    for (const P of panes.values()) if (P.abaId === abaId) irProFim(P);
   }
   return quantos;
 }
@@ -807,7 +1361,14 @@ function pintarAbasLocalMiolo(box) {
       : (pastasDaAba(ab).map(shortPath).join('\n') || 'PC inteiro');
     bt.title = ondeAba + '\n\n(duplo clique para editar esta aba)';
     bt.addEventListener('click', (e) => { if (!e.target.closest('.al-x')) trocarAbaLocal(ab.id); });
-    bt.addEventListener('dblclick', (e) => { if (!e.target.closest('.al-x')) abrirModalAbaLocal(ab); });
+    // so' edita com duplo clique na aba em que voce JA esta. Clicando rapido
+    // entre abas diferentes, o navegador tambem dispara 'dblclick' - e o modal
+    // de editar (que cobre a tela inteira) abria sem voce pedir, travando tudo.
+    bt.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.al-x')) return;
+      if (trocandoAba || ab.id !== cfg.abaAtiva) return;
+      abrirModalAbaLocal(ab);
+    });
     if (podeApagar) $('.al-x', bt).addEventListener('click', (e) => { e.stopPropagation(); apagarAbaLocal(ab); });
     box.appendChild(bt);
   }
@@ -817,6 +1378,18 @@ function pintarAbasLocalMiolo(box) {
   add.title = 'Nova aba (pasta ou servidor remoto)';
   add.addEventListener('click', () => abrirModalAbaLocal(null));
   box.appendChild(add);
+
+  // a barra superior saiu (a moldura do Windows ja diz o nome do app), entao o
+  // botao de "abrir painel ao lado" mudou pra ca, no canto direito
+  const espaco = document.createElement('span');
+  espaco.className = 'abas-espaco';
+  box.appendChild(espaco);
+  const maisPainel = document.createElement('button');
+  maisPainel.className = 'abas-add-painel';
+  maisPainel.innerHTML = ico('plus');
+  maisPainel.title = 'Abrir painel ao lado (Ctrl+T)';
+  maisPainel.addEventListener('click', () => { if (totalDePaineis() < 12) newPane(); });
+  box.appendChild(maisPainel);
 }
 
 /* ---- troca de aba: guarda os paineis da aba que sai, mostra os da aba que entra ---- */
@@ -835,6 +1408,7 @@ async function trocarAbaLocal(novoId) {
   trocandoAba = true; abaIndoPara = novoId;
   const gen = ++abaGen;
   try {
+  verTodasAsConversas.claude = verTodasAsConversas.codex = false;   // filtro volta ao normal
   savePanes();
   await guardarPaineisDaAba();
   cfg.abaAtiva = novoId;
@@ -860,7 +1434,7 @@ async function trocarAbaLocal(novoId) {
   else if (!voltaram && gen === abaGen) newPane({ abaId: novoId });
   // 'salvos' e' a ordem de antes da troca; abaAtual().paineis ja foi regravado
   // pelo savePanes() do restaurarPaineis, na ordem errada do DOM
-  if (gen === abaGen) { reordenarPaineis(salvos); savePanes(); }
+  if (gen === abaGen) { reordenarPaineis(salvos); savePanes(); devolverOCursor(); }
   if (voltaram && gen === abaGen) {
     const primeiro = [...panes.values()][0];
     if (primeiro) { setFocus(primeiro); const c = $('.p-input', primeiro.el); if (c) c.focus(); }
@@ -887,7 +1461,8 @@ async function apagarAbaLocal(ab) {
     ab.paineis = [];              // ela vai embora: nao leva painel pra lugar nenhum
     await trocarAbaLocal(destino.id);
   }
-  // painel dessa aba que tinha ficado rodando em segundo plano morre com ela
+  // painel guardado dessa aba morre com ela (agora sao todos, nao so' os que
+  // estavam trabalhando)
   for (const P of [...panesFundo.values()]) {
     if (P.abaId !== ab.id) continue;
     panesFundo.delete(P.id);
@@ -1007,6 +1582,9 @@ function abrirModalAbaLocal(existente) {
     window.api.setConfig(cfg);
     fecharModalGlobal();
     pintarAbasLocal();
+    // a aba pode ter ganhado ou perdido pasta: sem avisar os paineis, o botao
+    // da pasta continuava escondido e o popup dele abria no canto da janela
+    for (const Q of panes.values()) mostrarPastaNoPainel(Q);
     histCache.claude = null; histCache.codex = null;
     const abaLateralAberta = $$('.side-view').find(v => !v.classList.contains('hidden'));
     if (abaLateralAberta && abaLateralAberta.dataset.view === 'hclaude') loadHist('claude', true);
@@ -1108,11 +1686,45 @@ function passoPronto(P, id, erro) {
   if (d) d.classList.add(erro ? 'erro' : 'ok');
 }
 
-/* no fim do turno os passos viravam pó. Agora encolhem num resumo clicavel,
-   pra dar pra conferir depois o que ele mexeu. */
-function limparPassos(P) {
+/* Fecha a caixa de passos ATUAL sem mexer nela: ela fica no lugar, e a proxima
+   ferramenta abre outra, abaixo. E o que preserva a ordem "falou, fez, falou". */
+/* Zera o que o painel guarda sobre a tela. Os cinco pontos que apagam o chat
+   chamam isto: sem soltar as caixas seladas, elas ficavam na lista apontando
+   pra elementos que ja sairam do documento. */
+/* Desliga o motor SEM perder o endereco da conversa.
+
+   Ao ligar, o app passa --resume e zera o P.resumeId (aquele id ja foi gasto).
+   De la pra frente quem guarda o endereco e o P.sessaoId, que o motor mandou no
+   'system init'. Entao todo lugar que desliga o motor precisa devolver esse
+   endereco pro resumeId - senao a proxima mensagem sobe uma conversa NOVA e o
+   Claude responde sem lembrar de nada, com a conversa inteira ainda na tela.
+
+   Ja aconteceu duas vezes por esquecimento em pontos diferentes. Por isso agora
+   e uma funcao so'. */
+function desligarMotor(P) {
+  if (!P) return;
+  P.resumeId = P.sessaoId || P.resumeId;   // <- o que faz a conversa continuar
+  P.started = false;
+  clearInterval(P.relogio); P.relogio = 0;
+  setDot(P, 'off');
+}
+
+function esquecerPassos(P) {
+  P.passosEl = null;
+  P.passosSelados = null;
+}
+
+function selarPassos(P) {
   const box = P.passosEl;
   P.passosEl = null;
+  if (!box) return;
+  if (!box.children.length) { box.remove(); return; }
+  (P.passosSelados || (P.passosSelados = [])).push(box);
+}
+
+/* no fim do turno os passos viravam pó. Agora encolhem num resumo clicavel,
+   pra dar pra conferir depois o que ele mexeu. */
+function recolherCaixa(box, P) {
   if (!box || box.parentNode !== P.chat) { if (box) box.remove(); return; }
   const n = box.children.length;
   if (!n) { box.remove(); return; }
@@ -1121,13 +1733,23 @@ function limparPassos(P) {
   const cab = document.createElement('button');
   cab.className = 'passos-cab';
   cab.textContent = n === 1 ? '1 passo' : n + ' passos';
-  cab.title = 'Ver o que ele fez neste turno';
+  cab.title = 'Ver o que ele fez aqui';
   cab.addEventListener('click', () => {
     box.classList.toggle('aberto');
     cab.textContent = box.classList.contains('aberto')
       ? 'esconder passos' : (n === 1 ? '1 passo' : n + ' passos');
   });
   box.insertBefore(cab, box.firstChild);
+}
+
+function limparPassos(P) {
+  // recolhe a caixa aberta E as que ficaram pelo caminho do turno
+  const abertas = (P.passosSelados || []).slice();
+  P.passosSelados = null;
+  const atual = P.passosEl;
+  P.passosEl = null;
+  for (const b of abertas) recolherCaixa(b, P);
+  recolherCaixa(atual, P);
 }
 
 function trabalhando(P, oque) {
@@ -1184,10 +1806,77 @@ function marcarFimDoTurno(P) {
 function atBottom(P) { return P.chat.scrollHeight - P.chat.scrollTop - P.chat.clientHeight < 100; }
 function scroll(P, force) { if (force || atBottom(P)) P.chat.scrollTop = P.chat.scrollHeight; }
 
+/* estava olhando o fim da conversa? (folga de 40px pra nao ser exigente demais) */
+function estavaNoFim(P) {
+  if (!P || !P.chat) return true;
+  const c = P.chat;
+  return c.scrollHeight - c.scrollTop - c.clientHeight < 40;
+}
+
+/* Levar pro fim DE VERDADE. Um scrollTop sozinho nao basta quando a conversa
+   acabou de ser montada: o navegador ainda nao calculou a altura, e as imagens
+   do historico carregam depois e empurram tudo pra baixo. */
+function irProFim(P) {
+  if (!P || !P.chat) return;
+  // cancela um "ir pro fim" anterior que ainda esteja pendente: sem isso,
+  // varias chamadas empilhavam timers e a tela voltava pro fim sozinha
+  pararIrProFim(P);
+  let valeu = true;
+  P._pararFim = () => { valeu = false; };
+  const põe = () => {
+    if (!valeu || !P.chat || P.chat.isConnected === false) return;
+    P.chat.scrollTop = P.chat.scrollHeight;
+  };
+  põe();
+  requestAnimationFrame(() => { põe(); requestAnimationFrame(põe); });
+  // imagem que ainda esta carregando muda a altura depois: rola de novo quando chegar
+  const imgs = [...P.chat.querySelectorAll('img')].filter(i => !i.complete);
+  for (const im of imgs) {
+    const fim = () => { põe(); im.removeEventListener('load', fim); im.removeEventListener('error', fim); };
+    im.addEventListener('load', fim); im.addEventListener('error', fim);
+  }
+  // rede pra fontes/markdown que assentam um pouco depois
+  P._timersFim = [setTimeout(põe, 120), setTimeout(põe, 400)];
+}
+
+/* voce rolou pra cima? entao o "ir pro fim" que estava agendado nao vale mais */
+function pararIrProFim(P) {
+  if (!P) return;
+  if (P._pararFim) { try { P._pararFim(); } catch {} P._pararFim = null; }
+  for (const t of (P._timersFim || [])) clearTimeout(t);
+  P._timersFim = [];
+}
+
 /* devolve o balao e a entrada do historico: quem chamou precisa poder desfazer
    EXATAMENTE o que desenhou, e nao "o ultimo que estiver na tela" - com dois
    envios ao mesmo tempo, o ultimo pode ser de outra mensagem */
-function userMsg(P, text, anexos) {
+/* imagem que veio do arquivo da conversa (print colado numa sessao anterior) */
+function imagensDoHistorico(P, imagens) {
+  if (!imagens || !imagens.length) return null;
+  const cx = document.createElement('div');
+  cx.className = 'msg-imgs';
+  for (const im of imagens) {
+    const img = document.createElement('img');
+    img.className = 'msg-img';
+    img.src = 'data:' + (im.mime || 'image/png') + ';base64,' + im.dados;
+    img.alt = 'imagem que você enviou';
+    img.addEventListener('click', () => verImagemGrande(img.src));
+    cx.appendChild(img);
+  }
+  return cx;
+}
+
+/* abre a imagem em tamanho grande, usando o visor que ja existe no painel */
+function verImagemGrande(src) {
+  const cx = abrirModalGlobal();
+  cx.className = 'modal-cx modal-img';
+  const img = document.createElement('img');
+  img.src = src; img.className = 'img-grande';
+  cx.appendChild(img);
+  cx.onclick = () => fecharModalGlobal();
+}
+
+function userMsg(P, text, anexos, imagensSalvas) {
   clearEmpty(P);
   const d = document.createElement('div');
   d.className = 'msg user';
@@ -1199,10 +1888,16 @@ function userMsg(P, text, anexos) {
     cx.classList.remove('hidden');
     for (const a of anexos) cx.appendChild(fichaAnexo(a, false, null, P));
   }
+  // print colado numa sessao anterior, lido do arquivo da conversa
+  const galeria = imagensDoHistorico(P, imagensSalvas);
+  if (galeria) d.insertBefore(galeria, $('.msg-body', d));
   $('.msg-body', d).textContent = text;
   P.chat.appendChild(d); scroll(P, true);
+  const vazia = !String(text || '').trim();
+  if (vazia) $('.msg-body', d).classList.add('hidden');
   const entrada = { quem: 'Você', texto: text };
-  P.hist.push(entrada);
+  // mensagem que era so' imagem nao vira '### Você:' vazio no contexto
+  if (!vazia) P.hist.push(entrada);
   return { balao: d, entrada };
 }
 function pintarAvatar(el) {
@@ -1240,6 +1935,10 @@ function botBlock(P, key) {
   clearEmpty(P);
   const d = document.createElement('div');
   d.className = 'msg bot';
+  /* Uma resposta pode vir em varias falas (uma antes de cada ferramenta). O
+     nome do motor so aparece na primeira: repetir "Claude" quatro vezes fazia
+     parecer que ele tinha respondido quatro vezes. */
+  if (P.blocks && P.blocks.get('resp')) d.classList.add('msg-seguida');
   d.innerHTML = '<div class="msg-role"><span class="av">' + svgMotor(P.engine) + '</span>'
     + (P.engine === 'codex' ? 'Codex' : 'Claude') + '</div>'
     + '<button class="msg-copiar" title="Copiar esta resposta">copiar</button>'
@@ -1264,11 +1963,18 @@ function textDelta(P, key, text) {
   // falando junto se intercalam, e o corrente unico repetia a fala a cada troca
   let b = P.blocks.get('b:' + key);
   if (!b) {
+    /* fala NOVA: o que ele fez ate agora fica onde esta, acima. Sem selar, a
+       caixa de passos era arrastada pro fim a cada ferramenta e no fim do turno
+       todos os textos ficavam em cima e todas as ferramentas embaixo - parecia
+       que ele tinha respondido varias vezes seguidas sem fazer nada. */
+    selarPassos(P);
     b = botBlock(P, 'b:' + key);
     P.blocks.set('resp', b); P.blocks.set('respKey', key);
+  } else if (P.passosEl) {
+    // continuacao da MESMA fala: o que saiu no meio fica antes dela
+    P.chat.insertBefore(P.passosEl, b.el.parentElement);
   }
   b.raw += text; b.el.innerHTML = mdSeguro(b.raw);
-  if (P.passosEl) P.chat.insertBefore(P.passosEl, b.el.parentElement);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
 }
@@ -1577,6 +2283,10 @@ function juntarNaFila(P, texto) {
 /* ============ envio ============ */
 async function send(P) {
   const inp = $('.p-input', P.el);
+  /* ditando? o ditado acaba aqui. Sem isto o campo era limpo pelo envio, a
+     legenda seguinte via "mudou por fora", adotava o vazio como base e
+     reescrevia o ditado inteiro em cima da mensagem que acabou de sair. */
+  if (P._ditado && P.pararDitado) { try { await P.pararDitado('enviou'); } catch {} }
   const text = inp.value.trim();
   if (!text) return;
 
@@ -1608,7 +2318,7 @@ async function send(P) {
   P.navHist = undefined;
   P.t0 = Date.now();              // comeca o relogio do turno
   const escrito = userMsg(P, text, anexos);
-  if (!P.titulo) { P.titulo = text.replace(/\s+/g, ' ').slice(0, 70); pintarNome(P); }
+  if (!P.titulo) { P.titulo = tituloCurto(text); pintarNome(P); }
 
   if (!P.started) {
     setDot(P, 'busy');
@@ -1640,12 +2350,31 @@ async function send(P) {
   }
   const contextoUsado = P.passarContexto;
   if (P.passarContexto) { envio = P.passarContexto + envio; P.passarContexto = null; }
+
+  const pacote = () => ({ paneId: P.id, engine: P.engine, text: envio,
+    // so' imagem: o resto ja foi listado no texto acima, mandar de novo duplicava
+    anexos: ehClaude ? anexos.filter(x => IMG_EXT.includes(String(x.ext || '').toLowerCase())).map(x => x.path) : undefined,
+    effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
+
   try {
-    const foi = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: envio,
-      // so' imagem: o resto ja foi listado no texto acima, mandar de novo duplicava
-      anexos: ehClaude ? anexos.filter(x => IMG_EXT.includes(String(x.ext || '').toLowerCase())).map(x => x.path) : undefined,
-      effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
-    if (foi === false) throw new Error('o motor não está ligado');
+    const foi = await window.api.paneSend(pacote());
+    if (foi === false) {
+      /* O motor tinha morrido sem o painel saber - e o caso comum na aba do
+         servidor, onde a conexao cai calada entre uma mensagem e outra. O app
+         ja religava sozinho, so' que na mensagem SEGUINTE, cobrando de voce
+         reescrever a que se perdeu. Agora ele religa na MESMA conversa e manda
+         de novo aqui, uma vez. */
+      note(P, 'A conexão tinha caído. Religando e mandando de novo…');
+      P.resumeId = P.sessaoId || P.resumeId;   // continua a mesma conversa
+      P.started = false;
+      const ligou = await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd,
+        model: P.model || undefined, approval: P.mode, effort: esforcoDe(P),
+        resumeId: P.resumeId || undefined, remoto: remotoDoPane(P) || undefined });
+      if (ligou === false) throw new Error('não consegui religar o motor');
+      P.started = true; P.resumeId = null;
+      const foiDeNovo = await window.api.paneSend(pacote());
+      if (foiDeNovo === false) throw new Error('o motor não está ligado');
+    }
   }
   catch (e) {
     P.busy = false; setDot(P, 'idle'); pararTrabalho(P); limparPassos(P);
@@ -1672,8 +2401,12 @@ window.api.onPaneEvent((ev) => {
     case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error); break;
     case 'compactou': $('.p-compactar', P.el).classList.remove('rodando'); avisoEnvio(P, 'Conversa resumida. O que importa foi mantido.'); break;
     case 'tokens':
+      /* Dois avisos diferentes chegam por aqui: o 'assistant' manda o TOTAL
+         ocupado, e o fim do turno manda so' o tamanho da JANELA. Com
+         "ev.total || 0" o segundo zerava o numero que o primeiro tinha
+         acabado de acertar, e a barrinha esvaziava sozinha ao terminar. */
       if (ev.janela) P.janela = ev.janela;
-      P.tokens = ev.total || 0;
+      if (ev.total != null) P.tokens = ev.total;
       pintarTokens(P);
       break;
     case 'janela': P.janela = ev.total; pintarTokens(P); break;
@@ -1690,10 +2423,11 @@ window.api.onPaneEvent((ev) => {
       // acabou o motivo de segurar o motor fora da tela: desliga e devolve pro
       // config. A conversa volta sozinha com --resume quando voce abrir a aba.
       if (noFundo && !P.queued && !(P.filaPerm && P.filaPerm.length) && !(P.terms && P.terms.size)) {
-        clearInterval(P.relogio); P.relogio = 0;
-        savePanes();                 // ANTES do delete: fora do mapa a ficha dele nao e' atualizada
-        panesFundo.delete(P.id);
-        P.desligadoNoFundo = true;   // desligado, mas nao "fechado": o aviso ainda vale
+        // desliga o MOTOR (acabou o trabalho), mas NAO tira do panesFundo: a
+        // tela dele continua guardada pra voltar pronta quando voce abrir a aba
+        desligarMotor(P);   // guarda o endereco da conversa antes de desligar
+        P.desligadoNoFundo = true;
+        savePanes();
         window.api.paneStop({ paneId: P.id, engine: P.engine });
       }
       if (noFundo) pintarAbasLocal();   // a aba para de pulsar quando termina
@@ -1721,12 +2455,19 @@ window.api.onPaneEvent((ev) => {
         }, 150); }
       break;
     case 'engine-down': {
-      P.started = false; P.busy = false; setDot(P, 'off'); pararTrabalho(P); limparPassos(P);
+      // "a proxima mensagem religa" - mas so' religa na MESMA conversa se o
+      // endereco dela for guardado agora
+      desligarMotor(P);
+      P.busy = false; pararTrabalho(P); limparPassos(P);
       esconderPermissao(P);
       if (noFundo) pintarAbasLocal();   // senao a aba seguia pulsando um trabalho ja morto
       const perdeu = !!P.queued; P.queued = null; pintarFila(P);
-      note(P, perdeu ? 'A conexão caiu e a mensagem que estava na fila não foi enviada. Escreva de novo.'
-                     : 'A conexão caiu. A próxima mensagem religa.', true);
+      /* dizer QUAL foi o motivo, quando o motor deixou algum. Sem isso, chave
+         recusada, pasta que sumiu e servidor fora do ar viravam a mesma frase. */
+      const base = ev.remoto ? 'A conexão com o servidor caiu.' : 'A conexão caiu.';
+      const fim = perdeu ? ' A mensagem que estava na fila não foi enviada, escreva de novo.'
+                         : ' A próxima mensagem religa.';
+      note(P, base + fim + (ev.motivo ? '  (' + ev.motivo + ')' : ''), true);
       break;
     }
     case 'approval': showApproval(P, ev); avisarPainel(P, 'está pedindo permissão'); break;
@@ -2141,9 +2882,11 @@ function subirNaLista(P) {
 function pintarNome(P) {
   const barra = $('.pane-nome', P.el);
   const t = (P.titulo || '').trim();
-  barra.classList.toggle('vazio', !t);
-  $('.pn-txt', barra).textContent = t;
-  barra.title = t;
+  // a barra do nome virou a primeira linha do painel E a alca de arrastar entre
+  // colunas: ela nao pode mais sumir quando a conversa ainda nao tem nome
+  barra.classList.toggle('sem-nome', !t);
+  $('.pn-txt', barra).textContent = t || 'Conversa nova';
+  barra.title = t || 'Conversa ainda sem nome — arraste daqui para mover de coluna';
 }
 
 function renomearAqui(P) {
@@ -2154,6 +2897,7 @@ function renomearAqui(P) {
   inp.className = 'pn-input';
   inp.value = P.titulo || '';
   txt.style.display = 'none'; lapis.style.display = 'none';
+  barra.setAttribute('draggable', 'false');   // enquanto edita, o mouse e' do campo
   barra.insertBefore(inp, txt);
   inp.focus(); inp.select();
   let pronto = false;
@@ -2161,6 +2905,7 @@ function renomearAqui(P) {
     if (pronto) return; pronto = true;
     const novo = inp.value.trim();
     inp.remove(); txt.style.display = ''; lapis.style.display = '';
+    barra.setAttribute('draggable', 'true');   // volta a poder arrastar
     if (salvar && novo && novo !== P.titulo) {
       P.titulo = novo; P.nomeManual = true; pintarNome(P); savePanes();
       const id = P.sessaoId || P.resumeId;
@@ -2177,10 +2922,60 @@ function renomearAqui(P) {
   inp.addEventListener('blur', () => fim(true));
 }
 
+/* Nome da conversa a partir da primeira mensagem. O Claude Code grava um
+   'aiTitle' bem melhor no arquivo, mas so' depois de um tempo - e em boa parte
+   das conversas ele nunca vem. Ate la, este resumo cru fica no lugar do trecho
+   de 70 letras que so' mostrava o comeco da frase. */
+const PALAVRA_VAZIA = new Set(['a','o','as','os','de','da','do','das','dos','em','no','na','nos','nas',
+  'um','uma','uns','umas','para','pra','pro','por','com','sem','que','se','e','ou','the','of','to',
+  'eu','voce','vc','me','meu','minha','isso','esse','essa','este','esta','ai','la','ta','tá','so','só',
+  'quero','queria','preciso','gostaria','pode','poderia']);
+/* frase curta fica INTEIRA: aparar as pontas de "faz isso pra mim" sobrava
+   so' "Mim". So' vale aparar quando ha frase suficiente pra sobrar sentido. */
+const MIN_PRA_APARAR = 5;
+function tituloCurto(texto) {
+  let t = String(texto || '');
+  t = t.replace(/```[\s\S]*?```/g, ' ')          // bloco de codigo nao vira titulo
+       .replace(/https?:\/\/\S+/g, ' ')            // link tambem nao
+       .replace(/[A-Za-z]:\\[^\s]+|\/[\w.-]+\/\S*/g, ' ')   // nem caminho de arquivo
+       .replace(/<[^>]+>/g, ' ')
+       .replace(/\s+/g, ' ')
+       .trim();
+  // sobrou nada util (mensagem que era so' link, so' caminho ou so' codigo):
+  // devolve VAZIO. O painel mostra "Conversa nova" e o titulo do Claude Code
+  // assume depois - melhor do que carimbar a URL crua como nome.
+  if (!t) return '';
+  const frase = t.split(/(?<=[.!?;\n])\s/)[0] || t;
+  const so = (p) => p.toLowerCase().replace(/[^\wáéíóúâêôãõçà-ú]/gi, '');
+  let palavras = frase.split(' ').filter(Boolean);
+  // corta palavra sem conteudo SO' das pontas: tirando do meio, a frase
+  // embaralhava ("faz isso pra mim" virava "Mim")
+  if (palavras.length >= MIN_PRA_APARAR) {
+    let i = 0;
+    // para de comer quando sobrariam menos de 2 palavras
+    while (i < palavras.length - 2 && PALAVRA_VAZIA.has(so(palavras[i]))) i++;
+    let j = palavras.length;
+    while (j > i + 2 && PALAVRA_VAZIA.has(so(palavras[j - 1]))) j--;
+    palavras = palavras.slice(i, j);
+  }
+  if (!palavras.length) return '';
+  let nome = palavras.slice(0, 5).join(' ');
+  // apara pontuacao pendurada no fim, inclusive ! e ?
+  nome = nome.replace(/[\s,;:.!?\-]+$/, '').trim();
+  if (!nome) return '';
+  nome = nome.charAt(0).toUpperCase() + nome.slice(1);
+  return nome.slice(0, 48);
+}
+
 async function buscarNome(P) {
-  if (P.engine !== 'claude' || !P.sessaoId || P.nomeManual) return;
+  if (P.morto || P.engine !== 'claude' || !P.sessaoId || P.nomeManual) return;
   const t = await window.api.sessionTitulo({ engine: 'claude', file: P.sessaoFile, id: P.sessaoId });
-  if (t && t !== P.titulo) { P.titulo = t; pintarNome(P); savePanes(); }
+  if (t && t !== P.titulo) { P.titulo = t; pintarNome(P); savePanes(); return; }
+  // o 'aiTitle' costuma demorar algumas mensagens pra aparecer: tenta de novo
+  // mais tarde, em vez de desistir na primeira
+  P.tentouNome = (P.tentouNome || 0) + 1;
+  clearTimeout(P.timerNome);
+  if (!t && P.tentouNome <= 6) P.timerNome = setTimeout(() => buscarNome(P), 20000);
 }
 
 function pintarModo(P) {
@@ -2280,6 +3075,30 @@ function tituloPopup(txt, dica) {
 function elSecao(txt) { const d = document.createElement('div'); d.className = 'menu-secao'; d.textContent = txt; return d; }
 function elLinha() { const d = document.createElement('div'); d.className = 'menu-linha'; return d; }
 
+/* Shift+Tab: anda pelos modos de permissao na ordem da lista, igual ao CLI. */
+async function girarModo(P) {
+  // 'bypass' (faz tudo sem perguntar, inclusive o perigoso) fica FORA do ciclo:
+  // no CLI o Shift+Tab tambem nao alcanca ele, e chegar la sem querer, so' de
+  // teclar 4 vezes, e' grave demais. Pra usar bypass, pelo menu de modos.
+  const lista = (MODOS[P.engine] || []).filter(m => m.id !== 'bypass');
+  if (!lista.length) return;
+  const i = lista.findIndex(m => m.id === P.mode);
+  const mo = lista[(i + 1) % lista.length];
+  // so' ESTE painel: o giro nao pode virar o padrao de todo painel novo
+  P.mode = mo.id; pintarModo(P);
+  const estavaOcupado = P.busy;
+  await window.api.paneStop({ paneId: P.id, engine: P.engine });
+  if (P.morto) return;
+  if (estavaOcupado) note(P, 'A resposta em andamento foi interrompida para trocar o modo.', true);
+  if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+  destravarPainel(P);
+  P.started = false; setDot(P, 'off');
+  note(P, 'Modo: ' + mo.nome + ' — ' + mo.desc.toLowerCase() + '.');
+  savePanes();
+  const campo = $('.p-input', P.el);
+  if (campo) campo.focus();      // o cursor continua onde estava
+}
+
 /* ---- menu de Modos + barrinha de esforço ---- */
 function menuModos(P) {
   const m = novoMenu(P);
@@ -2367,7 +3186,7 @@ async function menuSkills(P, filtroInicial, focar) {
   const acoes = [
     { sec: 'Contexto', ic: 'upload', nome: 'Anexar arquivo…', act: () => menuAnexo(P) },
     { sec: 'Contexto', ic: 'folder', nome: 'Mencionar a pasta deste painel', act: () => inserirNoInput(P, P.cwd) },
-    { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); } },
+    { sec: 'Contexto', ic: 'eraser', nome: 'Limpar a tela', desc: 'a conversa continua', act: () => { P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); esquecerPassos(P); } },
     { sec: 'Contexto', ic: 'sparkles', nome: 'Começar conversa nova', act: () => novaConversa(P.engine) },
     { sec: 'Modelo', ic: 'brain', nome: 'Trocar modelo…', tag: modeloAtual(P).nome, act: () => menuModelos(P) },
     { sec: 'Modelo', ic: 'sliders-horizontal', nome: 'Esforço', tag: EF_PT[P.effort] || P.effort, act: () => menuModelos(P) },
@@ -2884,7 +3703,10 @@ function painelVisivel(P) {
   try {
     const r = P.el.getBoundingClientRect();
     const caixa = $('#panes').getBoundingClientRect();
-    return r.right > caixa.left + 40 && r.left < caixa.right - 40;
+    const naLargura = r.right > caixa.left + 40 && r.left < caixa.right - 40;
+    // empilhado e espremido conta como "fora de vista": voce nao consegue ler
+    // o que aconteceu num painel de 30px de altura
+    return naLargura && r.height > 160;
   } catch { return true; }
 }
 function tarjaAviso() {
@@ -3510,6 +4332,10 @@ function mesmaPasta(cwdSessao, cwdAba) {
 const histGen = { claude: 0, codex: 0 };
 const pintaGen = { claude: 0, codex: 0 };
 const escondidasPorFiltro = { claude: 0, codex: 0 };
+/* a aba sem pasta ("PC inteiro") tambem filtra agora. Sem isto, o aviso
+   "clique para ver todas" levava pra ela mesma e nao fazia nada. */
+const semPastaFiltrou = { claude: false, codex: false };
+const verTodasAsConversas = { claude: false, codex: false };
 async function loadHist(engine, force) {
   const meuGen = ++histGen[engine];
   const box = $(engine === 'claude' ? '#histClaude' : '#histCodex');
@@ -3533,6 +4359,20 @@ async function loadHist(engine, force) {
       const todas = r.length;
       r = r.filter(s => pastas.some(p => mesmaPasta(s.cwd, p)));
       escondidasPorFiltro[engine] = todas - r.length;   // pra avisar na tela
+    } else if (Array.isArray(r)) {
+      // aba sem pasta ("PC inteiro"): antes mostrava TUDO, inclusive as conversas
+      // que pertencem as abas de projeto. Agora ela fica com o que sobra.
+      const deOutras = [];
+      for (const outra of abasLocais()) {
+        if (!outra || outra.id === (aba && aba.id) || outra.tipo === 'ssh') continue;
+        for (const p of pastasDaAba(outra)) deOutras.push(p);
+      }
+      if (deOutras.length && !verTodasAsConversas[engine]) {
+        const todas = r.length;
+        r = r.filter(s => !deOutras.some(p => mesmaPasta(s.cwd, p)));
+        escondidasPorFiltro[engine] = todas - r.length;
+        semPastaFiltrou[engine] = true;    // aqui o aviso vira "mostrar assim mesmo"
+      } else { escondidasPorFiltro[engine] = 0; semPastaFiltrou[engine] = false; }
     } else escondidasPorFiltro[engine] = 0;
   }
   // chegou tarde: o usuario ja trocou de aba ou pediu outra lista
@@ -3611,6 +4451,9 @@ function alternarGrupoRecolhido(id) {
 /* modal central, fora de qualquer painel (a lista de conversas nao pertence a nenhum) */
 function abrirModalGlobal() {
   const modal = $('#modalGrupo'), cx = $('.modal-cx', modal);
+  cx.className = 'modal-cx';   // limpa marca de uso anterior (ex: a de imagem,
+                               // que tira fundo e borda e deixava o formulario
+                               // seguinte ilegivel ate reiniciar o app)
   modal.classList.remove('hidden');
   modal.onclick = (e) => { if (e.target === modal) fecharModalGlobal(); };
   cx.onclick = (e) => e.stopPropagation();
@@ -3939,11 +4782,18 @@ async function paintHist(engine, list) {
       const av = document.createElement('button');
       av.className = 'hist-filtro-aviso';
       av.textContent = '+' + nEsc + (nEsc === 1 ? ' conversa de outra pasta' : ' conversas de outras pastas');
-      av.title = 'Esta aba mostra só as conversas das pastas dela. Clique para ver todas.';
-      av.addEventListener('click', () => {
-        const pc = abasLocais().find(x => x.tipo === 'local' && !pastasDaAba(x).length);
-        if (pc) trocarAbaLocal(pc.id);
-      });
+      if (semPastaFiltrou[engine]) {
+        // ja estamos na aba sem pasta: aqui o botao mostra tudo em vez de
+        // tentar trocar pra uma aba que e' esta mesma
+        av.title = 'Estas conversas pertencem às outras abas. Clique para mostrar assim mesmo.';
+        av.addEventListener('click', () => { verTodasAsConversas[engine] = true; loadHist(engine, true); });
+      } else {
+        av.title = 'Esta aba mostra só as conversas das pastas dela. Clique para ver todas.';
+        av.addEventListener('click', () => {
+          const pc = abasLocais().find(x => x.tipo === 'local' && !pastasDaAba(x).length);
+          if (pc) { verTodasAsConversas[engine] = true; trocarAbaLocal(pc.id); }
+        });
+      }
       box.appendChild(av);
     }
     const alvo = filtroGrupo[engine];
@@ -4062,7 +4912,7 @@ async function openSession(s, el) {
   P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
   P.tokens = 0; P.janela = 0; P.passarContexto = null;
   P.anexos = []; pintarAnexos(P); pintarTokens(P); esconderPermissao(P);
-  P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = '';
+  P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; esquecerPassos(P);
   fillModels(P); paintEngine(P); setDot(P, 'off');
   $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
   pintarModo(P); pintarNome(P);
@@ -4074,7 +4924,7 @@ async function openSession(s, el) {
     ? await window.api.sessionHistoryRemoto({ remoto: remotoAqui, id: s.id })
     : await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.id })) || [];
   for (const m of (msgs || [])) {
-    if (m.role === 'user') userMsg(P, m.text);   // o userMsg ja grava no historico
+    if (m.role === 'user') userMsg(P, m.text, null, m.imagens);   // o userMsg ja grava no historico
     else if (m.role === 'bot') {
       const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = mdSeguro(m.text);
       P.hist.push({ quem: s.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text });
@@ -4086,18 +4936,24 @@ async function openSession(s, el) {
   faixa.className = 'troca'; faixa.innerHTML = '<span></span>';
   $('span', faixa).textContent = 'daqui pra baixo é a conversa de agora';
   P.chat.appendChild(faixa);
-  scroll(P, true);
+  irProFim(P);   // abre no fim: e' de onde voce vai continuar
   $('.p-input', P.el).focus();
 }
 
 /* ao abrir o app, devolve os paineis da ultima vez com a conversa ja carregada */
 async function restaurarPaineis(salvos, abaId, gen) {
   sairDaAbertura();
+  return await comMontagemAdiada(() => restaurarPaineisMiolo(salvos, abaId, gen));
+}
+
+async function restaurarPaineisMiolo(salvos, abaId, gen) {
   for (const s of salvos.slice(0, 12)) {
     // o usuario trocou de aba de novo enquanto isso carregava: para aqui
     if (gen !== undefined && gen !== abaGen) return;
     const P = newPane({ engine: s.engine, cwd: s.cwd, model: s.model, mode: s.mode, effort: s.effort, titulo: s.titulo, abaId });
     P.resumeId = s.sessaoId;
+    if (s.coluna != null) P.coluna = s.coluna;   // a montagem acontece no fim do lote
+    if (s.larguraColuna) P.larguraColuna = s.larguraColuna;
     if (s.contexto) P.passarContexto = s.contexto;
     // devolve o texto que voce tinha comecado a escrever
     if (s.rascunho) {
@@ -4120,7 +4976,7 @@ async function restaurarPaineis(salvos, abaId, gen) {
     for (const msg of msgs) {
       // o historico em memoria tambem: sem ele, trocar de motor depois de
       // reabrir o app mandava o outro comecar do zero, sem saber de nada
-      if (msg.role === 'user') userMsg(P, msg.text);   // o userMsg ja grava no historico
+      if (msg.role === 'user') userMsg(P, msg.text, null, msg.imagens);   // o userMsg ja grava no historico
       else if (msg.role === 'bot') {
         const b = botBlock(P, 'r' + Math.random()); b.raw = msg.text; b.el.innerHTML = mdSeguro(msg.text);
         P.hist.push({ quem: s.engine === 'codex' ? 'Codex' : 'Claude', texto: msg.text });
@@ -4130,7 +4986,8 @@ async function restaurarPaineis(salvos, abaId, gen) {
       const d = document.createElement('div');
       d.className = 'troca'; d.innerHTML = '<span></span>';
       $('span', d).textContent = 'conversa de antes — pode continuar daqui';
-      P.chat.appendChild(d); scroll(P, true);
+      P.chat.appendChild(d);
+      irProFim(P);   // abre no fim: e' de onde voce vai continuar
     }
   }
   const primeiro = [...panes.values()][0];
@@ -4171,7 +5028,7 @@ async function novaConversa(engine) {
   P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
   P.tokens = 0; P.janela = 0; P.passarContexto = null; P.nomeManual = false;
   P.anexos = []; pintarAnexos(P); pintarTokens(P); esconderPermissao(P);
-  P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); pintarNome(P);
+  P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); esquecerPassos(P); pintarNome(P);
   fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
   savePanes();
   $('.p-input', P.el).focus();
@@ -4271,7 +5128,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (/^[1-9]$/.test(e.key)) {
-    const arr = [...panes.values()];
+    const arr = colunasDaTela().flat();   // ordem da TELA, nao a de criacao
     const P = arr[Number(e.key) - 1];
     if (P) { e.preventDefault(); setFocus(P); $('.p-input', P.el).focus(); }
     return;
@@ -4328,10 +5185,28 @@ window.api.onMenu((a) => {
     for (const P of alvo) window.api.paneInterrupt({ paneId: P.id, engine: P.engine });
   }
   else if (a === 'clearPane' && focusPane) {
-    focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear();
+    focusPane.chat.innerHTML = ''; focusPane.blocks.clear(); focusPane.tools.clear(); esquecerPassos(focusPane);
     note(focusPane, 'Tela limpa. A conversa continua de onde estava.');
   }
 });
+
+/* Rede de seguranca do cursor. Se por qualquer motivo o foco cair no corpo da
+   pagina - troca de aba, painel recriado, voltar pro app depois de um alt-tab -
+   o teclado fica sem destino e parece que o app "travou". Aqui ele volta pro
+   campo do painel em foco. */
+function devolverOCursor() {
+  const solto = !document.activeElement || document.activeElement === document.body
+    || document.activeElement === document.documentElement;
+  if (!solto) return;                       // voce ja esta digitando em algum lugar: nao atrapalha
+  if (!$('#modalGrupo').classList.contains('hidden')) return;   // tem caixa aberta: o foco e' dela
+  const P = focusPane || [...panes.values()][0];
+  if (!P || !P.el || !P.el.isConnected) return;
+  if (!$('.p-modal', P.el).classList.contains('hidden')) return;  // janelinha do painel aberta
+  const campo = $('.p-input', P.el);
+  if (campo) { try { campo.focus(); } catch {} }
+}
+window.addEventListener('focus', () => setTimeout(devolverOCursor, 60));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(devolverOCursor, 60); });
 
 /* ============ boot ============ */
 (async function boot() {

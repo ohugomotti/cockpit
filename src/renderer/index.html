@@ -12,7 +12,7 @@
 <div id="avisos"></div>
 <div id="abasLocal"></div>
 
-<div id="titlebar">
+<div id="titlebar" class="hidden">
   <div class="tb-drag"></div>
   <div class="tb-center" id="tbTitle">Cockpit</div>
   <div class="tb-right">
@@ -131,6 +131,7 @@
 
 <template id="tplPane">
   <section class="pane">
+    <div class="pane-nome"><span class="pn-txt"></span><button class="pn-edit" title="Renomear conversa"></button></div>
     <header class="pane-hd">
       <div class="p-chave" title="Trocar entre Claude e Codex">
         <button class="ch-lado" data-motor="claude"><span></span>Claude</button>
@@ -151,7 +152,6 @@
         <button class="visor-x" title="Fechar (Esc)"></button></div>
       <div class="visor-corpo"></div>
     </div></div>
-    <div class="pane-nome"><span class="pn-txt"></span><button class="pn-edit" title="Renomear conversa"></button></div>
     <div class="pane-chat">
       <div class="pane-empty">
         <div class="pe-logo"></div>

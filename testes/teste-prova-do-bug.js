@@ -5,9 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
+const { RAIZ, versaoAnterior } = require('./raiz');
 function pegar(txt, assinatura, nome) {
   const i = txt.indexOf(assinatura);
   if (i < 0) throw new Error('nao achei ' + nome);
@@ -20,7 +18,7 @@ function pegar(txt, assinatura, nome) {
 }
 
 function rendererDe(pasta) {
-  const appTxt = fs.readFileSync(path.join(RAIZ_PROJETO, pasta, 'renderer', 'app.js'), 'utf8');
+  const appTxt = fs.readFileSync(path.join(RAIZ, pasta, 'renderer', 'app.js'), 'utf8');
   const bolhas = [];
   const ctx = {
     console, __bolhas: bolhas,
@@ -32,6 +30,11 @@ function rendererDe(pasta) {
   vm.createContext(ctx);
   if (appTxt.includes('function mesmaFala(')) vm.runInContext(pegar(appTxt, 'function mesmaFala(', 'mesmaFala'), ctx);
   vm.runInContext(`function botBlock(P, key){ const b={el:{innerHTML:''},raw:''}; __bolhas.push(b); P.blocks.set(key,b); return b; }`, ctx);
+  // selarPassos nasceu junto com a correcao da resposta quebrada e o textDelta
+  // chama ela. Este teste tambem roda contra a versao ANTIGA, que nao tem a
+  // funcao - por isso so extrai se existir, igual ao mesmaFala acima.
+  if (appTxt.includes('function selarPassos(')) vm.runInContext(pegar(appTxt, 'function selarPassos(', 'selarPassos'), ctx);
+  else vm.runInContext('function selarPassos(){}', ctx);
   vm.runInContext(pegar(appTxt, 'function textDelta(', 'textDelta'), ctx);
   vm.runInContext(pegar(appTxt, 'function textFinal(', 'textFinal'), ctx);
   const P = { engine: 'codex', blocks: new Map(), hist: [], chat: {}, el: {} };
@@ -54,21 +57,20 @@ function rodar(pasta) {
   return { bolhas: r.bolhas.length, hist: r.P.hist.length };
 }
 
-if (!fs.existsSync(path.join(RAIZ_PROJETO, 'src-original'))) {
-  console.log('Este teste compara o codigo ANTIGO com o de agora, lado a lado.');
-  console.log('A pasta src-original/ (o codigo de antes da correcao) nao existe neste');
-  console.log('repositorio - ela so vive na pasta de trabalho onde a correcao foi feita.');
-  console.log('Nada a verificar aqui. Os outros testes cobrem o comportamento atual.');
-  process.exit(0);
-}
-const antes = rodar('src-original');
-const depois = rodar('src');
 
-console.log('codigo ANTIGO  ->', antes.bolhas, 'bolha(s) na tela,', antes.hist, 'fala(s) no historico');
+/* A comparacao com a versao ANTIGA prova que o bug existia. Essa copia fica na
+   maquina de quem corrigiu, nao no repositorio - entao aqui ela e' opcional: sem
+   ela, o teste roda so' a parte que verifica o codigo de hoje. */
+const pastaAntiga = versaoAnterior('src-original');
+const antes = pastaAntiga ? rodar('src-original') : null;
+const depois = rodar('src');
+if (!antes) console.log('(sem a copia antiga aqui: pulando a comparacao)');
+
+if (antes) console.log('codigo ANTIGO  ->', antes.bolhas, 'bolha(s) na tela,', antes.hist, 'fala(s) no historico');
 console.log('codigo NOVO    ->', depois.bolhas, 'bolha(s) na tela,', depois.hist, 'fala(s) no historico');
 
 let erro = 0;
-if (antes.bolhas !== 2) { console.log('FALHA: o codigo antigo deveria duplicar - o teste nao esta provando nada'); erro = 1; }
+if (antes && antes.bolhas !== 2) { console.log('FALHA: o codigo antigo deveria duplicar - o teste nao esta provando nada'); erro = 1; }
 else console.log('ok   o codigo antigo REALMENTE duplicava a resposta');
 if (depois.bolhas !== 1) { console.log('FALHA: o codigo novo ainda duplica'); erro = 1; }
 else console.log('ok   o codigo novo mostra a resposta uma vez so');

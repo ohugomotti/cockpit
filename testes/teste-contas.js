@@ -6,9 +6,7 @@ const os = require('os');
 const path = require('path');
 const Module = require('module');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
+const { RAIZ: RAIZ_PROJ } = require('./raiz');   // a raiz do CODIGO (a outra e' a pasta temporaria do teste)
 const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-teste-'));
 const HOME_FALSA = path.join(RAIZ, 'home');
 const USERDATA = path.join(RAIZ, 'userData');
@@ -56,7 +54,7 @@ const checa = (nome, cond, det) => {
 
 const pasta = process.argv[2] || 'src';
 try {
-  require(path.join(RAIZ_PROJETO, pasta, 'main.js'));
+  require(path.join(RAIZ_PROJ, pasta, 'main.js'));
 } catch (e) {
   console.log('nao consegui carregar o main.js:', e.message);
   process.exit(1);

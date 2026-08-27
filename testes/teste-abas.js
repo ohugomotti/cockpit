@@ -4,9 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
+const { RAIZ, versaoAnterior } = require('./raiz');
 function pegar(txt, assinatura, nome) {
   const i = txt.indexOf(assinatura);
   if (i < 0) throw new Error('nao achei ' + nome);
@@ -19,7 +17,7 @@ function pegar(txt, assinatura, nome) {
 }
 
 async function rodar(pasta) {
-  const appTxt = fs.readFileSync(path.join(RAIZ_PROJETO, pasta, 'renderer', 'app.js'), 'utf8');
+  const appTxt = fs.readFileSync(path.join(RAIZ, pasta, 'renderer', 'app.js'), 'utf8');
   const cfg = {
     abaAtiva: 'projetoX',
     abas: [
@@ -74,11 +72,14 @@ function abaDe(cfg, id) { return cfg.abas.find(a => a.id === id); }
     else { erro = 1; console.log('  FALHA ' + nome + (det ? ' -> ' + det : '')); }
   };
 
-  // 'src-original' e' o codigo de antes da correcao, que so' existe na pasta de
-  // trabalho. Sem ele, roda so' a verificacao do codigo de agora.
-  const temAntigo = fs.existsSync(path.join(RAIZ_PROJETO, 'src-original'));
-  const antigo = temAntigo ? await rodar('src-original') : null;
+
+/* A comparacao com a versao ANTIGA prova que o bug existia. Essa copia fica na
+   maquina de quem corrigiu, nao no repositorio - entao aqui ela e' opcional: sem
+   ela, o teste roda so' a parte que verifica o codigo de hoje. */
+  const pastaAntiga = versaoAnterior('src-original');
+  const antigo = pastaAntiga ? await rodar('src-original') : null;
   const novo = await rodar('src');
+  if (!antigo) console.log('(sem a copia antiga aqui: pulando a comparacao)');
 
   const tituloDoPC = (cfg) => {
     const pc = cfg.abas.find(a => a.id === 'pc');
@@ -90,10 +91,8 @@ function abaDe(cfg, id) { return cfg.abas.find(a => a.id === id); }
   console.log('  codigo NOVO   -> a aba PC ficou com:', JSON.stringify(tituloDoPC(novo)));
 
   console.log('');
-  if (antigo) {
-    checa('o antigo REALMENTE estragava a aba vizinha (prova que o teste vale)',
-      tituloDoPC(antigo) !== 'conversa do PC', tituloDoPC(antigo));
-  } else console.log('  --   comparacao com o codigo antigo pulada (src-original nao existe aqui)');
+  if (antigo) checa('o antigo REALMENTE estragava a aba vizinha (prova que o teste vale)',
+    tituloDoPC(antigo) !== 'conversa do PC', tituloDoPC(antigo));
   checa('a aba vizinha manteve os paineis dela', tituloDoPC(novo) === 'conversa do PC', tituloDoPC(novo));
   checa('a aba apagada saiu mesmo', !novo.abas.find(a => a.id === 'projetoX'));
   checa('a aba ativa passou a ser a que sobrou', novo.abaAtiva === 'pc', novo.abaAtiva);

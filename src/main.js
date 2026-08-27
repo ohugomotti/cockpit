@@ -456,8 +456,16 @@ function claudeStart(paneId, opts) {
     if (!ssgValido(remoto)) { emit(paneId, 'note', { text: 'Servidor com endereço ou usuário inválido. Edite a aba.', error: true }); return false; }
     // '|| exit 1': se a pasta nao existir, o painel avisa em vez de rodar no lugar errado
     const comando = cdRemoto(remoto.caminhoRemoto) + ' || exit 1; claude ' + args.map(qLinux).join(' ');
+    /* Sinal de vida a cada 20s. Sem isto o canal fica em silencio absoluto
+       entre um turno e outro - e um turno longo, mais o tempo que voce leva
+       lendo a resposta, passa de dez minutos. Conexao parada e' descartada por
+       roteador/firewall/operadora sem avisar: os dois lados continuam achando
+       que estao ligados e a verdade so' aparece quando voce manda a proxima
+       mensagem. Isso mantem o caminho aberto E derruba de verdade em ~2min
+       (20s x 6) quando o servidor sai do ar, em vez de travar esperando. */
     proc = spawnBin('ssh', [
       '-i', remoto.chave, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes',
+      '-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=6', '-o', 'TCPKeepAlive=yes',
       remoto.usuario + '@' + remoto.host, '--', comando,
     ], { env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   } else {
@@ -480,14 +488,25 @@ function claudeStart(paneId, opts) {
       claudeMessage(paneId, m);
     }
   });
-  proc.stderr.on('data', () => {});
+  /* Guarda as ultimas linhas do erro. Antes isto era um ouvinte vazio e tudo
+     que o ssh/claude reclamava ia pro lixo - qualquer causa virava a mesma
+     frase generica na tela, e nao dava pra saber o que tinha acontecido. */
+  proc.stderr.on('data', (d) => {
+    st.erro = ((st.erro || '') + d.toString('utf8')).slice(-1200);
+  });
   // handshake que liga o canal de permissao (e devolve a lista de skills)
   try { proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'init-' + paneId, request: { subtype: 'initialize', hooks: {} } }) + '\n'); } catch {}
-  proc.on('close', () => {
+  proc.on('close', (codigo) => {
     // usa o "st" deste processo, nao o que estiver no mapa agora: se o
     // usuario trocou de processo rapido, o mapa ja pode apontar para o novo
     if (claudePanes.get(paneId) === st) claudePanes.delete(paneId);
-    if (!st.parandoDeProposito) emit(paneId, 'engine-down', {});
+    if (st.parandoDeProposito) return;
+    // manda junto o que o processo reclamou antes de morrer
+    const motivo = String(st.erro || '').split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !/^Warning: Permanently added/i.test(l))
+      .slice(-3).join(' · ').slice(0, 300);
+    emit(paneId, 'engine-down', { motivo, codigo, remoto: !!remoto });
   });
   proc.on('error', (e) => {
     if (claudePanes.get(paneId) === st) claudePanes.delete(paneId);
@@ -577,6 +596,21 @@ function claudeMessage(paneId, m) {
     }
     return;
   }
+  /* Quanto da janela a conversa ocupa AGORA. Vem do ultimo 'assistant': ali o
+     usage descreve UMA chamada de API. O 'result' soma o turno inteiro - cada
+     ferramenta rele o cache - e numa resposta longa aquilo passa de 1400k numa
+     janela de 1000k, que e impossivel. Medido num .jsonl real: contexto de
+     109k virava 4403k somando os cache_read da sessao. */
+  if (m.type === 'assistant' && m.message && m.message.usage) {
+    const u = m.message.usage || {};
+    const total = (u.input_tokens || 0) + (u.output_tokens || 0)
+      + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    // sub-agente tem contexto proprio e menor: nao pode reescrever o do painel.
+    // As duas grafias aparecem no fluxo - a de baixo e a que o resto do arquivo
+    // ja trata, e olhar so' uma deixava metade dos casos passar.
+    const deSubAgente = !!(m.parent_tool_use_id || m.parentToolUseId);
+    if (total && !deSubAgente) emit(paneId, 'tokens', { total });
+  }
   if (m.type === 'assistant' && m.message) {
     const marca = marcaSub(m);
     // sem streaming (nao veio message_start) o numero ainda nao existe: cria agora
@@ -615,13 +649,11 @@ function claudeMessage(paneId, m) {
     // e a conta de mensagem de cada sub-agente tambem morre aqui, senao o mapa
     // ganhava uma chave por Task e nunca soltava
     limparSeq(paneId);
-    const u = m.usage || {};
     let janela = 0;
     try { const mu = m.modelUsage || {}; const k = Object.keys(mu)[0]; if (k) janela = mu[k].contextWindow || 0; } catch {}
-    emit(paneId, 'tokens', {
-      total: (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0),
-      janela: janela || undefined,
-    });
+    // aqui so o TAMANHO da janela: o quanto esta ocupado ja veio do ultimo
+    // 'assistant', o unico que enxerga o contexto de verdade
+    if (janela) emit(paneId, 'tokens', { janela });
     if (m.is_error) emit(paneId, 'note', { text: String(m.result || m.subtype), error: true });
     emit(paneId, 'turn-end', {});
   }
@@ -944,6 +976,7 @@ function claudeHistory(file, maxMsgs) {
 /* o mesmo parse serve pro arquivo local e pro conteudo que veio do servidor */
 function mensagensDoJsonl(data, maxMsgs) {
   const msgs = [];
+  let gastoEmImagem = 0;
   for (const line of String(data || '').split('\n')) {
     if (!line.startsWith('{')) continue;
     let d; try { d = JSON.parse(line); } catch { continue; }
@@ -951,7 +984,20 @@ function mensagensDoJsonl(data, maxMsgs) {
       const c = d.message.content;
       let t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x && x.type === 'text').map(x => x.text).join('\n') : '';
       t = (t || '').trim();
-      if (t && !ehTecnico(t)) msgs.push({ role: 'user', text: semContexto(t) || t });
+      // as imagens que voce colou ficam gravadas aqui dentro: sem devolver, elas
+      // sumiam da conversa toda vez que o app reabria
+      let imgs = Array.isArray(c) ? c.filter(x => x && x.type === 'image' && x.source
+        && x.source.type === 'base64' && x.source.data).map(x => ({
+          mime: x.source.media_type || 'image/png', dados: x.source.data,
+        })).filter(x => x.dados.length <= LIM_IMG_HIST) : [];
+      // respeita o teto total da conversa
+      imgs = imgs.filter((im) => {
+        if (gastoEmImagem + im.dados.length > LIM_IMG_TOTAL) return false;
+        gastoEmImagem += im.dados.length; return true;
+      });
+      if ((t && !ehTecnico(t)) || imgs.length) {
+        msgs.push({ role: 'user', text: (t && !ehTecnico(t)) ? (semContexto(t) || t) : '', imagens: imgs.slice(0, 6) });
+      }
     } else if (d.type === 'assistant' && d.message) {
       const c = d.message.content || [];
       for (const x of c) {
@@ -992,7 +1038,17 @@ ipcMain.handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, inc
 const CODEX_SESS = path.join(HOME, '.codex/sessions');
 const ORIGENS_DE_GENTE = ['cockpit', 'codex-tui', 'codex_tui', 'codex_vscode', 'codex-vscode', 'codex_app', 'codex-app', 'vscode'];
 
-const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^<[a-z_]+>/i;
+/* o '-' faltava na classe: <task-notification> e <local-command-stdout> nao
+   casavam e vazavam pra tela como se fossem mensagem sua */
+/* imagem grande demais nao vale a pena reconstruir: pesa no IPC e na tela.
+   Alem do teto por imagem, ha um teto TOTAL por conversa - sem ele, uma
+   conversa cheia de print mandava dezenas de MB numa resposta so'. */
+const LIM_IMG_HIST = 900 * 1024;
+const LIM_IMG_TOTAL = 8 * 1024 * 1024;
+/* Lista FECHADA, nao curinga. O '^<[a-z_-]+>' pegava qualquer coisa que
+   comecasse com uma tag - '<meta-tag>', '<mat-icon>', '<b>negrito</b> revisa
+   isso' - e sumia com a mensagem inteira, da tela E do historico. */
+const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^<(task-notification|local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)>/i;
 const ehTecnico = (t) => !t || TECNICO.test(t.trim().slice(0, 400));
 
 function semContexto(t) {
@@ -1130,7 +1186,7 @@ ipcMain.handle('sessions:historyRemoto', async (_e, { remoto, id }) => {
   catch { return []; }
 });
 
-ipcMain.handle('sessions:history', (_e, { engine, file, id }) => {
+ipcMain.handle('sessions:history', async (_e, { engine, file, id }) => {
   let f = file;
   // caminho salvo errado ou de outra maquina: procura pelo id da conversa
   if (engine === 'claude' && id && (!f || !fs.existsSync(f))) {
@@ -1140,6 +1196,8 @@ ipcMain.handle('sessions:history', (_e, { engine, file, id }) => {
     if (it) f = it.f;
   }
   if (!f || !fs.existsSync(f)) return [];
+  // deixa a janela respirar antes de ler e montar (pode ser MB de base64)
+  await new Promise((r) => setImmediate(r));
   return engine === 'claude' ? claudeHistory(f, 60) : codexHistory(f, 60);
 });
 
@@ -1358,14 +1416,23 @@ function temTranscricao() {
 }
 
 ipcMain.handle('audio:disponivel', () => ({ ok: temTranscricao() }));
+/* o ouvinte demora ~11s carregando o modelo na primeira vez. Sem saber disso, o
+   painel nao tem como dizer "estou acordando" em vez de parecer surdo. */
+ipcMain.handle('audio:pronto', () => {
+  const rap = pegarOuvinte('base');
+  return { ligado: !!rap.proc, pronto: rap.pronto, caprichado: pegarOuvinte('small').pronto };
+});
 
 /* O modelo pesa ~460 MB e demora ~10s pra carregar. Carregar a cada ditado
    deixaria tudo lento, entao um processo fica vivo esperando: manda o caminho
    do wav numa linha, recebe o texto de volta na outra. */
-const OUVINTE = [
+const OUVINTE = (nome) => [
   'import sys, json',
+  'import numpy as np',
   'from faster_whisper import WhisperModel',
-  'modelo = WhisperModel("small", device="cpu", compute_type="int8")',
+  '# 4 threads por modelo: com o padrao, os dois pegam os 12 nucleos e brigam',
+  '# entre si (medido: a legenda passava de 1,4s para 5s)',
+  'modelo = WhisperModel("' + nome + '", device="cpu", compute_type="int8", cpu_threads=4)',
   'print(json.dumps({"pronto": True}), flush=True)',
   'for linha in sys.stdin:',
   '    linha = linha.strip()',
@@ -1376,65 +1443,232 @@ const OUVINTE = [
   '        continue',
   '    ident = pedido.get("id")',
   '    try:',
-  '        segs, _ = modelo.transcribe(pedido.get("wav"), language="pt", vad_filter=True)',
+  '        # "pcm" e um arquivo de amostras cruas 16 bits / 16 kHz escrito pelo app.',
+  '        # Evita o ffmpeg no caminho do ditado ao vivo: este pedido se repete',
+  '        # a cada segundo enquanto a pessoa fala, entao cada etapa a menos conta.',
+  '        alvo = pedido.get("pcm")',
+  '        if alvo:',
+  '            dados = np.fromfile(alvo, dtype=np.int16).astype(np.float32) / 32768.0',
+  '            # microfone fraco: leva o pico ate 0.7 antes de transcrever.',
+  '            # Silencio puro (pico < 0.004) fica como esta - amplificar so',
+  '            # o chiado faz o modelo inventar frase que ninguem falou.',
+  '            pico = float(np.max(np.abs(dados))) if dados.size else 0.0',
+  '            if 0.004 < pico < 0.5:',
+  '                dados = dados * (0.7 / pico)',
+  '        else:',
+  '            dados = pedido.get("wav")',
+  '        rapido = bool(pedido.get("rapido"))',
+  '        segs, _ = modelo.transcribe(dados, language="pt",',
+  '            beam_size=1 if rapido else 5,',
+  '            # sem vad_filter: o painel ja corta o silencio antes de mandar, e',
+  '            # ligado aqui ele descartava o trecho INTEIRO e voltava vazio',
+  '            vad_filter=False,',
+  '            without_timestamps=rapido,',
+  '            condition_on_previous_text=False)',
   '        texto = " ".join(s.text.strip() for s in segs).strip()',
   '        print(json.dumps({"id": ident, "texto": texto}), flush=True)',
   '    except Exception as e:',
   '        print(json.dumps({"id": ident, "erro": str(e)}), flush=True)',
 ].join('\n');
 
-// cada pedido tem id proprio: casar por ordem quebrava quando um saia por timeout
-const ouvinte = { proc: null, buf: '', pedidos: new Map(), seq: 0, pronto: false };
+/* Dois ouvintes: o "small" e o caprichado (texto que fica) e o "base" e o
+   rapido, que faz a legenda enquanto a pessoa fala. Separados de proposito -
+   com um so, o passe caprichado de uma frase seguraria na fila a legenda da
+   frase seguinte, e a legenda ficaria cada vez mais atrasada. */
+const ouvintes = new Map();
 
-function ligarOuvinte() {
-  if (ouvinte.proc || !temTranscricao()) return;
+function novoOuvinte(modelo) {
+  return { modelo, proc: null, buf: '', pedidos: new Map(), seq: 0, pronto: false };
+}
+/* O nome vai interpolado DENTRO do codigo Python do ouvinte. Hoje so' chega o
+   que esta escrito neste arquivo, mas um valor vindo de fora viraria execucao
+   de codigo - entao a lista fecha a porta antes. */
+const MODELOS_VOZ = ['base', 'small'];
+function pegarOuvinte(modelo) {
+  const nome = MODELOS_VOZ.includes(modelo) ? modelo : 'small';
+  let o = ouvintes.get(nome);
+  if (!o) { o = novoOuvinte(nome); ouvintes.set(nome, o); }
+  return o;
+}
+// o de sempre continua sendo o "small": o resto do arquivo fala com ele
+const ouvinte = pegarOuvinte('small');
+
+function ligarOuvinte(modelo) {
+  const ou = pegarOuvinte(modelo || 'small');
+  if (ou.proc || !temTranscricao()) return ou;
   try {
     // UTF-8 na marra: sem isso um caminho com acento derruba o Python, que
     // volta a subir e cai de novo, em loop
-    ouvinte.proc = spawnBin(PY_TRANSCRICAO, ['-u', '-c', OUVINTE],
+    ou.proc = spawnBin(PY_TRANSCRICAO, ['-u', '-c', OUVINTE(ou.modelo)],
       { env: { ...buildEnv(), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['pipe', 'pipe', 'pipe'] });
-  } catch { ouvinte.proc = null; return; }
-  ouvinte.proc.stdin.on('error', () => {});
-  ouvinte.proc.stdout.on('data', (chunk) => {
-    ouvinte.buf += chunk.toString('utf8');
+  } catch { ou.proc = null; return ou; }
+
+  /* O caprichado cede a vez pra legenda. Sem isto o texto ao vivo parava por
+     ~8s toda vez que uma frase fechava: os dois modelos brigavam pela CPU e
+     quem esperava era justamente o que a pessoa esta olhando. */
+  if (ou.modelo !== 'base') {
+    try { os.setPriority(ou.proc.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+  }
+  ou.proc.stdin.on('error', () => {});
+  ou.proc.stdout.on('data', (chunk) => {
+    ou.buf += chunk.toString('utf8');
     let i;
-    while ((i = ouvinte.buf.indexOf('\n')) >= 0) {
-      const linha = ouvinte.buf.slice(0, i).trim();
-      ouvinte.buf = ouvinte.buf.slice(i + 1);
+    while ((i = ou.buf.indexOf('\n')) >= 0) {
+      const linha = ou.buf.slice(0, i).trim();
+      ou.buf = ou.buf.slice(i + 1);
       if (!linha) continue;
       let o; try { o = JSON.parse(linha); } catch { continue; }
-      if (o.pronto) { ouvinte.pronto = true; continue; }
-      const espera = ouvinte.pedidos.get(o.id);
-      if (espera) { ouvinte.pedidos.delete(o.id); espera(o); }
+      if (o.pronto) { ou.pronto = true; continue; }
+      const espera = ou.pedidos.get(o.id);
+      if (espera) { ou.pedidos.delete(o.id); espera(o); }
       // resposta de um pedido que ja desistiu: descarta, sem bagunçar os outros
     }
   });
-  ouvinte.proc.stderr.on('data', () => {});
+  ou.proc.stderr.on('data', () => {});
   const caiu = () => {
-    ouvinte.proc = null; ouvinte.pronto = false; ouvinte.buf = '';
-    for (const [, espera] of ouvinte.pedidos) espera({ erro: 'a transcrição parou' });
-    ouvinte.pedidos.clear();
+    ou.proc = null; ou.pronto = false; ou.buf = '';
+    for (const [, espera] of ou.pedidos) espera({ erro: 'a transcrição parou' });
+    ou.pedidos.clear();
   };
-  ouvinte.proc.on('close', caiu);
-  ouvinte.proc.on('error', caiu);
+  ou.proc.on('close', caiu);
+  ou.proc.on('error', caiu);
+  return ou;
 }
 
-function transcreverArquivo(wav) {
+// os dois morrem junto com o app, senao ficam Pythons vivos segurando 650 MB
+app.on('before-quit', () => {
+  for (const ou of ouvintes.values()) { try { ou.proc && ou.proc.kill(); } catch {} }
+  limparAudioDoDisco();
+});
+
+function transcreverArquivo(wav, extra) {
   return new Promise((resolve) => {
-    ligarOuvinte();
-    if (!ouvinte.proc) return resolve({ erro: 'não consegui iniciar a transcrição' });
-    const id = 'a' + (++ouvinte.seq);
+    // legenda ao vivo vai no rapido; todo o resto, no caprichado
+    const ou = ligarOuvinte((extra && extra.rapido) ? 'base' : 'small');
+    if (!ou.proc) return resolve({ erro: 'não consegui iniciar a transcrição' });
+    const id = 'a' + (++ou.seq);
+    // o ditado ao vivo desiste rapido: legenda que chega tarde nao serve
+    const espera = (extra && extra.rapido) ? 30000 : 300000;
     const limite = setTimeout(() => {
-      ouvinte.pedidos.delete(id);
+      ou.pedidos.delete(id);
       resolve({ erro: 'a transcrição demorou demais' });
-    }, 300000);
-    ouvinte.pedidos.set(id, (o) => { clearTimeout(limite); resolve(o); });
-    try { ouvinte.proc.stdin.write(JSON.stringify({ id, wav }) + '\n'); }
-    catch { clearTimeout(limite); ouvinte.pedidos.delete(id); resolve({ erro: 'não consegui falar com a transcrição' }); }
+    }, espera);
+    ou.pedidos.set(id, (o) => { clearTimeout(limite); resolve(o); });
+    try { ou.proc.stdin.write(JSON.stringify({ id, wav, ...(extra || {}) }) + '\n'); }
+    catch { clearTimeout(limite); ou.pedidos.delete(id); resolve({ erro: 'não consegui falar com a transcrição' }); }
   });
 }
 
-ipcMain.handle('audio:aquecer', () => { ligarOuvinte(); return { ok: !!ouvinte.proc, pronto: ouvinte.pronto }; });
+/* ---------- ditado ao vivo ----------
+   O painel manda as amostras cruas (16 bits, 16 kHz, mono) que ja capturou
+   desde o comeco da frase; aqui elas viram arquivo e vao pro mesmo ouvinte, em
+   modo rapido. Sem ffmpeg e sem webm: e o caminho mais curto possivel, porque
+   este pedido se repete a cada segundo enquanto a pessoa fala.
+
+   Um painel so pode ter UM pedido em voo. Se chegar outro antes da resposta, o
+   novo volta com "ocupado" - enfileirar so faria a legenda ficar cada vez mais
+   atrasada em relacao a fala. */
+const ditando = new Map();   // paneId -> { emVoo, geracao }
+
+function estadoDitado(paneId) {
+  let d = ditando.get(paneId);
+  if (!d) { d = { emVoo: false, geracao: 0 }; ditando.set(paneId, d); }
+  return d;
+}
+
+/* Nome UNICO por chamada. Com nome fixo por painel, uma frase que fecha e o
+   fim do ditado logo em seguida escreviam no mesmo arquivo, e a segunda apagava
+   o audio da primeira antes de ele ser lido. */
+/* Buffer.from(typedArray) copia os VALORES, um byte cada - o que destroi
+   amostra de 16 bits. Para audio e preciso apontar pro buffer de verdade. */
+function bytesCrus(x) {
+  if (Buffer.isBuffer(x)) return x;
+  if (ArrayBuffer.isView(x)) return Buffer.from(x.buffer, x.byteOffset, x.byteLength);
+  if (x instanceof ArrayBuffer) return Buffer.from(x);
+  return Buffer.from(x || []);
+}
+
+/* O ditado grava a VOZ da pessoa em arquivo pra mandar pro modelo. No caminho
+   normal cada um e apagado logo depois; se o app fechar no meio, nao ha quem
+   apague. Entao a pasta e varrida ao abrir e ao fechar o app. */
+function limparAudioDoDisco() {
+  try {
+    const dir = PASTA_AUDIO();
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (/\.(pcm|wav|webm|ogg)$/i.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch {} }
+    }
+  } catch {}
+}
+
+let seqArquivoDitado = 0;
+function arquivoDitado(paneId, prefixo) {
+  const limpo = String(paneId || 'x').replace(/[^a-zA-Z0-9]/g, '').slice(0, 40) || 'x';
+  return path.join(PASTA_AUDIO(), prefixo + '-' + limpo + '-' + (++seqArquivoDitado) + '.pcm');
+}
+
+ipcMain.handle('audio:ditado-cancelar', (_e, { paneId }) => {
+  // a geracao muda: resposta de pedido antigo que ainda chegar e descartada
+  const chave = String(paneId || '');
+  const d = estadoDitado(chave);
+  d.geracao++;
+  // sem nada em voo, o painel sai do mapa - senao ele so' crescia, um item por
+  // painel que ja ditou, ate o app fechar
+  if (!d.emVoo) ditando.delete(chave);
+  return { ok: true };
+});
+
+ipcMain.handle('audio:ditado', async (_e, { paneId, amostras }) => {
+  if (!temTranscricao()) return { error: 'A transcrição ainda não está instalada nesta máquina.' };
+  const chave = String(paneId || '');
+  const d = estadoDitado(chave);
+  if (d.emVoo) return { ocupado: true };
+  const minhaGeracao = d.geracao;
+  d.emVoo = true;
+  const bruto = arquivoDitado(chave, 'ditado');
+  try {
+    try { fs.mkdirSync(PASTA_AUDIO(), { recursive: true }); } catch {}
+    fs.writeFileSync(bruto, bytesCrus(amostras));
+    // 2 bytes por amostra: se isto falhar, o audio chegou truncado
+    if (fs.statSync(bruto).size % 2) return { error: 'áudio chegou incompleto' };
+    const r = await transcreverArquivo(null, { pcm: bruto, rapido: true });
+    // parou de gravar (ou virou outra frase) enquanto isto rodava
+    if (d.geracao !== minhaGeracao) return { descartado: true };
+    if (r.erro) return { error: r.erro };
+    return { texto: String(r.texto || '') };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  } finally {
+    d.emVoo = false;
+    try { fs.unlinkSync(bruto); } catch {}
+  }
+});
+
+/* fim do ditado: as mesmas amostras, agora com beam cheio e VAD ligado - o
+   passe caprichado, que corrige o que a legenda ao vivo entendeu errado */
+ipcMain.handle('audio:ditado-final', async (_e, { paneId, amostras }) => {
+  if (!temTranscricao()) return { error: 'A transcrição ainda não está instalada nesta máquina.' };
+  const bruto = arquivoDitado(paneId, 'final');
+  try {
+    try { fs.mkdirSync(PASTA_AUDIO(), { recursive: true }); } catch {}
+    fs.writeFileSync(bruto, bytesCrus(amostras));
+    const r = await transcreverArquivo(null, { pcm: bruto, rapido: false });
+    if (r.erro) return { error: r.erro };
+    return { texto: String(r.texto || '') };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  } finally {
+    try { fs.unlinkSync(bruto); } catch {}
+  }
+});
+
+ipcMain.handle('audio:aquecer', () => {
+  // sobe os dois: o rapido vai legendar em segundos, e o caprichado vai ser
+  // cobrado assim que a primeira frase fechar
+  const rap = ligarOuvinte('base');
+  const cap = ligarOuvinte('small');
+  return { ok: !!(rap.proc && cap.proc), pronto: rap.pronto };
+});
 
 ipcMain.handle('audio:transcrever', async (_e, { bytes, mime }) => {
   if (!temTranscricao()) return { error: 'A transcrição ainda não está instalada nesta máquina.' };
@@ -1444,7 +1678,7 @@ ipcMain.handle('audio:transcrever', async (_e, { bytes, mime }) => {
   const bruto = path.join(dir, 'gravacao-' + marca + (String(mime || '').includes('ogg') ? '.ogg' : '.webm'));
   const wav = path.join(dir, 'gravacao-' + marca + '.wav');
   try {
-    fs.writeFileSync(bruto, Buffer.from(bytes));
+    fs.writeFileSync(bruto, bytesCrus(bytes));
     // ffmpeg: mono 16 kHz, que e' o formato que o modelo espera
     const conv = await rodar('ffmpeg', ['-y', '-i', bruto, '-ar', '16000', '-ac', '1', '-f', 'wav', wav], 120000);
     if (conv.err && !fs.existsSync(wav)) {
@@ -1823,7 +2057,12 @@ function createWindow() {
 }
 
 function shutdown() {
-  if (ouvinte.proc) { try { ouvinte.proc.kill(); } catch {} ouvinte.proc = null; }
+  // os DOIS ouvintes (o rapido e o caprichado). Matando so' um, o outro ficava
+  // vivo a cada recarga da tela segurando memoria, e outro subia por cima.
+  for (const ou of ouvintes.values()) {
+    if (ou.proc) { try { ou.proc.kill(); } catch {} ou.proc = null; ou.pronto = false; ou.buf = ''; }
+  }
+  limparAudioDoDisco();
   for (const id of [...terms.keys()]) termMatar(id);   // sem isso, cada recarga deixava um pty vivo
   for (const id of [...claudePanes.keys()]) claudeStop(id);
   // quem nao morreu com o SIGTERM vai no grito: sem isso ficava processo orfao
@@ -2240,6 +2479,6 @@ function limparSettingsAntigos() {
 }
 
 if (EH_WIN) { try { app.setAppUserModelId('com.homeromotti.cockpit'); } catch {} }
-app.whenReady().then(() => { menu(); createWindow(); limparColadosAntigos(); limparSettingsAntigos(); setTimeout(() => codexStart().catch(() => {}), 1500); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
+app.whenReady().then(() => { menu(); createWindow(); limparColadosAntigos(); limparSettingsAntigos(); limparAudioDoDisco();   /* voz que sobrou de um fechamento anormal */ setTimeout(() => codexStart().catch(() => {}), 1500); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
 app.on('window-all-closed', () => { shutdown(); if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', shutdown);

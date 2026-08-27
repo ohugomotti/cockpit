@@ -6,10 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
-const SRC = path.join(RAIZ_PROJETO, 'src');
+const { RAIZ, versaoAnterior } = require('./raiz');
+const SRC = path.join(RAIZ, 'src');
 const mainTxt = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
 const appTxt = fs.readFileSync(path.join(SRC, 'renderer', 'app.js'), 'utf8');
 
@@ -99,6 +97,9 @@ function montarRenderer() {
     P.blocks.set(key, b);
     return b;
   }`, Object.assign(ctx, { __bolhas: bolhas }));
+  // selarPassos nasceu junto com a correcao da resposta quebrada, e o
+  // textDelta chama ela: sem extrair as duas, o teste morre no meio
+  vm.runInContext(pegar(appTxt, 'function selarPassos(', 'selarPassos'), ctx);
   vm.runInContext(pegar(appTxt, 'function textDelta(', 'textDelta'), ctx);
   vm.runInContext(pegar(appTxt, 'function textFinal(', 'textFinal'), ctx);
   const P = { engine: 'claude', blocks: new Map(), hist: [], chat: dom.criar(), el: dom.criar() };

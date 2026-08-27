@@ -4,9 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-/* os testes moram em testes/; o app mora em src/ */
-const RAIZ_PROJETO = path.join(__dirname, '..');
-
+const { RAIZ, versaoAnterior } = require('./raiz');
 function pegar(txt, assinatura, nome) {
   const i = txt.indexOf(assinatura);
   if (i < 0) throw new Error('nao achei ' + nome);
@@ -19,7 +17,7 @@ function pegar(txt, assinatura, nome) {
 }
 
 async function rodar(pasta) {
-  const appTxt = fs.readFileSync(path.join(RAIZ_PROJETO, pasta, 'renderer', 'app.js'), 'utf8');
+  const appTxt = fs.readFileSync(path.join(RAIZ, pasta, 'renderer', 'app.js'), 'utf8');
   const chamou = { paneStop: 0, savePanes: 0, setConfig: 0 };
   const ctx = {
     console, cfg: {},
@@ -37,6 +35,10 @@ async function rodar(pasta) {
   vm.createContext(ctx);
   vm.runInContext(pegar(appTxt, 'function destravarPainel(', 'destravarPainel'), ctx);
   vm.runInContext(pegar(appTxt, 'function montarContexto(', 'montarContexto'), ctx);
+  // esquecerPassos nasceu com a correcao da resposta quebrada e o trocarMotor
+  // chama ela; a versao antiga nao tem, por isso o if
+  if (appTxt.includes('function esquecerPassos(')) vm.runInContext(pegar(appTxt, 'function esquecerPassos(', 'esquecerPassos'), ctx);
+  else vm.runInContext('function esquecerPassos(){}', ctx);
   vm.runInContext(pegar(appTxt, 'async function trocarMotor(', 'trocarMotor'), ctx);
 
   const P = {
@@ -55,22 +57,25 @@ async function rodar(pasta) {
 }
 
 (async () => {
-  const temAntigo = fs.existsSync(path.join(RAIZ_PROJETO, 'src-original'));
-  const antigo = temAntigo ? await rodar('src-original') : null;
+
+/* A comparacao com a versao ANTIGA prova que o bug existia. Essa copia fica na
+   maquina de quem corrigiu, nao no repositorio - entao aqui ela e' opcional: sem
+   ela, o teste roda so' a parte que verifica o codigo de hoje. */
+  const pastaAntiga = versaoAnterior('src-original');
+  const antigo = pastaAntiga ? await rodar('src-original') : null;
   const novo = await rodar('src');
+  if (!antigo) console.log('(sem a copia antiga aqui: pulando a comparacao)');
   let erro = 0;
   const checa = (nome, cond, det) => {
     if (cond) console.log('  ok   ' + nome);
     else { erro = 1; console.log('  FALHA ' + nome + (det ? ' -> ' + det : '')); }
   };
 
-  if (antigo) {
-    console.log('\nCODIGO ANTIGO (para mostrar o estrago):');
-    console.log('  painel continua "trabalhando"? ', antigo.P.busy);
-    console.log('  mensagem da fila presa?        ', JSON.stringify(antigo.P.queued));
-    console.log('  id da sessao do motor VELHO?   ', JSON.stringify(antigo.P.sessaoId));
-    console.log('  contador de contexto do velho? ', antigo.P.tokens);
-  }
+  console.log('\nCODIGO ANTIGO (para mostrar o estrago):');
+  if (antigo) console.log('  painel continua "trabalhando"? ', antigo.P.busy);
+  if (antigo) console.log('  mensagem da fila presa?        ', JSON.stringify(antigo.P.queued));
+  if (antigo) console.log('  id da sessao do motor VELHO?   ', JSON.stringify(antigo.P.sessaoId));
+  if (antigo) console.log('  contador de contexto do velho? ', antigo.P.tokens);
 
   console.log('\nCODIGO NOVO:');
   checa('painel destravado (busy = false)', novo.P.busy === false, String(novo.P.busy));
@@ -85,11 +90,9 @@ async function rodar(pasta) {
     String(novo.P.passarContexto).slice(0, 60));
   checa('o contexto e definido ANTES de gravar a configuracao', novo.chamou.savePanes === 1);
 
-  if (antigo) {
-    console.log('\nRegressao que o codigo antigo tinha e o novo nao pode ter:');
-    checa('o antigo deixava o painel travado (prova que o teste vale)', antigo.P.busy === true);
-    checa('o antigo guardava o id da sessao do outro motor', antigo.P.sessaoId === 'sess-claude-123');
-  } else console.log('\n  --   comparacao com o codigo antigo pulada (src-original nao existe aqui)');
+  console.log('\nRegressao que o codigo antigo tinha e o novo nao pode ter:');
+  if (antigo) checa('o antigo deixava o painel travado (prova que o teste vale)', antigo.P.busy === true);
+  if (antigo) checa('o antigo guardava o id da sessao do outro motor', antigo.P.sessaoId === 'sess-claude-123');
 
   // troca sem historico nenhum nao pode inventar contexto
   const semHist = await (async () => {
