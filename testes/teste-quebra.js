@@ -96,6 +96,7 @@ function extrair(nome) {
 }
 
 const ctx = {
+  ...require('./raiz').globaisFalsos(),
   console,
   $: (sel, raiz) => (raiz || ctx.document).querySelector(sel),
   document: { createElement: novoEl, querySelector: () => null },

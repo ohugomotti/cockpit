@@ -13,3 +13,8 @@ id_rsa*
 .DS_Store
 Thumbs.db
 *.log
+
+# rodadas de teste do app
+userdata-teste/
+rodada.log*
+__pycache__/

@@ -16,10 +16,11 @@ function pegar(txt, assinatura, nome) {
   throw new Error('nao fechei ' + nome);
 }
 
-async function rodar(pasta) {
+async function rodar(pasta, mexerCtx, motorAlvo) {
   const appTxt = fs.readFileSync(path.join(RAIZ, pasta, 'renderer', 'app.js'), 'utf8');
   const chamou = { paneStop: 0, savePanes: 0, setConfig: 0 };
   const ctx = {
+    ...require('./raiz').globaisFalsos(),
     console, cfg: {},
     window: { api: {
       paneStop: async () => { chamou.paneStop++; return true; },
@@ -39,6 +40,13 @@ async function rodar(pasta) {
   // chama ela; a versao antiga nao tem, por isso o if
   if (appTxt.includes('function esquecerPassos(')) vm.runInContext(pegar(appTxt, 'function esquecerPassos(', 'esquecerPassos'), ctx);
   else vm.runInContext('function esquecerPassos(){}', ctx);
+  /* o trocarMotor pergunta ao MODOS se o modo atual existe no motor novo. A
+     tabela e' do proprio app.js: usar uma de mentira aqui esconderia justamente
+     o caso "modo do Gemini indo pro Codex". */
+  if (appTxt.includes('function modoValido(')) {
+    vm.runInContext('var MODOS = ' + pegar(appTxt, 'const MODOS = ', 'MODOS').replace('const MODOS = ', '') + ';', ctx);
+    vm.runInContext(pegar(appTxt, 'function modoValido(', 'modoValido'), ctx);
+  }
   vm.runInContext(pegar(appTxt, 'async function trocarMotor(', 'trocarMotor'), ctx);
 
   const P = {
@@ -52,7 +60,8 @@ async function rodar(pasta) {
     ],
     el: {}, chat: {},
   };
-  await ctx.trocarMotor(P, 'codex');
+  if (mexerCtx) mexerCtx(ctx);
+  await ctx.trocarMotor(P, motorAlvo || 'codex');
   return { P, chamou };
 }
 
@@ -99,6 +108,17 @@ async function rodar(pasta) {
     const r = await rodar('src');
     return r;
   })();
+
+  /* Motor que nao esta na maquina (guarda da leva 31): a troca e' recusada
+     ANTES de desmontar qualquer coisa - o painel fica exatamente como estava. */
+  console.log('\nMotor nao instalado:');
+  const semGrok = await rodar('src',
+    (ctx) => { ctx.motorDisponivel = { claude: true, codex: true, gemini: true, grok: false }; },
+    'grok');
+  checa('nao troca pra motor ausente', semGrok.P.engine === 'claude', semGrok.P.engine);
+  checa('nao para o motor atual', semGrok.chamou.paneStop === 0, String(semGrok.chamou.paneStop));
+  checa('nao mexe no estado do painel', semGrok.P.busy === true && semGrok.P.sessaoId === 'sess-claude-123');
+
   console.log('');
   process.exit(erro);
 })();

@@ -1,14 +1,19 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { webUtils, contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // desde o Electron 32 o File nao tem ".path"; e' assim que se pega o caminho
+  caminhoDoArquivo: (f) => { try { return webUtils.getPathForFile(f); } catch { return ''; } },
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (c) => ipcRenderer.invoke('config:set', c),
   home: () => ipcRenderer.invoke('sys:home'),
   plataforma: process.platform,
 
   pickFolder: (start) => ipcRenderer.invoke('dialog:pickFolder', start),
-  listDir: (d) => ipcRenderer.invoke('fs:list', d),
-  buscarArquivos: (o) => ipcRenderer.invoke('fs:buscarArquivos', o),
+  /* Arvore, "@" e visor tambem sabem ler dentro de um servidor. O 'remoto'
+     ({host, usuario, chave, caminhoRemoto}) vem do PAINEL, e sem ele tudo
+     segue lendo o disco deste PC exatamente como antes. */
+  listDir: (d, remoto) => ipcRenderer.invoke('fs:list', remoto ? { dir: d, remoto } : d),
+  buscarArquivos: (o) => ipcRenderer.invoke('fs:buscarArquivos', o),   // { cwd, termo, remoto? }
   gitStatus: (o) => ipcRenderer.invoke('git:status', o),
   gitDiff: (o) => ipcRenderer.invoke('git:diff', o),
   apagarSessao: (o) => ipcRenderer.invoke('sessao:apagar', o),
@@ -28,8 +33,10 @@ contextBridge.exposeInMainWorld('api', {
   autoLiberar: (o) => ipcRenderer.invoke('pane:autoLiberar', o),
   liberacoes: (o) => ipcRenderer.invoke('pane:liberacoes', o),
   codexModels: () => ipcRenderer.invoke('codex:models'),
+  codexApps: () => ipcRenderer.invoke('codex:apps'),
   sessionsClaude: (r) => ipcRenderer.invoke('sessions:claude', r),
   sessionsCodex: (r) => ipcRenderer.invoke('sessions:codex', r),
+  sessionsCli: (e) => ipcRenderer.invoke('sessions:cli', e),
   sessionsClaudeRemoto: (o) => ipcRenderer.invoke('sessions:claudeRemoto', o),
   sessionHistoryRemoto: (o) => ipcRenderer.invoke('sessions:historyRemoto', o),
   sessionHistory: (o) => ipcRenderer.invoke('sessions:history', o),
@@ -39,8 +46,32 @@ contextBridge.exposeInMainWorld('api', {
   pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
   anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),
   colados: () => ipcRenderer.invoke('clipboard:anexos'),
-  verArquivo: (f) => ipcRenderer.invoke('arquivo:ver', f),
+  // anexo colado mora SEMPRE aqui no PC: quem abre anexo nao passa 'remoto'
+  verArquivo: (f, remoto) => ipcRenderer.invoke('arquivo:ver', remoto ? { file: f, remoto } : f),
   renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
+  sessaoFork: (o) => ipcRenderer.invoke('sessao:fork', o),
+  motoresVersoes: () => ipcRenderer.invoke('motores:versoes'),
+  acpConfig: (o) => ipcRenderer.invoke('acp:config', o),
+  agentesClaude: () => ipcRenderer.invoke('agentes:claude'),
+  // rotinas = tarefas agendadas do Windows (so' existem nesta plataforma)
+  rotinasListar: () => ipcRenderer.invoke('rotinas:listar'),
+  rotinasDisparar: (o) => ipcRenderer.invoke('rotinas:disparar', o),
+  imagemSalvar: (o) => ipcRenderer.invoke('imagem:salvar', o),
+  textoSalvar: (o) => ipcRenderer.invoke('arquivo:salvarTexto', o),
+  textoLer: (o) => ipcRenderer.invoke('arquivo:lerTexto', o),
+  ocrLer: (o) => ipcRenderer.invoke('ocr:ler', o),
+  promptsLer: () => ipcRenderer.invoke('prompts:ler'),
+  promptsSalvar: (l) => ipcRenderer.invoke('prompts:salvar', l),
+  recortarTela: (o) => ipcRenderer.invoke('tela:recortar', o),
+  inboxConsumir: (o) => ipcRenderer.invoke('inbox:consumir', o),
+  inboxPasta: () => ipcRenderer.invoke('inbox:pasta'),
+  inboxOuvindo: () => ipcRenderer.invoke('inbox:ouvindo'),
+  atalhosEstado: () => ipcRenderer.invoke('atalhos:estado'),
+  atalhosLigar: (o) => ipcRenderer.invoke('atalhos:ligar', o),
+  onVozMotorCaiu: (cb) => ipcRenderer.on('voz:motor-caiu', (_e, p) => cb(p)),
+  onInbox: (cb) => ipcRenderer.on('inbox', (_e, p) => cb(p)),
+  audioMotor: (o) => ipcRenderer.invoke('audio:motor', o),
+  audioMotorInfo: () => ipcRenderer.invoke('audio:motorInfo'),
   buscarConversas: (o) => ipcRenderer.invoke('sessions:buscar', o),
   auth: (o) => ipcRenderer.invoke('auth:acao', o),
   contaLer: (e) => ipcRenderer.invoke('conta:ler', e),
@@ -51,9 +82,11 @@ contextBridge.exposeInMainWorld('api', {
   audioDitado: (o) => ipcRenderer.invoke('audio:ditado', o),
   audioDitadoFinal: (o) => ipcRenderer.invoke('audio:ditado-final', o),
   audioDitadoCancelar: (o) => ipcRenderer.invoke('audio:ditado-cancelar', o),
+  perguntaResponder: (o) => ipcRenderer.invoke('pergunta:responder', o),
   contasListar: (e) => ipcRenderer.invoke('contas:listar', e),
   contasDisponivel: (e) => ipcRenderer.invoke('contas:disponivel', e),
   codexReiniciar: () => ipcRenderer.invoke('codex:reiniciar'),
+  motoresDisponiveis: () => ipcRenderer.invoke('motores:disponiveis'),
   contasSalvar: (o) => ipcRenderer.invoke('contas:salvar', o),
   contasTrocar: (o) => ipcRenderer.invoke('contas:trocar', o),
   contasEsquecer: (o) => ipcRenderer.invoke('contas:esquecer', o),

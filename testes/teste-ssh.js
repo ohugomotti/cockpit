@@ -21,8 +21,17 @@ const checa = (nome, cond, det) => {
 const main = fs.readFileSync(path.join(RAIZ, 'src', 'main.js'), 'utf8');
 const app = fs.readFileSync(path.join(RAIZ, 'src', 'renderer', 'app.js'), 'utf8');
 
-// recorta o trecho que monta o comando ssh
-const i = main.indexOf("spawnBin('ssh'");
+/* recorta o trecho que monta o comando ssh DO MOTOR.
+   Ancorar no "primeiro spawnBin('ssh') do arquivo" era frágil: existem outros
+   (listar conversa remota, e o backend remoto de arquivos da leva 37), e no dia
+   em que um deles subir de posicao o teste conferiria o bloco errado - passando
+   ou falhando por causa de codigo que nao tem nada a ver com o canal da conversa.
+   Entao a busca acontece DENTRO do corpo do claudeStart. */
+const iniStart = main.indexOf('function claudeStart(');
+const fimStart = main.indexOf('function claudeStop(');
+const corpoStart = (iniStart >= 0 && fimStart > iniStart) ? main.slice(iniStart, fimStart) : '';
+const rel = corpoStart.indexOf("spawnBin('ssh'");
+const i = rel < 0 ? -1 : iniStart + rel;
 const trechoSsh = i < 0 ? '' : main.slice(i, i + 700);
 
 console.log('1) o canal SSH manda sinal de vida');
@@ -45,11 +54,9 @@ if (intervalo && contagem) {
 console.log(NL + '2) o motivo da queda nao vai mais pro lixo');
 checa('o stderr do motor e guardado',
   /proc\.stderr\.on\('data',\s*\(d\)\s*=>\s*\{[\s\S]{0,200}st\.erro/.test(main));
-/* so' dentro do claudeStart: os outros dois spawns de ssh sao consultas de 25s
-   pra listar conversa remota, e ali o stderr nao interessa mesmo */
-const ini = main.indexOf('function claudeStart(');
-const fimF = main.indexOf('function claudeStop(');
-const corpoStart = main.slice(ini, fimF);
+/* so' dentro do claudeStart (o corpoStart recortado la' em cima): os outros
+   spawns de ssh sao consultas curtas - conversa remota e backend de arquivos -
+   e ali o stderr e' lido em outro lugar */
 checa('o ouvinte vazio que jogava fora sumiu do motor',
   !/proc\.stderr\.on\('data',\s*\(\)\s*=>\s*\{\}\);/.test(corpoStart));
 checa('o aviso de queda leva o motivo junto',
@@ -62,7 +69,9 @@ const j = app.indexOf('const foi = await window.api.paneSend(pacote());');
 const trechoEnvio = j < 0 ? '' : app.slice(j, j + 1400);
 checa('acha o ponto do envio', j > 0);
 checa('quando o motor esta morto, o painel religa sozinho',
-  /paneStart\(\{[\s\S]{0,200}resumeId/.test(trechoEnvio));
+  /paneStart\((opcoesDeStart\(P\)|\{[\s\S]{0,200}resumeId)/.test(trechoEnvio));
+checa('e as opcoes de religar levam a MESMA conversa (resumeId)',
+  /function opcoesDeStart\(P\)[\s\S]{0,500}resumeId:\s*P\.resumeId/.test(app));
 checa('religa na MESMA conversa', /P\.resumeId = P\.sessaoId \|\| P\.resumeId/.test(trechoEnvio));
 checa('e manda a mensagem de novo', /paneSend\(pacote\(\)\)[\s\S]{0,120}foiDeNovo|foiDeNovo\s*=\s*await window\.api\.paneSend/.test(trechoEnvio));
 checa('avisa voce que religou', /Religando e mandando de novo/.test(trechoEnvio));

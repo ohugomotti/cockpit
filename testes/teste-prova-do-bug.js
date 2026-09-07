@@ -21,6 +21,7 @@ function rendererDe(pasta) {
   const appTxt = fs.readFileSync(path.join(RAIZ, pasta, 'renderer', 'app.js'), 'utf8');
   const bolhas = [];
   const ctx = {
+  ...require('./raiz').globaisFalsos(),
     console, __bolhas: bolhas,
     document: { createElement: () => ({ className: '', innerHTML: '', appendChild() {}, addEventListener() {} }) },
     mdSeguro: (t) => String(t),

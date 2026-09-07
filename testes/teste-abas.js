@@ -32,6 +32,7 @@ async function rodar(pasta) {
     passarContexto: null, el: {},
   };
   const ctx = {
+  ...require('./raiz').globaisFalsos(),
     console, cfg,
     panes: new Map([['p1', painelAberto]]),
     panesFundo: new Map(),          // nenhum painel rodando fora da aba neste caso

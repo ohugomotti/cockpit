@@ -1,26 +1,48 @@
 # Cockpit
 
-App de desktop (Electron) que roda **Claude Code** e **Codex** em até 12 painéis lado a lado,
-com abas por lugar de trabalho — uma pasta do PC ou um servidor por SSH.
+App de desktop (Electron) que roda **Claude Code**, **Codex**, **Gemini**, **Grok** e qualquer
+agente **ACP** em até 12 painéis lado a lado, com abas por lugar de trabalho — uma pasta do PC
+ou um servidor por SSH.
 
 Escrito originalmente por **Homero Motti**. Este repositório guarda a versão em uso no
-Windows, com as correções feitas em cima dela.
+Windows, com as correções e as levas de melhoria feitas em cima dela.
 
 ---
 
 ## O que ele faz
 
 - **Painéis lado a lado** — até 12, cada um com seu motor, modelo, modo de permissão e pasta.
-- **Dois motores** — Claude Code e Codex, e dá para trocar de motor no meio da conversa
-  levando o que já foi dito.
+- **Cinco motores** — Claude Code, Codex, Gemini, Grok e o motor **ACP** genérico (qualquer
+  agente que fale o *Agent Client Protocol* entra por um comando). Dá para trocar de motor no
+  meio da conversa levando o que já foi dito.
 - **Abas por lugar** — cada aba é uma pasta do computador ou um servidor remoto (SSH).
-  O painel de uma aba de servidor roda o Claude lá dentro, não aqui.
+  O painel de uma aba de servidor roda o agente lá dentro, não aqui.
+- **Servidor de primeira classe** — árvore de arquivos, @-menção e visor de arquivo funcionam
+  no remoto igual ao local, não só na pasta do PC.
+- **Torre de controle** — todos os painéis de todas as abas numa tela só (trabalhando ·
+  esperando você autorizar · parado · guardado), mais as sessões do Claude que rodam **fora**
+  do Cockpit (VS Code, terminal, Telegram).
+- **Rotinas** — as tarefas agendadas do Windows numa view própria, com bloco vermelho no topo
+  para o que parou de funcionar em silêncio.
 - **Trocar de conta sem refazer login** — guarda credenciais por apelido e alterna entre elas.
 - **Permissão com o diff na frente** — antes de autorizar, você vê o que vai mudar no arquivo.
+- **Terminal embutido**, chip do git, busca dentro das conversas, grupos de conversa, painel em
+  worktree do git, perfis de conectores por aba, exportar conversa em `.md`.
+
+### Entrada sem digitar
+
 - **Ditado por voz ao vivo** — o texto vai aparecendo na barra de escrita enquanto você fala.
-  Roda **offline**, no próprio PC (faster-whisper); nada de áudio sai da máquina.
-- **Terminal embutido**, árvore de arquivos, chip do git, @-menção de arquivo, busca dentro
-  das conversas, grupos de conversa, exportar conversa em `.md`.
+  Roda **offline**, no próprio PC; nada de áudio sai da máquina. Dois motores: Whisper
+  (faster-whisper) ou **Parakeet TDT 0.6B v3**, que dá legenda em 0,6–0,8 s por frase.
+- **Voz sem clique** — atalho global opt-in (`Ctrl+Alt+Space`) liga o ditado no painel em foco
+  mesmo com o Cockpit atrás, e a frase fechada aceita comandos: "manda", "cancela", "apaga isso",
+  "próximo painel".
+- **Recorte de tela** (`Ctrl+Alt+R`, opt-in), **foto** pela webcam, e **OCR local** que tira o
+  texto de qualquer anexo de imagem.
+- **Quadro branco** — Excalidraw embutido (sem CDN, sob a CSP do app). Anexa como PNG ou como
+  `.excalidraw`, que o agente edita e escreve de volta.
+- **Prompts salvos** e **caixa de entrada** — o que cair em `%APPDATA%\cockpit\inbox` (texto ou
+  imagem) vira tarja com "usar"; o bot do Telegram despeja ali com `/cockpit`.
 
 ## Rodando
 
@@ -45,16 +67,20 @@ terminal embutido quebra.
 ## Testes
 
 ```bash
-node testes/rodar-tudo.js        # a bateria inteira
-node testes/teste-duplicacao.js  # ou um de cada vez
+node testes/rodar-tudo.js                # a bateria inteira: 21 testes
+node testes/teste-duplicacao.js          # ou um de cada vez
+node --test test/codex-protocol.test.js  # 19 casos do protocolo do Codex
 ```
 
-Eles não usam framework: carregam as funções **reais** do `main.js` e do `renderer/app.js`
-(via `vm`, com o mínimo de DOM falso) e verificam o comportamento. O `teste-contas.js` vai
-além e carrega o `main.js` inteiro com um Electron de mentira, chamando os handlers `ipcMain`
-de verdade contra uma HOME temporária.
+A bateria de `testes/` não usa framework: carrega as funções **reais** do `main.js` e do
+`renderer/app.js` (via `vm`, com o mínimo de DOM falso) e verifica o comportamento. O
+`teste-contas.js` vai além e carrega o `main.js` inteiro com um Electron de mentira, chamando os
+handlers `ipcMain` de verdade contra uma HOME temporária.
 
 Cada teste existe por causa de um bug que aconteceu de verdade — o nome dos casos diz qual.
+
+O `test/codex-protocol.test.js` é o único que usa `node:test`, porque o `src/codex-protocol.js`
+é puro: não depende do Electron e dá para exercitar direto.
 
 ## Como o app é organizado
 
@@ -63,11 +89,18 @@ Cada teste existe por causa de um bug que aconteceu de verdade — o nome dos ca
 | `src/main.js` | Processo principal: sobe os motores, fala com os CLIs, IPC, terminais, sessões |
 | `src/preload.js` | A ponte: o único caminho entre a tela e o processo principal |
 | `src/plataforma.js` | O que muda entre Windows e Mac (caminhos, credencial, pty) |
-| `src/renderer/app.js` | A tela inteira: painéis, abas, lista de conversas, menus |
+| `src/acp.js` | O motor ACP: JSON-RPC por stdio e a tradução para os eventos do app. Sem Electron |
+| `src/codex-protocol.js` | O vocabulário do `codex app-server` (0.147/0.153). Sem Electron |
+| `src/pergunta-mcp.js` | O servidor MCP que entrega plano e pergunta do agente à tela |
+| `src/preload-recorte.js` | Ponte da janela de recorte de tela |
+| `src/assets/ouvinte-parakeet.py` | Ouvinte de voz do Parakeet, mesmo protocolo do de Whisper |
+| `src/renderer/app.js` | A tela inteira: painéis, abas, lista de conversas, menus, side-views |
 | `src/renderer/index.html` | Estrutura e o template de painel |
+| `src/renderer/recorte.html` e `recorte.js` | A janela sem moldura que arrasta o retângulo do recorte |
 | `src/renderer/style.css` | Temas (escuro, claro, jornal) e o layout dos painéis |
+| `src/renderer/vendor/` | xterm, marked, purify e o bundle do Excalidraw com as fontes locais |
 
-### Duas coisas que não são óbvias no código
+### Coisas que não são óbvias no código
 
 **Um processo de Claude por painel, mas um único Codex para todos.** O Codex roteia por
 thread (`threadToPane`), então tudo que mexe em conta ou reinício precisa derrubar o processo
@@ -91,6 +124,14 @@ por mais um tanto. Conexão parada é descartada por roteador/firewall sem avisa
 seguem achando que estão ligados e a verdade só aparece quando alguém escreve. Daí o
 `ServerAliveInterval` no `spawn` do ssh.
 
+**O cache de arquivos é por servidor, não por caminho.** `cacheArquivos` é chaveado por
+`usuario@host|caminho`. Antes, duas abas ssh com `caminhoRemoto:'~'` colidiam entre si — e com
+o `~` do Windows.
+
+**Motor novo não é `if` novo.** Os 25 `if (eng === ...)` do `main.js` viraram consulta a uma
+tabela de motores; a tela lê a mesma tabela (`MOTORES`, `NOME_MOTOR`, `CAIXA_MOTOR`). Acrescentar
+motor é acrescentar linha, não ramo.
+
 ## Configuração
 
 Fica em `%APPDATA%\cockpit\config.json` (Windows) — abas, painéis, grupos e preferências.
@@ -100,7 +141,21 @@ memória e sobrescreve na ação seguinte.
 A aba "VPS" nasce **em branco de propósito** — endereço, usuário e caminho da chave são seus e
 não moram no código. Duplo clique na aba para preencher.
 
-## O que foi corrigido nesta versão
+## O que entrou nas últimas levas
+
+| Leva | O que entrou |
+|---|---|
+| 27–32 | Registro de motores (a tabela no lugar dos 25 `if`), motor de turno para Grok e Gemini, tela orientada pela tabela |
+| 33 | **Motor ACP** — qualquer agente que fale o Agent Client Protocol entra por um comando (`src/acp.js`), com modos, modelos e a mesma barra de permissão |
+| 34 | **Sinais** — plano do agente via MCP, PushNotification entregue na tela, linha do tempo sem teto, prints inline, "Continuar", retomada honesta |
+| 35 | **Torre** — torre de controle, painel em worktree do git (`-w`), perfis de conectores por aba (`--disallowedTools`), recibo do turno |
+| 36 | **Entrada** — voz sem clique e comandos de voz, motor Parakeet, recorte de tela, foto, quadro Excalidraw embutido, OCR local, prompts salvos, caixa de entrada do Telegram |
+| 37 | **Remoto de 1ª classe** — árvore, @-menção e visor de arquivo no servidor; view **Rotinas** com as tarefas agendadas do Windows |
+| 38 | **Codex app-server 0.147/0.153** — retomar reaplica as escolhas, recusa chega ao Codex, pergunta do próprio Codex vira cartão (com campo oculto para senha), skills nativas e Apps do ChatGPT na tela de conectores |
+
+As levas 35 e 36 passaram por 4 rodadas de auditoria dupla: **94 achados, 176 correções**.
+
+### O que foi corrigido antes disso (levas 17–20)
 
 Cada item abaixo tem um teste em `testes/` que reproduz o problema antes de provar a correção.
 
@@ -124,6 +179,9 @@ Cada item abaixo tem um teste em `testes/` que reproduz o problema antes de prov
 - Os processos de transcrição morrem junto com o app (antes sobreviviam a um Ctrl+R).
 - O nome do modelo de voz é interpolado dentro de um script Python — passa por lista fechada.
 - O `stderr` dos motores deixou de ser descartado: o motivo real da queda aparece no aviso.
+- O quadro branco roda sob a CSP do app: bundle e fontes locais, sem CDN, sem `eval`, sem wasm.
+- Os atalhos globais (`Ctrl+Alt+Space`, `Ctrl+Alt+R`) nascem **desligados** — um atalho global
+  toma a combinação de todos os programas, então é escolha sua nos Ajustes.
 
 ## Licença
 

@@ -28,6 +28,7 @@ function pegar(txt, assinatura, nome) {
 /* ---------- lado do main: como o id da mensagem e' montado ---------- */
 const emitido = [];
 const ctxMain = {
+  ...require('./raiz').globaisFalsos(),
   emit: (paneId, kind, data) => emitido.push({ paneId, kind, ...data }),
   codex: { paneMsgId: new Map(), paneTurn: new Map(), threadToPane: new Map(), paneToThread: new Map() },
   msgSeqPorPane: new Map(),
@@ -79,6 +80,7 @@ function montarRenderer() {
   const dom = novoDom();
   const bolhas = [];
   const ctx = {
+  ...require('./raiz').globaisFalsos(),
     console,
     document: { createElement: () => dom.criar() },
     mdSeguro: (t) => String(t),

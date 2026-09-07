@@ -10,7 +10,10 @@
   --cod:#e6c07b; --borda-forte:#00000055;
   --sombra1:#00000060; --sombra2:#00000090; --veu:#00000066;
   --codex:#6ea8fe; --claude:#d97757;
+  --gemini:#9b8cf2; --grok:#9aa4b2; --acp:#3fb8a9;
   --green:#5aa469; --yellow:#d7ba7d; --red:#e05252;
+  /* leva 37: fundo do bloco de rotina quebrada (o destaque da tela de Rotinas) */
+  --rot-falha:#3a2222; --rot-falha-borda:#6d3434;
 }
 html[data-tema="claro"]{
   --bg:#ffffff; --bg2:#f5f5f6; --bg3:#ececed; --bg4:#dcdcde; --act:#e7e7e9;
@@ -22,20 +25,27 @@ html[data-tema="claro"]{
   --cod:#a4552a; --borda-forte:#00000022;
   --sombra1:#0000001a; --sombra2:#00000026; --veu:#00000033;
   --codex:#1f6feb; --claude:#c2521f;
+  --gemini:#6d4bd6; --grok:#5b6673; --acp:#178f82;
   --green:#2f7d3a; --yellow:#9a6b00; --red:#c62828;
+  --rot-falha:#fdeaea; --rot-falha-borda:#f0bcbc;
 }
 html[data-tema="jornal"]{
   /* Solarized Light, o mesmo do seu VSCode */
   --bg:#fdf6e3; --bg2:#f5eed8; --bg3:#eee8d5; --bg4:#e3dcc4; --act:#eee8d5;
   --bg-flutua:#fdf6e3; --bg-foco:#faf3df; --fundo-fundo:#f2ebd6;
   --line:#e3dcc6; --line2:#d3ccb4;
-  --fg:#5c7278; --fg-dim:#63757b; --fg-fraco:#6f8188; --fg-strong:#33545c;
+  /* --fg medido em 4,1:1 sobre a bolha (--bg3) e 4,4 sobre --bg2 - abaixo do
+     minimo de 4,5 pra texto de leitura. Escurecido um tico: 4,7 na bolha,
+     5,3 no fundo claro. O --fg-strong fica como a leva 7 calibrou. */
+  --fg:#536970; --fg-dim:#5a6c72; --fg-fraco:#6f8188; --fg-strong:#33545c;
   --hover:#586e7510; --hover2:#586e751f; --hover3:#586e752b;
   --puxador:#fffbf0; --sobre-accent:#fdf6e3; --erro-fundo:#f4d9d3;
   --cod:#b58900; --borda-forte:#00000020;
   --sombra1:#586e7520; --sombra2:#586e7530; --veu:#586e7540;
   --codex:#268bd2; --claude:#cb4b16;
+  --gemini:#6c71c4; --grok:#657b83; --acp:#2aa198;
   --green:#859900; --yellow:#b58900; --red:#dc322f;
+  --rot-falha:#f7e3da; --rot-falha-borda:#e0b8a6;
 }
 
 :root{
@@ -73,9 +83,25 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 /* altura por sobra, nao por conta fixa: com a faixa de avisos na tela, o
    calc() antigo estourava a janela e cortava o campo de escrever */
 #shell{display:flex;flex:1;min-height:0}
-#activitybar{width:48px;flex:none;background:var(--act);display:flex;flex-direction:column;
-  align-items:center;padding-top:6px;gap:2px}
-.act{width:48px;height:44px;display:grid;place-items:center;opacity:.55;position:relative}
+/* leva 37: com o nono botao (Rotinas) a coluna passa de 400px. Em janela baixa
+   os botoes eram ESPREMIDOS (altura e' flex-basis, e o padrao encolhe): o icone
+   virava um risco. Agora eles mantem os 44px e a barra rola, com a barrinha de
+   rolagem escondida pra nao roubar largura de uma coluna de 48px.
+   E uma PISTA de que rola: sombra na borda de baixo, que aparece so' quando
+   sobrou botao debaixo da dobra e some ao chegar no fim. Medido a 380px de
+   altura de janela: o ultimo botao (Ajustes) ficava 21px abaixo da dobra e nada
+   na tela dizia isso, porque a barrinha de rolagem esta escondida.
+   Como funciona: a camada de baixo (a sombra) e' 'scroll' -- fica grudada na
+   borda do elemento; a de cima (uma tampa da cor da barra) e' 'local' -- anda
+   junto com o conteudo e so' cobre a sombra quando o fim da lista chega. */
+#activitybar{width:48px;flex:none;display:flex;flex-direction:column;
+  align-items:center;padding-top:6px;gap:2px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;
+  background-color:var(--act);
+  background-image:linear-gradient(var(--act),var(--act)),linear-gradient(to top,rgba(0,0,0,.45),rgba(0,0,0,0));
+  background-repeat:no-repeat;background-size:100% 16px,100% 14px;
+  background-position:bottom,bottom;background-attachment:local,scroll}
+#activitybar::-webkit-scrollbar{width:0;display:none}
+.act{width:48px;height:44px;flex:none;display:grid;place-items:center;opacity:.55;position:relative}
 .act svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .act:hover{opacity:.85}
 .act.active{opacity:1}
@@ -210,6 +236,50 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
    borda (overflow:hidden) e o texto do pedido virava largura zero - sobrava so'
    o "Permitir" clicavel, sem voce ler o que estava sendo autorizado.
    z-index acima do 70 do modal: dava pra ficar preso atras da janelinha aberta */
+/* ---------- caixa de perguntas ----------
+   Mesma linguagem da barra de permissao (presa embaixo, borda de destaque),
+   porque as duas dizem a mesma coisa: parei e preciso de voce. A diferenca e'
+   que aqui a resposta e' escolha, nao sim/nao - entao cabe mais espaco. */
+.pane-perg{flex:none;border-top:1px solid var(--accent);
+  background:color-mix(in srgb,var(--accent) 9%,var(--bg2));
+  padding:10px 14px 11px;max-height:52vh;overflow:auto;position:relative;z-index:71}
+
+.perg-topo{display:flex;align-items:center;gap:7px;margin-bottom:9px;font-size:12px;color:var(--fg)}
+.perg-topo b{font-weight:600}
+.perg-sino{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none;
+  animation:pulsa 1.6s ease-in-out infinite}
+.perg-dica{margin-left:auto;font-size:10.5px;color:var(--fg-dim)}
+
+.perg-item{margin-bottom:11px}
+.perg-item:last-of-type{margin-bottom:6px}
+.perg-tit{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-dim);margin-bottom:3px}
+.perg-txt{font-size:12.5px;line-height:1.45;color:var(--fg);margin-bottom:7px;user-select:text}
+
+.perg-ops{display:flex;flex-direction:column;gap:5px}
+.perg-op{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
+  padding:7px 10px;border-radius:7px;border:1px solid var(--line2);background:var(--bg3);
+  cursor:pointer;width:100%;transition:border-color .12s,background .12s}
+.perg-op:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--bg3))}
+.perg-op:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.perg-op.marcada{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,var(--bg3))}
+.perg-op.marcada .po-rot::before{content:"✓ ";color:var(--accent);font-weight:700}
+.po-rot{font-size:12px;font-weight:500;color:var(--fg);line-height:1.35}
+.po-det{font-size:10.5px;color:var(--fg-dim);line-height:1.4}
+
+.perg-livre{margin-top:6px;width:100%;padding:6px 9px;border-radius:6px;
+  border:1px dashed var(--line2);background:var(--bg);color:var(--fg);font-size:11.5px}
+.perg-livre:focus{border-style:solid;border-color:var(--accent);outline:none}
+.perg-livre::placeholder{color:var(--fg-dim)}
+
+.perg-pe{display:flex;gap:6px;justify-content:flex-end;align-items:center;
+  padding-top:8px;border-top:1px solid var(--line);margin-top:4px}
+.perg-ok{padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:500;
+  background:var(--accent);color:var(--sobre-accent);cursor:pointer}
+.perg-ok:disabled{opacity:.45;cursor:default}
+.perg-nao{padding:6px 12px;border-radius:6px;font-size:11.5px;
+  background:var(--bg3);border:1px solid var(--line2);color:var(--fg-dim);cursor:pointer}
+.perg-nao:hover{color:var(--fg);border-color:var(--line2)}
+
 .pane-perm{border-top:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--bg2));padding:9px 14px;display:flex;
   align-items:center;gap:8px 12px;flex-wrap:wrap;position:relative;z-index:71}
 .pp-txt{flex:1 1 100%;min-width:0;font:11.5px/1.5 var(--mono);color:var(--fg);user-select:text;
@@ -411,7 +481,7 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .mo-tit{font-size:14px;font-weight:600;color:var(--fg-strong)}
 .mo-x{width:24px;height:24px;border-radius:6px;color:var(--fg-dim);font-size:12px}
 .mo-x:hover{background:var(--hover2);color:var(--fg)}
-.mo-sub{font-size:11.5px;color:var(--fg-fraco);margin-bottom:10px;line-height:1.45}
+.mo-sub{font-size:11.5px;color:var(--fg-dim);margin-bottom:10px;line-height:1.45}
 .mo-lista{display:flex;flex-direction:column;gap:2px;margin:0 -5px}
 .co{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;min-height:36px}
 .co:hover{background:var(--hover)}
@@ -438,6 +508,14 @@ select{font:inherit;color:inherit;background:none;border:none;outline:none;curso
 .mo-form input:focus{border-color:var(--accent)}
 .mo-dica{font-size:10.5px;color:var(--fg-fraco);line-height:1.45}
 .mo-carregando{padding:16px 4px;font-size:12px;color:var(--fg-dim)}
+/* separa "Apps do ChatGPT" (conta) de "Conectores deste PC" (MCP local) */
+.mo-sec{display:flex;align-items:baseline;gap:7px;margin:12px 0 4px;font-size:11.5px;
+  font-weight:600;color:var(--fg-strong)}
+/* ':first-of-type' casa por TAG: o primeiro div do modal e' o .mo-top, entao
+   nenhum .mo-sec era o primeiro e a regra nunca valia. O irmao do .mo-sub e'
+   quem precisa colar no topo. */
+.mo-sub + .mo-sec{margin-top:2px}
+.mo-sec-d{font-size:10.5px;font-weight:400;color:var(--fg-fraco)}
 .mo-erro{font-size:11.5px;color:var(--red);margin-top:8px;line-height:1.45}
 
 /* logos oficiais dos motores */
@@ -816,7 +894,10 @@ html[data-tema="jornal"] .pane.eng-codex{--accent:#268bd2}
 .al-topo{display:flex;align-items:center;gap:6px;width:100%}
 .al-cor{width:8px;height:8px;border-radius:50%;flex:none}
 .al-n{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:left}
-.al-s{font-size:10px;color:var(--fg-fraco);padding-left:14px}
+/* --fg-dim, nao --fg-fraco: em 10px o contador sumia (3,3:1 no escuro).
+   Na aba ATIVA sobe pra --fg - e' a que voce esta lendo. */
+.al-s{font-size:10px;color:var(--fg-dim);padding-left:14px}
+.aba-local.on .al-s{color:var(--fg)}
 .al-x{position:absolute;top:5px;right:5px;flex:none;width:16px;height:16px;border-radius:4px;
   color:var(--fg-fraco);opacity:0;display:grid;place-items:center;background:var(--bg2)}
 .aba-local:hover .al-x,.aba-local.on .al-x{opacity:1}
@@ -987,6 +1068,15 @@ mark.busca-hit.atual{background:var(--yellow);color:#141414}
 .avi-x .ic{width:10px;height:10px}
 
 /* cartao da conta, no topo da lista de conversas */
+/* botao que substitui o interruptor quando o motor nao e' Claude nem Codex */
+.p-motor-outro{display:flex;align-items:center;gap:6px;height:24px;padding:0 10px;
+  border-radius:999px;border:1px solid var(--line2);background:var(--bg2);
+  color:var(--fg);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.p-motor-outro:hover{background:var(--hover)}
+.p-motor-outro .logo-lugar{display:flex;width:13px;height:13px}
+.p-motor-outro .logo-motor{width:13px;height:13px;fill:currentColor}
+.pane.eng-outro{--accent:#8b7fd4}
+
 .conta-cartao{padding:8px 10px 4px}
 .ct-guardadas{width:100%;margin-top:6px;padding:6px 8px;border-radius:8px;cursor:pointer;
   background:transparent;border:1px solid var(--line2);color:var(--fg);font:inherit;font-size:12px}
@@ -1101,3 +1191,244 @@ mark.busca-hit.atual{background:var(--yellow);color:#141414}
   .p-tokens{display:none}
   .p-cwd{display:none}                          /* a pasta ja aparece no topo da janela */
 }
+
+/* caixa de perguntas em painel estreito: a opcao ocupa a largura toda e o
+   detalhe some pra caber. Fica aqui no fim junto das outras @container - elas
+   competem por ordem de origem, entao as regras estreitas vem por ultimo. */
+@container (max-width: 340px){
+  .pane-perg{padding:8px 10px 9px;max-height:60vh}
+  .po-det{display:none}
+  .perg-pe{flex-direction:column-reverse;align-items:stretch}
+  .perg-ok,.perg-nao{width:100%}
+}
+
+/* ======== os quatro motores ========
+   O Gemini e o Grok entraram na barra lateral e na tela de abertura. Antes eles
+   dividiam um roxo generico (.pane.eng-outro); agora cada um tem a sua cor, em
+   todos os temas, do mesmo jeito que o Claude e o Codex.
+   Estas regras vem DEPOIS de .pane.eng-outro de proposito: mesma forca, quem
+   vem por ultimo ganha. */
+.act.ic-gemini{color:var(--gemini)}
+/* motor que nao esta na maquina: o icone continua ali, mas apagado */
+.act.fora{opacity:.38}
+.act.ic-grok{color:var(--grok)}
+.pane.eng-gemini{--accent:var(--gemini)}
+.pane.eng-grok{--accent:var(--grok)}
+.bv-bt[data-motor="gemini"] .bv-ico{color:var(--gemini)}
+.bv-bt[data-motor="grok"] .bv-ico{color:var(--grok)}
+
+/* quatro botoes nao cabem lado a lado em janela estreita: quebram em duas linhas */
+.bv-bts{flex-wrap:wrap}
+
+/* motor que nao esta na maquina: o botao continua ali, mas apagado, e o clique
+   explica em vez de abrir um painel que so' quebraria na primeira mensagem */
+.bv-bt.fora{opacity:.42}
+.bv-bt.fora .bv-n::after{content:" · não instalado";font-weight:400;color:var(--fg-fraco);font-size:11px}
+.bv-aviso{margin:14px auto 0;max-width:430px;font-size:12.5px;line-height:1.5;color:var(--fg-fraco)}
+.bv-aviso.hidden{display:none}
+
+/* ======== leva 32: plano vivo, sugestoes, auditoria, voltar-pra-ca ======== */
+
+/* plano vivo do turno: a checklist do proprio agente, fixa acima do campo */
+.pane-plano{flex:none;border-top:1px solid var(--line);background:var(--bg2);padding:0}
+.pl-cab{display:flex;align-items:center;gap:7px;width:100%;padding:6px 12px;font-size:11.5px;
+  color:var(--fg-dim);cursor:pointer;text-align:left}
+.pl-cab:hover{background:var(--hover)}
+.pl-seta .ic{width:11px;height:11px;display:block}
+.pl-tit{font-weight:600;letter-spacing:.04em;text-transform:uppercase;font-size:10.5px}
+.pl-conta{font-variant-numeric:tabular-nums;color:var(--fg)}
+.pl-barra{flex:1;height:3px;border-radius:2px;background:var(--bg4);overflow:hidden;min-width:40px}
+.pl-cheio{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+.pl-corpo{max-height:132px;overflow-y:auto;padding:2px 12px 8px;display:grid;gap:3px}
+.pl-item{display:flex;align-items:baseline;gap:8px;font-size:12.5px;line-height:1.45;color:var(--fg-dim)}
+.pl-pt{flex:none;width:8px;height:8px;border-radius:2px;border:1.5px solid var(--fg-fraco);
+  position:relative;top:1px;background:transparent}
+.pl-fazendo{color:var(--fg-strong)}
+.pl-fazendo .pl-pt{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 45%, transparent)}
+.pl-feito{color:var(--fg-fraco)}
+.pl-feito .pl-txt{text-decoration:line-through;text-decoration-color:var(--line2)}
+.pl-feito .pl-pt{border-color:var(--green);background:var(--green)}
+
+/* sugestao de proxima mensagem: chips discretos acima do campo de escrever */
+.p-sugs{display:flex;gap:6px;flex-wrap:wrap;padding:0 2px 6px}
+.sug-chip{font-size:11.5px;color:var(--fg-dim);border:1px dashed var(--line2);border-radius:999px;
+  padding:3px 11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.sug-chip:hover{color:var(--fg);border-color:var(--accent);border-style:solid;background:var(--hover)}
+
+/* auditoria de autonomia: o distintivo ⚡N no cabecalho do painel */
+.p-audit{flex:none;display:flex;align-items:center;gap:3px;font-size:10.5px;font-variant-numeric:tabular-nums;
+  color:var(--yellow);border:1px solid color-mix(in srgb, var(--yellow) 40%, transparent);
+  border-radius:999px;padding:1px 7px}
+.p-audit .ic{width:10px;height:10px}
+.p-audit:hover{background:color-mix(in srgb, var(--yellow) 12%, transparent)}
+
+/* voltar para ca: aparece so' no hover da SUA mensagem */
+.msg-voltar{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-fraco);
+  opacity:0;margin-top:3px;padding:1px 6px;border-radius:5px;transition:opacity .12s}
+.msg.user{position:relative}
+.msg.user:hover .msg-voltar{opacity:1}
+.msg-voltar:hover{color:var(--fg);background:var(--hover2)}
+.msg-voltar .ic{width:10px;height:10px}
+.msg.user .msg-voltar{align-self:flex-end}
+
+/* botao "ver mudancas" no carimbo de fim de turno */
+.turno-fim{display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap}
+.turno-mudancas{font-size:10.5px;color:var(--fg-dim);border:1px solid var(--line2);border-radius:999px;padding:1px 9px}
+.turno-mudancas:hover{color:var(--fg);border-color:var(--accent)}
+
+/* painel estreito: plano encolhe e o distintivo perde o numero
+   (fica DEPOIS das outras @container de proposito - ordem manda) */
+@container (max-width: 340px){
+  .pl-corpo{max-height:88px}
+  .p-audit span{display:none}
+  .msg-voltar span{display:none}
+}
+
+
+/* ======== leva 33: motor ACP (quinto motor, generico) ======== */
+.act.ic-acp{color:var(--acp)}
+.pane.eng-acp{--accent:var(--acp)}
+.bv-bt[data-motor="acp"] .bv-ico{color:var(--acp)}
+.menu-cmd{padding:4px 8px 6px}
+.menu-cmd .menu-search{width:100%;box-sizing:border-box}
+
+/* ======== leva 34: sinais ======== */
+/* linha do tempo do turno: acima de 8 passos os antigos ficam atras do
+   cabecalho - mas ERRO fica sempre a vista, recolhido ou nao */
+.passos.grande .passo:not(.recente):not(.erro){display:none}
+/* mais especifico que a regra de esconder (ela soma dois :not) */
+.passos.grande.tudo .passo:not(.recente):not(.erro){display:flex}
+.passos.recolhido .passo.erro{display:flex}
+.passos-vivo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:10.5px;color:var(--fg-fraco);padding:0;width:100%}
+.pv-txt{font-size:10.5px;color:var(--fg-fraco);padding:2px 6px;border-radius:5px;text-align:left}
+.pv-txt:hover{background:var(--hover2);color:var(--fg)}
+.passos-vivo.com-erro .pv-txt,.passos-cab.com-erro{color:var(--red)}
+.ct-fixo{font-size:11px;line-height:1.45;color:var(--fg-dim);padding:6px 8px}
+.pv-filtros{display:flex;gap:4px;margin-left:auto}
+.pv-f{padding:0 6px;border-radius:999px;border:1px solid var(--line2);font-size:10px;color:var(--fg-fraco);cursor:pointer}
+.pv-f.on{color:var(--fg);border-color:var(--accent)}
+/* o filtro so' existe com a caixa aberta (.tudo): precisa da mesma forca da
+   regra de abrir e vir depois dela, senao os passos antigos escapavam do filtro */
+.passos.grande.tudo[data-filtro="terminal"] .passo:not([data-tipo="terminal"]):not(.erro),
+.passos.grande.tudo[data-filtro="arquivo"] .passo:not([data-tipo="arquivo"]):not(.erro),
+.passos.grande.tudo[data-filtro="busca"] .passo:not([data-tipo="busca"]):not(.erro),
+.passos.grande.tudo[data-filtro="outro"] .passo:not([data-tipo="outro"]):not(.erro){display:none}
+/* prints que o agente tirou */
+.pa-imgs{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}
+.pa-img{max-width:min(220px,100%);max-height:150px;border-radius:6px;border:1px solid var(--line2);cursor:zoom-in;display:block}
+.pa-img:hover{border-color:var(--accent)}
+.mo-prints{display:flex;flex-wrap:wrap;gap:10px;padding:10px}
+.mo-print{max-width:min(420px,100%);max-height:320px;border-radius:8px;border:1px solid var(--line2);cursor:zoom-in}
+.turno-prints{margin-left:6px}
+/* aviso que o agente mandou (PushNotification interceptada) */
+.aviso-agente{display:flex;align-items:flex-start;gap:8px;margin:4px 14px 8px;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.45;
+  background:color-mix(in srgb,var(--yellow) 14%,var(--bg2));border:1px solid color-mix(in srgb,var(--yellow) 40%,var(--line2));color:var(--fg)}
+.aviso-agente .ag-ic{flex:none;color:var(--yellow);display:flex;margin-top:2px}
+.aviso-agente .ag-ic .ic{width:13px;height:13px}
+.aviso-agente .ag-txt{user-select:text;min-width:0;overflow-wrap:anywhere}
+/* continuar a um clique */
+.p-cont{display:flex;gap:6px;padding:0 2px 6px}
+.cont-chip{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg);border:1px solid var(--line2);border-radius:999px;
+  padding:2px 10px 2px 8px;background:var(--bg3)}
+.cont-chip:hover{color:var(--fg);border-color:var(--accent);background:var(--hover)}
+.cont-seta{font-size:9px;color:var(--accent)}
+/* faixa de retomada: o CLI reiniciou o turno sozinho */
+.troca.retomada span{color:var(--fg-dim);font-style:italic}
+
+
+/* ======== leva 35: torre, recibo, conectores, worktree ======== */
+.torre{padding:6px 8px;display:flex;flex-direction:column;gap:2px;font-size:12px}
+.torre-resumo{font-size:11px;color:var(--fg-dim);padding:4px 6px 8px}
+.torre-aba{display:flex;align-items:center;gap:7px;padding:8px 6px 3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-dim)}
+.torre-cor{width:8px;height:8px;border-radius:50%;flex:none}
+.torre-conta{margin-left:auto;text-transform:none;letter-spacing:0}
+.torre-item{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer}
+.torre-item:hover{background:var(--hover)}
+.torre-item.fora{cursor:default}
+.ti-pt{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:var(--fg-fraco)}
+.torre-item.ocupado .ti-pt{background:var(--yellow);animation:pulse 1.1s ease-in-out infinite}
+.torre-item.espera .ti-pt{background:var(--red)}
+.torre-item.parado .ti-pt{background:var(--green)}
+.torre-item.fora .ti-pt{background:var(--accent);opacity:.7}
+.ti-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.ti-tit{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ti-est{font-size:11px;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.torre-item.espera .ti-est{color:var(--red)}
+.ti-acao{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);color:var(--fg-dim);flex:none;align-self:center}
+.ti-acao:hover{color:var(--fg);border-color:var(--accent)}
+.recibo{margin:12px 0 4px;padding:8px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg2));border-radius:6px}
+.recibo .recibo-tit{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-dim);margin:0 0 6px}
+.conectores-lista{display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto;padding:4px 2px}
+.conector-item{font-size:12px}
+
+
+/* ======== leva 36: entrada sem digitar ======== */
+.anx-ocr{font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid var(--line2);color:var(--fg-dim);margin-left:4px;flex:none}
+.anx-ocr:hover{color:var(--fg);border-color:var(--accent)}
+.anx-ocr:disabled{opacity:.6}
+.modal-cx.foto-cx{width:min(760px,calc(100% - 36px))}
+.foto-video{display:block;width:100%;max-height:60vh;background:#000;border-radius:8px;margin:6px 0}
+
+
+/* ======== leva 36: quadro branco ======== */
+#quadro{position:fixed;inset:0;z-index:70;background:var(--bg);display:flex;flex-direction:column}
+#quadro.hidden{display:none}
+.quadro-top{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);background:var(--bg2);flex:none}
+.quadro-tit{font-weight:600;font-size:13px;color:var(--fg)}
+.quadro-dica{font-size:11.5px;color:var(--fg-fraco)}
+.quadro-dica.erro{color:var(--red)}
+.quadro-top .mo-btn{flex:none;padding:6px 12px}
+.quadro-espaco{flex:1}
+#quadroArea{flex:1;min-height:0;position:relative}
+#quadroArea .excalidraw{height:100%}
+
+
+/* ======== leva 37: arvore, "@" e visor dentro do servidor ======== */
+/* SSH leva segundos: o "lendo…" e' o que separa "lento" de "quebrado" aos
+   olhos de quem esta' olhando a barra da esquerda. */
+.tree-carregando{padding:8px 14px;font-size:11.5px;color:var(--fg-dim)}
+/* motivo da falha da busca do "@" no lugar da lista (usa as cores dos 3 temas) */
+.mo-sub.erro{color:var(--red)}
+
+
+/* ======== leva 37: rotinas (tarefas agendadas do Windows) ======== */
+/* Copia da torre com prefixo proprio: mesma linguagem visual, e a mudanca de
+   uma nao arrasta a outra. O bloco de falha vem primeiro e com fundo proprio
+   -- e a razao da tela existir, nao pode ser mais um item na lista. */
+.rot{padding:6px 8px;display:flex;flex-direction:column;gap:2px;font-size:12px}
+/* o "lendo..." da view: o PowerShell leva 3-4s e a tela abria em branco. Mesma
+   ideia (e mesma cara) do .tree-carregando da arvore. */
+.rot-carregando{padding:8px 6px;font-size:11.5px;color:var(--fg-dim)}
+.rot-resumo{font-size:11px;color:var(--fg-dim);padding:4px 6px 8px}
+.rot-resumo.tem-falha{color:var(--red);font-weight:600}
+.rot-grupo{display:flex;align-items:center;gap:7px;padding:8px 6px 3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-dim)}
+.rot-conta{margin-left:auto;text-transform:none;letter-spacing:0}
+/* grupo recolhivel: as rotinas de fabricante (OneDrive, Realtek, Zoom...) */
+.rot-grupo.clicavel{cursor:pointer;border-radius:6px}
+.rot-grupo.clicavel:hover{background:var(--hover);color:var(--fg)}
+.rot-seta{flex:none;display:flex;align-items:center;opacity:.75}
+.rot-seta svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.rot-caixa{background:var(--rot-falha);border:1px solid var(--rot-falha-borda);border-radius:8px;padding:2px 4px 6px;margin-bottom:6px}
+.rot-caixa .rot-grupo{color:var(--red)}
+.rot-item{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:7px}
+.rot-item:hover{background:var(--hover)}
+.ri-pt{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;background:var(--fg-fraco)}
+.rot-item.ocupado .ri-pt{background:var(--yellow);animation:pulse 1.1s ease-in-out infinite}
+.rot-item.espera .ri-pt{background:var(--red)}
+.rot-item.parado .ri-pt{background:var(--green)}
+.rot-item.fora .ri-pt{background:var(--fg-fraco);opacity:.7}
+.ri-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.ri-tit{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri-est{font-size:11px;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri-quando{font-size:11px;color:var(--fg-fraco);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Na linha quebrada o motivo e' o conteudo, nao um detalhe: ele quebra em
+   varias linhas e ocupa a largura inteira dos 230px da barra. O botao desce
+   pra baixo (a linha 1 ja' come 100%), senao o texto ficava espremido numa
+   coluna de tres palavras ao lado dele. */
+.rot-item.espera .ri-est{color:var(--red);font-weight:600;white-space:normal}
+.rot-item.espera{flex-wrap:wrap}
+.rot-item.espera .ri-txt{flex:1 1 calc(100% - 15px)}
+.rot-item.espera .ri-acao{margin:5px 0 1px 15px}
+.ri-acao{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line2);color:var(--fg-dim);flex:none;align-self:center}
+.ri-acao:hover{color:var(--fg);border-color:var(--accent)}
+.ri-acao:disabled{opacity:.5}

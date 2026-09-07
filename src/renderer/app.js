@@ -28,6 +28,14 @@ function remotoDoAba(aba) {
   return { host: aba.host, usuario: aba.usuario, chave: aba.chave, caminhoRemoto: aba.caminhoRemoto || '~' };
 }
 function remotoDoPane(P) { return remotoDoAba(abaPorId(P.abaId)); }
+/* Aba de servidor ainda em branco -- o Cockpit vem com uma assim de proposito.
+   Sem usuario e host o pedido NAO chega a virar SSH la' no processo principal:
+   ele cai no disco DESTE PC sem avisar (arvore, "@" e visor liam a pasta errada
+   calados). Entao arvore, "@" e visor param aqui e dizem o que falta. */
+function faltaConfigurarServidor(remoto) {
+  return !!remoto && (!String(remoto.usuario || '').trim() || !String(remoto.host || '').trim());
+}
+const AVISO_ABA_EM_BRANCO = 'Esta aba ainda não tem servidor configurado — preencha usuário, host e chave em Editar aba.';
 /* pastas de uma aba local: aceita a lista nova (caminhos) e o campo antigo
    (caminho), pra nao quebrar aba criada antes desta versao */
 function pastasDaAba(aba) {
@@ -54,9 +62,34 @@ const LOGO = {
   claude: 'M4.7144 15.9555l4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
   codex: 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z',
 };
+// losango do Gemini e "X" do Grok, desenhados aqui pra nao usar marca de terceiro
+LOGO.gemini = 'M12 2c.5 4.5 5.5 9.5 10 10-4.5.5-9.5 5.5-10 10-.5-4.5-5.5-9.5-10-10 4.5-.5 9.5-5.5 10-10z';
+LOGO.grok = 'M3 3h4.2l5.1 7.1L17.6 3H22l-7.4 9.6L22 21h-4.2l-5.3-7.4L7 21H3l7.7-9.2z';
+// plugue do ACP (protocolo aberto, sem marca): dois pinos, corpo e cabo
+LOGO.acp = 'M9 2h2v5h2V2h2v5h2a1 1 0 0 1 1 1v3a6 6 0 0 1-5 5.92V22h-2v-5.08A6 6 0 0 1 6 11V8a1 1 0 0 1 1-1h2V2z';
+
 const ICONES = {"hand": "<path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\" /> <path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\" /> <path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\" /> <path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\" />", "code-xml": "<path d=\"m18 16 4-4-4-4\" /> <path d=\"m6 8-4 4 4 4\" /> <path d=\"m14.5 4-5 16\" />", "clipboard-list": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"M12 11h4\" /> <path d=\"M12 16h4\" /> <path d=\"M8 11h.01\" /> <path d=\"M8 16h.01\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "unlock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 9.9-1\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "eraser": "<path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\" /> <path d=\"m5.082 11.09 8.828 8.828\" />", "sparkles": "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /> <path d=\"M20 2v4\" /> <path d=\"M22 4h-4\" /> <circle cx=\"4\" cy=\"20\" r=\"2\" />", "brain": "<path d=\"M12 18V5\" /> <path d=\"M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4\" /> <path d=\"M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5\" /> <path d=\"M17.997 5.125a4 4 0 0 1 2.526 5.77\" /> <path d=\"M18 18a4 4 0 0 0 2-7.464\" /> <path d=\"M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517\" /> <path d=\"M6 18a4 4 0 0 1-2-7.464\" /> <path d=\"M6.003 5.125a4 4 0 0 0-2.526 5.77\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "arrow-left-right": "<path d=\"M8 3 4 7l4 4\" /> <path d=\"M4 7h16\" /> <path d=\"m16 21 4-4-4-4\" /> <path d=\"M20 17H4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "plug": "<path d=\"M12 22v-5\" /> <path d=\"M15 8V2\" /> <path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /> <path d=\"M9 8V2\" />", "key-round": "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /> <circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "log-out": "<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 12.5 8 15l2 2.5\" /> <path d=\"m14 12.5 2 2.5-2 2.5\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /> <path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />", "terminal": "<path d=\"M12 19h8\" /> <path d=\"m4 17 6-6-6-6\" />", "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />", "refresh-cw": "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" /> <path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /> <path d=\"M8 16H3v5\" />", "circle-help": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\" /> <path d=\"M12 17h.01\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /> <path d=\"M9 3v18\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "arrow-up": "<path d=\"m5 12 7-7 7 7\" /> <path d=\"M12 19V5\" />", "square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />", "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />", "circle": "<circle cx=\"12\" cy=\"12\" r=\"10\" />", "minus": "<path d=\"M5 12h14\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "star": "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />", "mic": "<path d=\"M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z\" /> <path d=\"M19 10v2a7 7 0 0 1-14 0v-2\" /> <line x1=\"12\" x2=\"12\" y1=\"19\" y2=\"22\" />", "server": "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" ry=\"2\" /> <rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" ry=\"2\" /> <line x1=\"6\" x2=\"6.01\" y1=\"6\" y2=\"6\" /> <line x1=\"6\" x2=\"6.01\" y1=\"18\" y2=\"18\" />"};
 const ico = (n) => '<svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONES[n] || '') + '</svg>';
-const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + LOGO[eng === 'codex' ? 'codex' : 'claude'] + '"/></svg>';
+/* Um lugar so' para o nome de cada motor. Antes isto era um
+   "nomeDoMotor(engine)" espalhado em oito pontos -- e cada
+   motor novo obrigaria a caçar todos de novo. */
+const NOME_MOTOR = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', grok: 'Grok', acp: 'ACP' };
+const nomeDoMotor = (eng) => NOME_MOTOR[eng] || 'Claude';
+const MOTORES = ['claude', 'codex', 'gemini', 'grok', 'acp'];
+
+/* A barra lateral tem uma coluna por motor, e cada pedaco dela e' um id fixo no
+   HTML (#histClaude, #contaGemini...). Antes isto era escrito a mao em cinco
+   lugares como "engine === 'claude' ? '#histClaude' : '#histCodex'" -- ou seja,
+   QUALQUER motor que nao fosse o Claude ia escrever na coluna do Codex: um
+   painel do Gemini pintava a conta dele no cartao do Codex. */
+const CAIXA_MOTOR = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', grok: 'Grok', acp: 'Acp' };
+const caixaDoMotor = (pre, eng) => document.getElementById(pre + (CAIXA_MOTOR[eng] || 'Claude'));
+/* Estado guardado por motor. Nascendo com os quatro, um "++" numa chave que nao
+   existe deixa de virar NaN e a lista deixa de nunca mais pintar. */
+const porMotor = (valor) => { const o = {}; for (const m of MOTORES) o[m] = valor; return o; };
+
+
+const svgMotor = (eng) => '<svg viewBox="0 0 24 24" class="logo-motor"><path d="' + (LOGO[eng] || LOGO.claude) + '"/></svg>';
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 /* este computador: o app nasceu so para Mac, entao tudo que fala de caminho
    ou do proprio sistema passa por aqui em vez de assumir "/" e "Mac". */
@@ -104,6 +137,9 @@ const MODELOS_CLAUDE = [
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'high', padrao: true },
   { id: 'claude-opus-5', nome: 'Opus 5', desc: 'O mais forte',
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'high' },
+  /* id conferido RODANDO em 06/09/2026 (exige Claude Code 2.1.251+) */
+  { id: 'claude-fable-5-1', nome: 'Fable 5.1 (1M)', desc: 'O Fable novo, com memória gigante',
+    efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'medium' },
   { id: 'claude-fable-5', nome: 'Fable 5', desc: 'Da família Claude 5',
     efforts: ['low','medium','high','xhigh','max'], padraoEffort: 'medium' },
   { id: 'claude-sonnet-5', nome: 'Sonnet 5', desc: 'Rápido e bom para o dia a dia',
@@ -113,8 +149,41 @@ const MODELOS_CLAUDE = [
 ];
 let MODELOS_CODEX = null;   // vem do proprio Codex
 
+/* Lista conferida RODANDO cada modelo com a chave do Hugo (06/09/2026):
+   os 2.5 morreram ("no longer available to new users") e o 3.1-pro-preview tem
+   camada gratis ZERO - oferecer qualquer um deles seria vender erro 404. */
+const MODELOS_GEMINI = [
+  { id: '', nome: 'padrão do Gemini', desc: 'ele escolhe o modelo a cada pedido (auto)', efforts: [], padrao: true },
+  { id: 'gemini-3.5-flash', nome: 'Gemini 3.5 Flash', desc: 'rápido, com camada grátis', efforts: [] },
+  { id: 'gemini-3.1-flash-lite', nome: 'Gemini 3.1 Flash Lite', desc: 'o mais leve e barato', efforts: [] },
+];
+const MODELOS_GROK = [
+  { id: '', nome: 'padrão do Grok', desc: 'o que está no ~/.grok/config.toml', efforts: [], padrao: true },
+];
+/* No painel ACP o "modelo" e' o COMANDO que sobe o agente: e' o que o main
+   recebe como model e passa pro acp.js. So' o primeiro foi provado rodando
+   nesta maquina (testes/acp-vivo.js); os outros existem no npm/site, mas nao
+   rodaram aqui - a descricao diz isso em vez de prometer. */
+const MODELOS_ACP = [
+  { id: 'gemini --acp', nome: 'Gemini (ACP)', desc: 'o Gemini CLI falando ACP — provado nesta máquina', efforts: [], padrao: true },
+  { id: 'npx -y @zed-industries/claude-code-acp', nome: 'Claude Code (ACP)', desc: 'adaptador do Zed pro Claude Code (baixa na 1ª vez; não testado aqui)', efforts: [] },
+  { id: 'npx -y @zed-industries/codex-acp', nome: 'Codex (ACP)', desc: 'adaptador do Zed pro Codex (baixa na 1ª vez; não testado aqui)', efforts: [] },
+  { id: 'opencode acp', nome: 'OpenCode (ACP)', desc: 'se o OpenCode estiver instalado (não testado aqui)', efforts: [] },
+  { id: 'qwen --acp', nome: 'Qwen Code (ACP)', desc: 'se o Qwen Code estiver instalado (não testado aqui)', efforts: [] },
+];
+/* comando proprio (digitado no menu) entra na lista: senao o fillModels o
+   trocava pelo padrao ao religar o painel */
+function modelosAcp(P) {
+  const proprio = String(P.model || '').trim();
+  if (!proprio || MODELOS_ACP.some((m) => m.id === proprio)) return MODELOS_ACP;
+  return [...MODELOS_ACP, { id: proprio, nome: proprio.split(/\s+/)[0] + ' (comando próprio)', desc: proprio, efforts: [] }];
+}
+
 function modelosDe(P) {
   if (P.engine === 'claude') return MODELOS_CLAUDE;
+  if (P.engine === 'gemini') return MODELOS_GEMINI;
+  if (P.engine === 'grok') return MODELOS_GROK;
+  if (P.engine === 'acp') return modelosAcp(P);
   return MODELOS_CODEX || [{ id: '', nome: 'padrão do Codex', desc: 'o que está no seu config', efforts: ['low','medium','high','xhigh'], padraoEffort: 'medium' }];
 }
 function modeloAtual(P) {
@@ -132,6 +201,7 @@ const TOOL_PT = {
   Glob: 'Procurando arquivos', Grep: 'Buscando no código', WebSearch: 'Pesquisando na web',
   WebFetch: 'Abrindo link', Task: 'Agente', TodoWrite: 'Lista de tarefas', Skill: 'Skill',
   NotebookEdit: 'Editando notebook', BashOutput: 'Saída do terminal',
+  PushNotification: 'Avisando você', mcp__cockpit__plano: 'Plano', mcp__cockpit__perguntar: 'Pergunta',
 };
 function toolLabel(n) {
   if (TOOL_PT[n]) return TOOL_PT[n];
@@ -221,6 +291,7 @@ function textoDasFrases(d) {
   return s;
 }
 
+const TITULO_MIC = 'Ditar: falar e virar texto (Ctrl+Alt+Space de qualquer lugar, se ligado nos Ajustes). Diga "manda" pra enviar, "cancela" pra desistir, "apaga isso" pra tirar a última frase. Shift+clique para parar sem enviar.';
 function ligarDitado(P, btMic, el) {
   let D = null;   // sessao de ditado em andamento
 
@@ -254,7 +325,7 @@ function ligarDitado(P, btMic, el) {
     try { d.ctx.close(); } catch {}
     btMic.classList.remove('gravando');
     btMic.style.removeProperty('--nivel');
-    btMic.title = 'Ditar: falar e virar texto';
+    btMic.title = TITULO_MIC;
     try { window.api.audioDitadoCancelar({ paneId: P.id }); } catch {}
 
     if (motivo === 'cancelado' || P.morto) return;
@@ -279,7 +350,7 @@ function ligarDitado(P, btMic, el) {
     if (P.morto) return;
     d.parcial = '';
     escrever(d, d.base + textoDasFrases(d));
-    if (!textoDasFrases(d).trim()) {
+    if (!d.comando && !textoDasFrases(d).trim()) {   // "manda" sozinho nao e' "nao entendi"
       // nao saiu nada: dizer POR QUE, em vez de so "nao entendi"
       /* dizer QUAL e o problema. "Nao entendi" nao ajuda quem esta com o
          microfone baixo demais - e era esse o caso na medicao. */
@@ -294,14 +365,53 @@ function ligarDitado(P, btMic, el) {
     }
     const inp2 = $('.p-input', el);
     if (inp2) { inp2.focus(); crescerCampo(inp2); }
+    /* "falar e mandar" (Ajustes): parou de ditar com 3+ palavras, vai. Nao vale
+       quando quem parou foi o envio ou um comando de voz (eles ja cuidam disso). */
+    if (cfg.vozManda && motivo !== 'enviou' && motivo !== 'comando' && motivo !== 'botao-editar' && inp2 && inp2.value.trim()) {
+      const n = textoDasFrases(d).trim().split(/\s+/).filter(Boolean).length;
+      if (n >= 3) setTimeout(() => { if (!P.morto && !P._ditado) send(P); }, 60);
+    }
   };
   // fechar o painel / trocar de aba tem que apagar o microfone
   P.pararGravacao = () => { pararDitado('cancelado'); };
   P.pararDitado = pararDitado;
 
+  /* ===== comandos de voz =====
+     A ultima frase fechada, se for SO' um comando, nao vira texto: vira acao.
+     Sem modelo extra - a frase normalizada contra meia duzia de padroes. */
+  const comandoDeVoz = (d, f) => {
+    const t = normalizarFala(f.final != null ? f.final : f.provisorio);
+    if (!t || t.split(' ').length > 4) return false;
+    const tira = () => { const i = d.frases.indexOf(f); if (i >= 0) d.frases.splice(i, 1); return i; };
+    if (/^(manda|mandar|envia|enviar)( isso| agora| ai)?$/.test(t)) {
+      d.comando = true; tira(); escrever(d, d.base + textoDasFrases(d));
+      pararDitado('comando').then(() => { const c = $('.p-input', el); if (!P.morto && c && c.value.trim()) send(P); });
+      return true;
+    }
+    if (/^(cancela|cancelar)( isso| tudo| o ditado)?$/.test(t)) {
+      d.comando = true; tira(); d.frases = []; d.parcial = ''; escrever(d, d.base);
+      pararDitado('cancelado');
+      return true;
+    }
+    if (/^(apaga|apagar|remove|remover) (isso|essa|essa frase|a ultima|a ultima frase|o ultimo)$/.test(t)) {
+      // some a frase que veio ANTES do comando (no passe caprichado a seguinte ja pode ter fechado)
+      d.comando = true;
+      const i = tira();
+      if (i > 0) d.frases.splice(i - 1, 1);
+      escrever(d, d.base + textoDasFrases(d) + (d.parcial || ''));   // mantem a legenda que estava na tela
+      return true;
+    }
+    if (/^proximo painel$/.test(t)) {
+      d.comando = true; tira(); escrever(d, d.base + textoDasFrases(d));
+      pararDitado('comando').then(() => { if (!P.morto) irParaPainel(1); });
+      return true;
+    }
+    return false;
+  };
+
   btMic.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (D) { pararDitado('botao'); return; }
+    if (D) { pararDitado(e.shiftKey ? 'botao-editar' : 'botao'); return; }   // Shift+clique: para SEM enviar
 
     const disp = await window.api.audioDisponivel();
     if (!disp || !disp.ok) {
@@ -448,10 +558,13 @@ function ligarDitado(P, btMic, el) {
         d.parcial = '';
         d.frase = []; d.amostrasNaFrase = 0; d.mandadoAte = 0;
         d.falouNaFrase = false; d.msSilencio = 0;
+        // frase que e' so' um comando ("manda", "cancela"...) vira acao, nao texto
+        if (comandoDeVoz(d, f)) return;
         escrever(d, d.base + textoDasFrases(d));
         d.finaisNaRua++;
         window.api.audioDitadoFinal({ paneId: P.id, amostras }).then((r) => {
           f.final = (r && r.texto != null) ? String(r.texto).trim() : f.provisorio;
+          if (D === d && d.frases.includes(f) && comandoDeVoz(d, f)) return;   // a legenda errou, o passe caprichado acertou o comando (frase ja apagada nao manda mais nada)
           if (D === d) escrever(d, d.base + textoDasFrases(d) + d.parcial);
         }).catch(() => { f.final = f.provisorio; })
           .then(() => { d.finaisNaRua--; });
@@ -488,7 +601,10 @@ function newPane(opts = {}) {
     started: false, busy: false, queued: null, hist: [], passarContexto: null,
     titulo: opts.titulo || '', sessaoId: null, sessaoFile: '', anexos: [],
     envio: cfg.envioPadrao || 'fila',
-    mode: opts.mode || cfg.defMode || 'bypass', effort: opts.effort || cfg.defEffort || 'high',
+    // MESMO padrao da linha do engine, acima: conferir o modo contra outro motor
+    // fazia o painel mostrar "Manual" e rodar sem sandbox nenhum
+    mode: modoValido(opts.engine || cfg.lastEngine || 'codex', opts.mode || cfg.defMode),
+    effort: opts.effort || cfg.defEffort || 'high',
     blocks: new Map(), tools: new Map(),
     chat: $('.pane-chat', el),
   };
@@ -513,9 +629,12 @@ function newPane(opts = {}) {
     destravarPainel(P);
     // pasta nova = conversa nova: com o resumeId antigo o Claude procurava a
     // sessao na pasta errada, nao achava, e o painel caia em looping
-    P.resumeId = null; P.sessaoId = null; P.sessaoFile = '';
+    P.resumeId = null; P.sessaoId = null; P.sessaoFile = ''; P.resumeAnterior = null;
     P.started = false; setDot(P, 'off');
-    if (focusPane === P) { loadTree(P.cwd); $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + (P.engine === 'codex' ? 'Codex' : 'Claude'); }
+    limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false; P.avisoModelo = null; P.acpInfo = null; P.acpModelos = null; P.worktree = null; mostrarPastaNoPainel(P);
+    // aba remota nem chega aqui (o botao da pasta recusa antes), mas a arvore
+    // segue o PAINEL de qualquer jeito -- nunca o formato do caminho
+    if (focusPane === P) { loadTree(P.cwd, remotoDoPane(P)); $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + nomeDoMotor(P.engine); }
     note(P, 'Pasta: ' + shortPath(p)); savePanes(); atualizarGit(P);
   };
   btnCwd.addEventListener('click', async (ev) => {
@@ -565,7 +684,7 @@ function newPane(opts = {}) {
     // que o app tinha travado.
     if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); e.stopPropagation(); girarModo(P); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(P); }
-    if (e.key === 'Escape') { fecharMenus(); fecharTerminalDoPainel(P); fecharModal(P); if (P.busy) window.api.paneInterrupt({ paneId: id, engine: P.engine }); }
+    if (e.key === 'Escape' && !quadro) { fecharMenus(); fecharTerminalDoPainel(P); fecharModal(P); if (P.busy) window.api.paneInterrupt({ paneId: id, engine: P.engine }); }
     // seta pra cima com o campo vazio (ou navegando) traz o que voce ja mandou
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       const lista = historicoPrompts();
@@ -598,7 +717,9 @@ function newPane(opts = {}) {
     const antes = v.slice(0, cursor);
     const mm = /@([^\s@]*)$/.exec(antes);
     if (mm) menuArquivos(P, mm[1], mm.index);
-    else if ($('.p-modal .menu-arquivos', el)) fecharMenus();
+    // apagou o "@": fecha o menu e, no remoto, cancela a busca que ainda vinha
+    // pela rede (senao ela abriria o menu sozinha segundos depois)
+    else { if ($('.p-modal .menu-arquivos', el)) fecharMenus(); cancelarBuscaArquivos(P); }
   });
   // barra no comeco da linha abre o menu de acoes, e vai filtrando conforme digita
   inp.addEventListener('input', () => {
@@ -617,7 +738,7 @@ function newPane(opts = {}) {
     const temTexto = dt && [...(dt.items || [])].some(i => i.kind === 'string' && i.type === 'text/plain');
     const temArquivoNoEvento = dt && [...(dt.files || [])].length > 0;
     if (temArquivoNoEvento) {
-      const fs2 = [...dt.files].map(f => f.path).filter(Boolean);
+      const fs2 = caminhosDosArquivos(dt);
       if (fs2.length) { e.preventDefault(); setFocus(P); await anexar(P, fs2); return; }
     }
     const r = await window.api.colados();
@@ -632,8 +753,9 @@ function newPane(opts = {}) {
   el.addEventListener('dragleave', () => el.classList.remove('soltando'));
   el.addEventListener('drop', async (e) => {
     e.preventDefault(); el.classList.remove('soltando');
-    const fs = [...(e.dataTransfer.files || [])].map(f => f.path).filter(Boolean);
+    const fs = caminhosDosArquivos(e.dataTransfer);
     if (fs.length) { setFocus(P); await anexar(P, fs); }
+    else if ((e.dataTransfer.files || []).length) note(P, 'Não consegui ler o caminho desse arquivo. Copie e cole aqui que funciona.', true);
   });
 
   $('.p-send', el).addEventListener('click', () => send(P));
@@ -676,6 +798,7 @@ function newPane(opts = {}) {
   // microfone: ditado AO VIVO. O texto vai aparecendo no campo enquanto voce fala.
   const btMic = $('.p-mic', el);
   btMic.innerHTML = ico('mic') + '<span class="mic-nivel"></span>';
+  btMic.title = TITULO_MIC;
   ligarDitado(P, btMic, el);
 
   // botao +  (anexar)
@@ -768,6 +891,8 @@ function makeSplitterH() {
    as chamadas ficam guardadas e a montagem acontece UMA vez, no fim. */
 let montagemAdiada = 0;
 let montagemPedida = false;
+/* ficou arvore pra carregar quando a montagem em lote terminar (ver setFocus) */
+let arvorePendente = false;
 async function comMontagemAdiada(fn) {
   montagemAdiada++;
   // AWAIT: sem ele o 'finally' rodava no primeiro await de dentro e o lote
@@ -775,7 +900,20 @@ async function comMontagemAdiada(fn) {
   try { return await fn(); }
   finally {
     montagemAdiada--;
-    if (!montagemAdiada && montagemPedida) { montagemPedida = false; montarColunas(); }
+    /* try/finally: se o montarColunas estourar (e' DOM), o 'arvorePendente'
+       ficava preso em true PRA SEMPRE, e a guarda do setFocus
+       (focusPane === P && !arvorePendente) parava de proteger -- todo mousedown
+       no painel ja' em foco recarregava a arvore, uma conexao SSH por clique em
+       aba remota. */
+    try { if (!montagemAdiada && montagemPedida) { montagemPedida = false; montarColunas(); } }
+    finally {
+      /* A barra da esquerda tambem espera o lote acabar. Restaurar a aba da VPS
+         (13 paineis) trocava o foco 13 vezes, e cada troca carregava a arvore:
+         13 idas de SSH pra MESMA pasta, das quais o treeGen jogava 12 fora --
+         mas a conexao ja' tinha aberto e o find ja' tinha rodado. Agora a
+         arvore carrega UMA vez, pro painel que ficou com o foco. */
+      if (!montagemAdiada && arvorePendente) { arvorePendente = false; atualizarBarraDaEsquerda(focusPane); }
+    }
   }
 }
 
@@ -973,27 +1111,120 @@ function guardarPrompt(txt) {
 /* Um painel rodando em segundo plano tambem chama savePanes (quando a sessao
    dele nasce, por exemplo). Sem separar por aba, ele gravava o painel de outra
    aba dentro da aba ATUAL - e as duas abas ficavam erradas. */
+/* O que merece voltar. Antes exigia sessaoId/contexto/rascunho -- mas quem
+   troca a pasta do painel, clica em "nova conversa" ou troca Claude<->Codex
+   fica com sessaoId null. O painel era GRAVADO e depois DESCARTADO na leitura:
+   sumia da aba, com coluna e largura junto. Toda ficha tem paneId; e' o que
+   define que ela e' um painel de verdade. */
+/* As leituras do servidor podem devolver { error } no lugar da lista.
+   Antes qualquer falha de SSH virava uma lista vazia -- igual a "nao tem
+   conversa" -- e nao dava pra saber que o problema era a chave ou a rede. */
+function listaOuErro(r) {
+  if (r && !Array.isArray(r) && r.error) return { itens: [], erro: r.error };
+  return { itens: Array.isArray(r) ? r : [], erro: '' };
+}
+
+/* Desde o Electron 32 o File nao tem mais ".path": arrastar arquivo passou a
+   nao fazer nada, calado. O caminho certo agora e' o webUtils, que o preload
+   expoe. A leitura antiga fica de reserva pra versao velha. */
+function caminhosDosArquivos(dt) {
+  const arqs = [...((dt && dt.files) || [])];
+  const out = [];
+  for (const f of arqs) {
+    let p = '';
+    try { p = (window.api.caminhoDoArquivo && window.api.caminhoDoArquivo(f)) || f.path || ''; } catch { p = f.path || ''; }
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+function fichaVale(f) {
+  return !!(f && (f.paneId || f.sessaoId || f.contexto || f.rascunho));
+}
+
 function fichaDoPainel(P) {
   // paneId: sem um id estavel na ficha nao da' pra saber QUAL painel da lista
   // salva corresponde a este - e a mesclagem virava sobrescrita
   return ({ paneId: P.id, coluna: (P.coluna == null ? 0 : P.coluna),
     larguraColuna: P.larguraColuna || 0, engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, titulo: P.titulo,
-    sessaoId: P.sessaoId || P.resumeId || null, file: P.sessaoFile || '', remoto: !!(P.sessaoRemota || remotoDoPane(P)),
-    rascunho: (($('.p-input', P.el) || {}).value || '').slice(0, 4000),
+    sessaoId: P.sessaoId || P.resumeId || P.resumeAnterior || null, file: P.sessaoFile || '', remoto: !!(P.sessaoRemota || remotoDoPane(P)),
+    // ramo que ainda nao mandou a 1a mensagem: sem guardar, reabrir o app
+    // viraria CONTINUACAO da conversa de origem em vez de ramo dela
+    fork: P.forkPendente || undefined,
+    // branch isolada em que este painel trabalha (so' Claude): sem guardar, reabrir
+    // o app voltava a conversa pra pasta principal
+    worktree: P.worktree || undefined,
+    // o desenho do quadro deste painel (cena .excalidraw); acima de 200 KB nao
+    // vai pro config - ai fica so' enquanto o app estiver aberto
+    quadro: P.quadroArquivo || ((P.quadroCena && P.quadroCena.length <= 200000) ? P.quadroCena : undefined),   // caminho do arquivo da cena; a cena inline so' enquanto o arquivo nao existe
+    rascunho: (($('.p-input', P.el) || {}).value || '').slice(0, 24000),   // texto da inbox pode ter 20 KB
     // conversa que trocou de motor e ainda nao mandou a 1a mensagem: sem guardar
     // isto, trocar de aba no meio jogava fora tudo que ja tinha sido dito
     contexto: (P.passarContexto || '').slice(0, 20000) });
 }
 
+/* Fichas que o config tinha e que ainda NAO viraram painel na tela.
+
+   Restaurar uma aba e' lento (cada painel busca o historico, e no servidor isso
+   e' uma conexao por conversa). Se voce troca de aba no meio, o laco para - e
+   antes o savePanes seguinte gravava so' os que tinham nascido, apagando o
+   resto do config pra sempre. Foi assim que duas conversas do servidor sumiram
+   sozinhas: eram as duas maiores, as ultimas da fila.
+
+   Agora o que ficou pra tras espera aqui e volta pro config no proximo save.
+   Some so' o que voce fechar de proposito - o closePane limpa daqui tambem. */
+const fichasPendentes = new Map();   // abaId -> [ficha, ...]
+
+function guardarPendentes(abaId, fichas) {
+  if (!abaId || !fichas || !fichas.length) return;
+  const antes = fichasPendentes.get(abaId) || [];
+  const chave = (f) => (f && (f.paneId || (f.sessaoId && 's:' + f.sessaoId))) || null;
+  const tem = new Set(antes.map(chave));
+  fichasPendentes.set(abaId, antes.concat(fichas.filter((f) => !tem.has(chave(f)))));
+}
+
+function soltarPendente(abaId, P) {
+  const lista = fichasPendentes.get(abaId);
+  if (!lista || !P) return;
+  const sessao = P.sessaoId || P.resumeId;
+  const resta = lista.filter((f) => !(f.paneId && f.paneId === P.id)
+                                 && !(sessao && f.sessaoId === sessao));
+  if (resta.length) fichasPendentes.set(abaId, resta);
+  else fichasPendentes.delete(abaId);
+}
+
 function savePanes() {
   const ab = abaAtual();
-  const daAba = [...panes.values()].map(fichaDoPainel);
-  if (ab) ab.paineis = daAba; else cfg.panes = daAba;   // sem aba (versao antiga) ainda funciona
+  /* cada painel volta pra ficha da PROPRIA aba. Antes ia tudo pra aba ativa:
+     se um painel de outra aba escapasse pra ca' (restauracao atropelada por um
+     clique, por exemplo), a conversa era gravada na aba errada e sumia da
+     verdadeira. Era o "vazamento entre abas". */
+  const daqui = [], deOutras = [];
+  for (const P of panes.values()) {
+    // aba de origem apagada: o painel fica aqui, senao a ficha dele nao teria
+    // pra onde ir e sumiria calada
+    const outra = ab && P.abaId && P.abaId !== ab.id && abaPorId(P.abaId);
+    if (outra) { deOutras.push(P); continue; }
+    // adotou a ficha: adota o painel junto, senao ele fica apontando pra uma
+    // aba que nao existe e some no segundo plano pra sempre
+    if (ab && P.abaId && P.abaId !== ab.id) P.abaId = ab.id;
+    daqui.push(P);
+  }
+  const daAba = daqui.map(fichaDoPainel);
+  /* o que ainda nao coube na tela continua no config: sem isto, uma restauracao
+     interrompida apagava painel de verdade */
+  if (ab) {
+    const pend = fichasPendentes.get(ab.id) || [];
+    const chave = (f) => (f && (f.paneId || (f.sessaoId && 's:' + f.sessaoId))) || null;
+    const naTela = new Set(daAba.map(chave));
+    ab.paineis = daAba.concat(pend.filter((f) => !naTela.has(chave(f))));
+  } else cfg.panes = daAba;   // sem aba (versao antiga) ainda funciona
   // os que continuam rodando fora da tela ATUALIZAM a ficha deles na aba de
   // origem. MESCLAR, nunca substituir: trocando a lista inteira, os painéis
   // parados daquela aba (que nao estao no segundo plano) sumiam do config.
   const porAba = {};
   for (const P of panesFundo.values()) (porAba[P.abaId] = porAba[P.abaId] || []).push(fichaDoPainel(P));
+  for (const P of deOutras) (porAba[P.abaId] = porAba[P.abaId] || []).push(fichaDoPainel(P));
   for (const id of Object.keys(porAba)) {
     const outra = abaPorId(id);
     if (!outra || (ab && outra.id === ab.id)) continue;
@@ -1033,8 +1264,32 @@ const acharPainel = (id) => panes.get(id) || panesFundo.get(id);
    aba fica com a tela montada em memoria, somar tudo faria 14 paineis em 6 abas
    estourarem o limite e voce nao conseguiria abrir NENHUM painel novo. Conta:
    os desta aba + os de outras abas que ainda estao com o motor rodando. */
+/* Nao ha mais teto de painéis: o 12 estava escrito na mao em sete lugares e a
+   tela aguenta bem mais (o #panes rola na horizontal, e cada painel tem 240px
+   de largura minima). O que pesa e' a MAQUINA - cada painel do Claude e um
+   processo proprio - entao a partir daqui o app avisa, uma vez, em vez de
+   barrar. Quem decide quantos cabem e' voce. */
 const totalDePaineis = () => panes.size
   + [...panesFundo.values()].filter(P => P.busy || P.started || (P.terms && P.terms.size)).length;
+
+const PAINEIS_MUITOS = 16;
+let avisouMuitosPaineis = false;
+
+/* Sempre true: existe pra deixar claro, em cada ponto que abre painel, que ali
+   havia uma trava - e pra ter um lugar so' caso um teto precise voltar. */
+function cabeMaisPainel() {
+  const n = totalDePaineis();
+  if (n >= PAINEIS_MUITOS && !avisouMuitosPaineis) {
+    avisouMuitosPaineis = true;
+    mostrarAviso({
+      texto: 'Você já tem ' + n + ' painéis abertos. Cada um é um processo à parte — '
+        + 'de olho na memória se a máquina começar a arrastar. Não vou mais avisar.',
+      tipo: 'alerta',
+    });
+  }
+  return true;
+}
+
 /* quantos painéis estão trabalhando em cada aba (pra bolinha na barra de abas) */
 function trabalhandoPorAba() {
   const conta = {};
@@ -1077,15 +1332,22 @@ async function trocarMotor(P, novo) {
   if (novo === P.engine) return;
   // clicar duas vezes rapido fazia duas trocas se atropelarem no meio
   if (P._trocando) return;
+  /* motor que nao esta na maquina: recusa AQUI, nao so' nos menus. Quem
+     chegasse por outro caminho trocava pro motor ausente e o painel so'
+     quebrava na primeira mensagem, ja com a conversa desmontada. */
+  if (motorDisponivel[novo] === false) {
+    note(P, 'O ' + nomeDoMotor(novo) + ' não está instalado nesta máquina. ' + (COMO_INSTALAR[novo] || ''), true);
+    return;
+  }
   // o Codex so' roda local: numa aba de servidor ele executaria no PC do Hugo
   // enquanto a tela diz que esta no servidor
-  if (novo === 'codex' && remotoDoPane(P)) {
-    note(P, 'O Codex ainda não roda em servidor remoto. Nesta aba, use o Claude.', true);
+  if (novo !== 'claude' && remotoDoPane(P)) {
+    note(P, 'O ' + nomeDoMotor(novo) + ' ainda não roda em servidor remoto. Nesta aba, use o Claude.', true);
     return;
   }
   P._trocando = true;
   try {
-    const antigo = P.engine === 'codex' ? 'Codex' : 'Claude';
+    const antigo = nomeDoMotor(P.engine);
     // monta o contexto ANTES de mexer no estado do painel
     const contexto = P.hist.length ? montarContexto(P) : null;
     await window.api.paneStop({ paneId: P.id, engine: P.engine });
@@ -1097,18 +1359,25 @@ async function trocarMotor(P, novo) {
     P.engine = novo; P.started = false; P.model = ''; P.resumeId = null;
     // a sessao pertence ao motor antigo: guardar o id fazia o motor novo tentar
     // retomar uma conversa que nao existe pra ele (--resume com id do outro)
-    P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
+    P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false; P.resumeAnterior = null;
     // contador de contexto e' do outro motor: continuar mostrando mente
     // o painel vai reiniciar: o microfone nao pode continuar ligado sozinho
     if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
     P.tokens = 0; P.janela = 0; pintarTokens(P);
     P.blocks.clear(); esquecerPassos(P);
+    // plano, sugestao, auditoria e rastro do turno sao da conversa que acabou
+    limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false; P.avisoModelo = null; P.acpInfo = null; P.acpModelos = null; P.worktree = null;
     cfg.lastEngine = novo; window.api.setConfig(cfg);
     fillModels(P); paintEngine(P); pintarModo(P); setDot(P, 'off');
+    // o modo do motor antigo pode nao existir no novo: cai no primeiro dele.
+    // ANTES do savePanes: gravando o modo velho, ao reabrir o app o painel caia
+    // no modo mais permissivo do motor novo sem ninguem ter escolhido isso
+    P.mode = modoValido(novo, P.mode);
+    pintarModo(P);
     // a conversa continua: o motor novo recebe o que já foi dito
     P.passarContexto = contexto;
     savePanes();   // depois de definir o contexto, senao ele nao era guardado
-    marcaTroca(P, antigo, novo === 'codex' ? 'Codex' : 'Claude');
+    marcaTroca(P, antigo, nomeDoMotor(novo));
   } finally { P._trocando = false; }
 }
 
@@ -1142,7 +1411,7 @@ function fillModels(P) {
   if (!ms.find(m => m.id === P.model)) P.model = (ms.find(m => m.padrao) || ms[0]).id;
   const ef = esforcosDe(P);
   if (!ef.find(e => e.id === P.effort)) P.effort = modeloAtual(P).padraoEffort || ef[Math.min(2, ef.length - 1)].id;
-  $('.p-model', P.el).innerHTML = ico('brain') + '<span>' + modeloAtual(P).nome + '</span>';
+  $('.p-model', P.el).innerHTML = ico(P.engine === 'acp' ? 'plug' : 'brain') + '<span>' + modeloAtual(P).nome + '</span>';
 }
 function posicionarChave() {}   // o destaque do lado ativo é só CSS
 
@@ -1154,8 +1423,33 @@ function mostrarPastaNoPainel(P) {
   if (!bt) return;
   const aba = abaPorId(P.abaId) || abaAtual();
   // aba remota SEMPRE mostra: e' ali que aparece em qual servidor o painel esta
-  const mostrar = !!aba && (aba.tipo === 'ssh' || pastasDaAba(aba).length > 1);
+  const mostrar = !!aba && (aba.tipo === 'ssh' || pastasDaAba(aba).length > 1 || !!P.worktree);
   bt.classList.toggle('hidden', !mostrar);
+  // painel local: escreve SEMPRE (com ou sem worktree), senao o "⎇ nome" ficava
+  // no botao depois de sair do worktree
+  if (!remotoDoPane(P)) bt.textContent = nomePasta(P.cwd) + (P.worktree ? '  ⎇ ' + P.worktree : '');
+}
+
+/* O interruptor do topo so' tem dois lados (Claude e Codex). Num painel de
+   outro motor, nenhum lado acende -- e clicar em qualquer um tirava voce de la'
+   sem caminho de volta. Entao ele some e da' lugar a um botao com o nome do
+   motor, que abre a lista dos quatro. */
+function ajustarChaveDeMotor(P) {
+  const chave = $('.p-chave', P.el);
+  if (!chave) return;
+  const doInterruptor = P.engine === 'claude' || P.engine === 'codex';
+  chave.classList.toggle('hidden', !doInterruptor);
+  let bt = $('.p-motor-outro', P.el);
+  if (doInterruptor) { if (bt) bt.remove(); return; }
+  if (!bt) {
+    bt = document.createElement('button');
+    bt.className = 'p-motor-outro';
+    bt.title = 'Trocar de motor';
+    bt.addEventListener('click', (e) => { e.stopPropagation(); menuMotores(P); });
+    chave.parentElement.insertBefore(bt, chave);
+  }
+  bt.innerHTML = '<span class="logo-lugar">' + svgMotor(P.engine) + '</span>' ;
+  bt.appendChild(document.createTextNode(nomeDoMotor(P.engine)));
 }
 
 function paintEngine(P) {
@@ -1163,33 +1457,88 @@ function paintEngine(P) {
   if (vazio) vazio.innerHTML = svgMotor(P.engine);
   mostrarPastaNoPainel(P);
   posicionarChave(P);
-  P.el.classList.toggle('eng-codex', P.engine === 'codex');
-  P.el.classList.toggle('eng-claude', P.engine === 'claude');
+  for (const eng of MOTORES) P.el.classList.toggle('eng-' + eng, P.engine === eng);
+  // motor fora do interruptor (Gemini, Grok) ganha um botao proprio no lugar dele
+  P.el.classList.toggle('eng-outro', P.engine !== 'codex' && P.engine !== 'claude');
+  ajustarChaveDeMotor(P);
 }
-function setFocus(P) {
-  if (focusPane === P) return;
-  focusPane = P;
-  for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
-  P.el.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+/* A barra da esquerda (arvore + titulo do projeto) e' UMA so' pra todos os
+   paineis: quem manda nela e' o painel em foco. Ela sai do setFocus de
+   proposito -- durante uma montagem em lote o foco muda uma vez por painel, e
+   no remoto cada troca custava uma conexao SSH inteira. */
+/* A arvore so' e' carregada quando da' pra VER. A barra da esquerda nasce
+   FECHADA (o boot esconde #sidebar), e sem esta conferencia cada clique num
+   painel de aba remota abria uma conexao SSH -- mais uma por pasta lembrada no
+   'expanded' -- pra pintar uma arvore que ninguem estava olhando: com 3 pastas
+   abertas, um clique = 4 conexoes. O titulo e o nome do projeto continuam
+   sendo atualizados sempre; so' a leitura de pasta espera. */
+function arvoreNaTela() {
+  const v = $('.side-view[data-view="explorer"]');
+  const barra = $('#sidebar');
+  return !!v && !v.classList.contains('hidden') && !!barra && !barra.classList.contains('hidden');
+}
+let arvoreEsperandoBarra = false;
+function atualizarBarraDaEsquerda(P) {
+  if (!P) return;
   const remoto = remotoDoPane(P);
+  const podeVer = arvoreNaTela();
+  arvoreEsperandoBarra = !podeVer;   // ficou pra tras: carrega quando a barra abrir
   if (remoto) {
-    treeGen++;   // cancela qualquer carregamento local em andamento
-    $('#tree').innerHTML = '<div class="hint" style="padding:10px 14px">Árvore de arquivos ainda não funciona em servidor remoto — use o terminal (menu /) pra navegar.</div>';
-    $('#projName').textContent = '🖧 ' + remoto.usuario + '@' + remoto.host;
-    $('#tbTitle').textContent = remoto.usuario + '@' + remoto.host + ':' + (P.cwd || remoto.caminhoRemoto) + '  ·  ' + (P.engine === 'codex' ? 'Codex' : 'Claude');
+    /* Arvore DENTRO do servidor (leva 37). O proprio loadTree incrementa o
+       treeGen, que e' o que impede uma resposta lenta de SSH de pintar a arvore
+       do painel que voce ja' deixou pra tras -- a barra da esquerda e' UMA so'
+       pra todos os paineis. */
+    if (podeVer) loadTree(P.cwd || remoto.caminhoRemoto, remoto);
+    $('#projName').textContent = '🖧 ' + (remoto.usuario || '') + '@' + (remoto.host || '');
+    $('#tbTitle').textContent = remoto.usuario + '@' + remoto.host + ':' + (P.cwd || remoto.caminhoRemoto) + '  ·  ' + nomeDoMotor(P.engine);
     return;
   }
-  loadTree(P.cwd);
+  if (podeVer) loadTree(P.cwd);
   atualizarGit(P);
-  $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + (P.engine === 'codex' ? 'Codex' : 'Claude');
+  $('#tbTitle').textContent = shortPath(P.cwd) + '  ·  ' + nomeDoMotor(P.engine);
   $('#projName').textContent = P.cwd === HOME ? 'Pasta: ' + ESTE_PC + ' inteiro' : ('Pasta: ' + baseNome(P.cwd));
 }
+/* A barra apareceu (abriu, ou trocou pra view de arquivos): a arvore que ficou
+   esperando carrega AGORA, uma vez so'. Se nada ficou pendente, nao pede nada
+   -- voltar da Torre pra Arquivos nao pode custar uma conexao. */
+function barraDaEsquerdaApareceu() {
+  if (arvoreEsperandoBarra && arvoreNaTela()) atualizarBarraDaEsquerda(focusPane);
+}
+function setFocus(P) {
+  if (!P) return;
+  /* o 'arvorePendente' entra na conta: com um painel so', o setFocus do fim da
+     restauracao cai neste mesmo painel e antes voltava aqui -- a arvore nunca
+     seria carregada. */
+  if (focusPane === P && !arvorePendente) return;
+  const trocou = focusPane !== P;
+  focusPane = P;
+  if (trocou) {
+    for (const q of panes.values()) q.el.classList.toggle('focus', q === P);
+    P.el.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }
+  // montagem em lote: a arvore fica pendente e o comMontagemAdiada a carrega
+  // UMA vez no fim, pro painel que sobrou com o foco
+  if (montagemAdiada) { arvorePendente = true; return; }
+  arvorePendente = false;
+  atualizarBarraDaEsquerda(P);
+}
+function soltarTerminaisMortos(P) {
+  if (!P || !P.termsMortos) return;
+  for (const id of P.termsMortos) { const t = termsVivos.get(id); if (t && t.term) { try { t.term.dispose(); } catch {} } termsVivos.delete(id); }
+  P.termsMortos.clear();
+}
+
 function matarTerminaisDoPainel(P) {
+  soltarTerminaisMortos(P);   // os que ja tinham terminado sozinhos
+  if (P) P._fecharTerm = null;
   if (!P || !P.terms) return;
   for (const tid of [...P.terms]) {
     try { window.api.termKill({ id: tid }); } catch {}
     const t = termsVivos.get(tid);
-    if (t) { try { t.term.dispose(); } catch {} termsVivos.delete(tid); }
+    if (t) {
+      if (t.ro) { try { t.ro.disconnect(); } catch {} t.ro = null; }
+      try { t.term.dispose(); } catch {} termsVivos.delete(tid);
+    }
   }
   P.terms.clear();
 }
@@ -1203,11 +1552,16 @@ async function closePane(id) {
   pararIrProFim(P);
   soltarNavArquivos(P);
   P.morto = true;
+  soltarPendente(P.abaId, P);   // fechou de proposito: nao volta no proximo save
+  // caixa aberta de um painel que morre: solta o motor do outro lado
+  if (P.perguntaAberta) { try { window.api.perguntaResponder({ id: P.perguntaAberta.id, cancelado: true }); } catch {} }
+  P.filaPerg = null; P.perguntaAberta = null;
   if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
   const tj = $('#avisoPaineis');
   if (tj && tj._itens) { tj._itens.delete(id); }
   matarTerminaisDoPainel(P);
   await window.api.paneStop({ paneId: id, engine: P.engine });
+  if (quadro && quadro.P === P) fecharQuadro();   // o desenho nao pode ficar preso num painel morto
   P.el.remove(); panes.delete(id);
   for (const q of panes.values()) q.el.style.flex = '';
   montarColunas();
@@ -1233,6 +1587,7 @@ async function guardarPaineisDaAba() {
     // era destruido e remontado do zero na volta - por isso "todos os chats
     // carregavam" a cada troca de aba. Guardar o desenho custa memoria, nao
     // processo, e faz a volta ser instantanea.
+    if (quadro && quadro.P === P) fecharQuadro();
     P.el.remove();
     panesFundo.set(P.id, P);
     if (motorContinua) continue;
@@ -1388,7 +1743,7 @@ function pintarAbasLocalMiolo(box) {
   maisPainel.className = 'abas-add-painel';
   maisPainel.innerHTML = ico('plus');
   maisPainel.title = 'Abrir painel ao lado (Ctrl+T)';
-  maisPainel.addEventListener('click', () => { if (totalDePaineis() < 12) newPane(); });
+  maisPainel.addEventListener('click', () => { if (cabeMaisPainel()) newPane(); });
   box.appendChild(maisPainel);
 }
 
@@ -1415,14 +1770,13 @@ async function trocarAbaLocal(novoId) {
   window.api.setConfig(cfg);
   pintarAbasLocal();
   $('#panes').style.display = '';
-  histCache.claude = null; histCache.codex = null;
+  for (const eng of MOTORES) histCache[eng] = null;
   const abaLateralAberta = $$('.side-view').find(v => !v.classList.contains('hidden'));
-  if (abaLateralAberta && abaLateralAberta.dataset.view === 'hclaude') loadHist('claude', true);
-  if (abaLateralAberta && abaLateralAberta.dataset.view === 'hcodex') loadHist('codex', true);
+  for (const eng of MOTORES) if (abaLateralAberta && abaLateralAberta.dataset.view === 'h' + eng) loadHist(eng, true);
   // quem ficou trabalhando nesta aba volta INTEIRO: nao recarrega, nao reinicia
   const voltaram = trazerPaineisDoFundo(novoId);
   const ab = abaAtual();
-  const salvos = (ab && Array.isArray(ab.paineis)) ? ab.paineis.filter(p => p && (p.sessaoId || p.contexto || p.rascunho)) : [];
+  const salvos = (ab && Array.isArray(ab.paineis)) ? ab.paineis.filter(fichaVale) : [];
   // painel que voltou vivo nao pode ser recriado do config em cima dele mesmo.
   // Casar pelo ID DO PAINEL, nao pelo da sessao: quem acabou de mandar a
   // primeira mensagem ainda nao tem sessaoId e virava um clone a cada volta.
@@ -1501,6 +1855,11 @@ function abrirModalAbaLocal(existente) {
     +   '<button class="mo-btn" id="abEscolherChave">Escolher arquivo</button>'
     +   '<input id="abCaminho" placeholder="Pasta no servidor (opcional), ex: ~/projeto">'
     + '</div>'
+    + '<div class="mo-form" id="abCorpoConectores">'
+    +   '<div class="mo-dica">Conectores (MCP) nesta aba — vale pros painéis do Claude, a partir da próxima ligação</div>'
+    +   '<div id="abConectoresLista" class="conectores-lista"></div>'
+    +   '<div class="mo-dica" id="abConectoresNota"></div>'
+    + '</div>'
     + '<div class="mo-dica" style="margin-top:10px">Cor</div>'
     + '<div class="cor-linha">' + GRUPO_CORES.map(c => '<button class="cor-sw" data-cor="' + c + '" style="background:' + c + '"></button>').join('') + '</div>'
     + '<div class="mo-rodape"><button class="mo-btn destaque" id="abOk">' + (editando ? 'Salvar' : 'Criar aba') + '</button>'
@@ -1517,6 +1876,8 @@ function abrirModalAbaLocal(existente) {
     $$('.tipo-bt', cx).forEach(b => b.classList.toggle('on', b.dataset.tipo === tipo));
     $('#abCorpoLocal', cx).classList.toggle('hidden', tipo !== 'local');
     $('#abCorpoSsh', cx).classList.toggle('hidden', tipo !== 'ssh');
+    // painel remoto roda o Claude no servidor: os conectores daqui nao valem la'
+    const cc = $('#abCorpoConectores', cx); if (cc) cc.classList.toggle('hidden', tipo !== 'local');
   };
   $$('.tipo-bt', cx).forEach(b => b.addEventListener('click', () => { tipo = b.dataset.tipo; pintaTipo(); }));
   pintaTipo();
@@ -1555,6 +1916,48 @@ function abrirModalAbaLocal(existente) {
   $$('.cor-sw', cx).forEach(b => b.addEventListener('click', () => { corEscolhida = b.dataset.cor; pintaCorAba(); }));
   pintaCorAba();
 
+  /* Perfil de conectores da aba: a lista vem do que as sessoes do Claude ja
+     anunciaram (cfg.conectoresVistos); o que fica DESMARCADO e' guardado em
+     aba.conectoresFora - assim conector novo nasce ligado. */
+  let conectoresFora = (existente && Array.isArray(existente.conectoresFora)) ? existente.conectoresFora.slice() : [];
+  const pintarNotaConectores = () => {
+    const nota = $('#abConectoresNota', cx);
+    if (!nota) return;
+    nota.textContent = conectoresFora.length
+      ? conectoresFora.length + (conectoresFora.length === 1 ? ' conector desligado' : ' conectores desligados') + ' nesta aba: menos contexto por turno e painel ligando mais rápido.'
+      : 'Todos ligados (padrão). Desmarque o que esta aba não usa.';
+  };
+  const pintarConectores = () => {
+    const box = $('#abConectoresLista', cx);
+    if (!box) return;
+    // o 'cockpit' (perguntar, plano) nao e' opcional: fica fora da lista
+    const vistos = Array.isArray(cfg.conectoresVistos) ? cfg.conectoresVistos.filter((n) => n !== 'cockpit').sort((a, b) => a.localeCompare(b)) : [];
+    box.innerHTML = '';
+    if (!vistos.length) {
+      const nota = $('#abConectoresNota', cx);
+      if (nota) nota.textContent = 'Abra um painel do Claude uma vez: a lista dos conectores da sua conta aparece aqui.';
+      return;
+    }
+    for (const nome of vistos) {
+      const l = document.createElement('label');
+      l.className = 'chave conector-item';
+      const c = document.createElement('input');
+      c.type = 'checkbox';
+      c.checked = !conectoresFora.includes(nome);
+      c.addEventListener('change', () => {
+        conectoresFora = conectoresFora.filter((n) => n !== nome);
+        if (!c.checked) conectoresFora.push(nome);
+        pintarNotaConectores();
+      });
+      const s = document.createElement('span');
+      s.textContent = nome.replace(/^claude\.ai /, '☁ ').replace(/^plugin:/, '🧩 ');
+      l.appendChild(c); l.appendChild(s);
+      box.appendChild(l);
+    }
+    pintarNotaConectores();
+  };
+  pintarConectores();
+
   $('#abNome', cx).value = existente ? existente.nome : '';
   if (existente && existente.tipo === 'ssh') {
     $('#abHost', cx).value = existente.host || '';
@@ -1572,7 +1975,7 @@ function abrirModalAbaLocal(existente) {
       if (!host || !usuario || !chaveEscolhida) { alert('Preciso do endereço, do usuário e da chave.'); return; }
       dado = { nome, tipo: 'ssh', host, usuario, chave: chaveEscolhida, caminhoRemoto: $('#abCaminho', cx).value.trim() || '~', cor: corEscolhida };
     } else {
-      dado = { nome, tipo: 'local', caminhos: pastasEscolhidas.slice(), caminho: null, cor: corEscolhida };
+      dado = { nome, tipo: 'local', caminhos: pastasEscolhidas.slice(), caminho: null, cor: corEscolhida, conectoresFora: conectoresFora.slice() };
     }
     if (editando) { Object.assign(existente, dado); }
     else {
@@ -1582,13 +1985,26 @@ function abrirModalAbaLocal(existente) {
     window.api.setConfig(cfg);
     fecharModalGlobal();
     pintarAbasLocal();
+    /* Trocou host, usuario ou a pasta do SERVIDOR: ninguem avisava os paineis.
+       O P.cwd congelava no servidor ANTIGO (ou no C:\ da abertura), a arvore
+       seguia listando o A e o titulo dizia A -- clicar num no' colava caminho
+       do A na mensagem que ia pro B, e o duplo clique pedia arquivo do A ao
+       servidor B (o 'remoto' do closure e' A, o remotoDoPane ja' e' B). */
+    if (editando && existente && existente.tipo === 'ssh') {
+      const casa = cwdPadraoDaAba(existente);
+      for (const Q of [...panes.values(), ...panesFundo.values()]) if (Q.abaId === existente.id) Q.cwd = casa;
+      savePanes();
+    }
     // a aba pode ter ganhado ou perdido pasta: sem avisar os paineis, o botao
     // da pasta continuava escondido e o popup dele abria no canto da janela
     for (const Q of panes.values()) mostrarPastaNoPainel(Q);
-    histCache.claude = null; histCache.codex = null;
+    /* E a barra da esquerda na mao: o setFocus sai cedo quando o painel ja'
+       esta' em foco (focusPane === P && !arvorePendente), entao arvore e titulo
+       ficavam no servidor velho ate' voce clicar em outro painel. */
+    if (editando && existente && existente.tipo === 'ssh' && focusPane && focusPane.abaId === existente.id) atualizarBarraDaEsquerda(focusPane);
+    for (const eng of MOTORES) histCache[eng] = null;
     const abaLateralAberta = $$('.side-view').find(v => !v.classList.contains('hidden'));
-    if (abaLateralAberta && abaLateralAberta.dataset.view === 'hclaude') loadHist('claude', true);
-    if (abaLateralAberta && abaLateralAberta.dataset.view === 'hcodex') loadHist('codex', true);
+    for (const eng of MOTORES) if (abaLateralAberta && abaLateralAberta.dataset.view === 'h' + eng) loadHist(eng, true);
   };
 }
 
@@ -1652,38 +2068,156 @@ function fraseDoPasso(nome, arg) {
     case 'Task': case 'Agente': return { txt: 'Chamando um agente', det: curto };
     case 'TodoWrite': case 'Lista de tarefas': return { txt: 'Organizando as tarefas', det: '' };
     case 'Skill': return { txt: 'Usando a skill', det: curto };
+    case 'PushNotification': return { txt: 'Avisando você', det: curto };
+    case 'mcp__cockpit__plano': return { txt: 'Atualizando o plano', det: '' };
+    case 'mcp__cockpit__perguntar': return { txt: 'Perguntando pra você', det: '' };
+    // categorias do ACP que nao existem no Claude
+    case 'Excluindo': return { txt: 'Excluindo', det: soNome(a) };
+    case 'Movendo': return { txt: 'Movendo', det: curto };
+    case 'Pensando': return { txt: 'Pensando', det: curto };
     default: return { txt: toolLabel(nome), det: curto };
   }
 }
 
-function passo(P, frase, id) {
+function passo(P, frase, id, nome) {
   if (!P.busy) return;
   clearEmpty(P);
   let box = P.passosEl;
   if (!box || box.parentNode !== P.chat) {
     box = document.createElement('div');
     box.className = 'passos';
+    box._n = 0; box._erros = 0;   // contadores: o cabecalho nao rele a caixa a cada passo
     P.chat.appendChild(box);
     P.passosEl = box;
   }
   const d = document.createElement('div');
   d.className = 'passo';
+  d.dataset.tipo = tipoDoPasso(nome || frase.txt);
   d.innerHTML = '<span class="pa-pt"></span><span class="pa-t"></span><span class="pa-d"></span>';
   $('.pa-t', d).textContent = frase.txt;
   $('.pa-d', d).textContent = frase.det || '';
   if (id) d.dataset.id = id;
   box.appendChild(d);
-  while (box.children.length > 8) box.firstChild.remove();
-  P.chat.appendChild(box);
-  if (P.trabEl) P.chat.appendChild(P.trabEl);
+  /* Antes um laco apagava o primeiro filho da caixa acima de oito. Um turno
+     de leva emite 34+ passos; o erro do passo 21 sumia da tela E do DOM, e a
+     prova do que aconteceu evaporava. Agora TODOS ficam: acima de 8 a caixa
+     mostra os 8 ultimos (e todo erro, sempre), com um cabecalho pra abrir o
+     resto e filtrar por tipo. */
+  ajustarCaixaDePassos(box, d);
+  /* A caixa so' e' movida quando NAO esta' no fim. Um appendChild numa caixa de
+     900 passos re-inseria os 900 nos a cada ferramenta (medido na auditoria:
+     8ms por passo, 45ms com a linha do tempo aberta - 3,5s num turno de leva). */
+  const ultimo = (P.trabEl && P.trabEl.parentNode === P.chat) ? P.trabEl.previousElementSibling : P.chat.lastElementChild;
+  if (ultimo !== box) P.chat.appendChild(box);
+  if (P.trabEl && P.chat.lastElementChild !== P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
 }
 
 function passoPronto(P, id, erro) {
-  const box = P.passosEl;
-  if (!box) return;
-  const d = [...box.children].reverse().find(x => x.dataset.id === id);
-  if (d) d.classList.add(erro ? 'erro' : 'ok');
+  const d = acharPasso(P, id);
+  if (!d) return;
+  const box = d.parentElement;
+  const caixa = !!(box && box.classList && box.classList.contains('passos'));
+  if (erro && caixa && !d.classList.contains('erro')) box._erros = (box._erros == null ? passosDaCaixa(box).filter((x) => x.classList.contains('erro')).length : box._erros) + 1;
+  d.classList.add(erro ? 'erro' : 'ok');
+  if (erro && caixa) pintarCabecalhoDePassos(box);   // o cabecalho passa a contar o erro
+}
+
+const PASSOS_VISIVEIS = 8;
+const passosDaCaixa = (box) => [...box.children].filter((x) => x.classList.contains('passo'));
+/* de que tipo e' o passo, pro filtro do cabecalho (o nome cru da ferramenta
+   quando ha', senao a frase traduzida) */
+function tipoDoPasso(nome) {
+  const n = String(nome || '');
+  if (/^(Bash|Terminal|BashOutput|execute)$/i.test(n) || /terminal/i.test(n)) return 'terminal';
+  if (/^(Read|Write|Edit|MultiEdit|NotebookEdit|Excluindo|Movendo)$/i.test(n) || /arquivo/i.test(n)) return 'arquivo';
+  if (/^(Grep|Glob|WebSearch|WebFetch)$/i.test(n) || /(Procurando|Buscando|Pesquisando|Abrindo uma)/i.test(n)) return 'busca';
+  return 'outro';
+}
+/* Recontagem completa: so' quando a caixa nao tem os contadores (ou quando a
+   janela dos 8 nasce e todos precisam ser marcados de uma vez). */
+function recontarCaixa(box) {
+  const todos = passosDaCaixa(box);
+  box._n = todos.length;
+  box._erros = todos.filter((x) => x.classList.contains('erro')).length;
+  todos.forEach((x, i) => x.classList.toggle('recente', i >= todos.length - PASSOS_VISIVEIS));
+}
+/* Passo novo = trabalho constante: entra o novo na janela dos 8 ultimos, sai o
+   que ficou 9 posicoes atras; o cabecalho e' atualizado no lugar. */
+function ajustarCaixaDePassos(box, novo) {
+  if (!novo || box._n == null) recontarCaixa(box);
+  else {
+    box._n++;
+    if (box._n === PASSOS_VISIVEIS + 1) recontarCaixa(box);   // a janela nasce: marca os 8 de uma vez
+    else if (box._n > PASSOS_VISIVEIS) {
+      novo.classList.add('recente');
+      let sai = novo;
+      for (let i = 0; i < PASSOS_VISIVEIS && sai; i++) sai = sai.previousElementSibling;
+      if (sai && sai.classList.contains('passo')) sai.classList.remove('recente');
+    }
+  }
+  let cab = $('.passos-vivo', box);
+  if (box._n <= PASSOS_VISIVEIS) {
+    if (cab) cab.remove();
+    box.classList.remove('grande', 'tudo');
+    return;
+  }
+  box.classList.add('grande');
+  if (!cab) {
+    cab = document.createElement('div');   // div: botao dentro de botao e' HTML invalido
+    cab.className = 'passos-vivo';
+    box.insertBefore(cab, box.firstChild);
+  }
+  pintarCabecalhoDePassos(box);
+}
+const rotuloDeErros = (erros) => (erros ? ' · ' + erros + (erros === 1 ? ' erro' : ' erros') : '');
+function pintarCabecalhoDePassos(box) {
+  const cab = $('.passos-vivo', box);
+  if (!cab) return;
+  if (box._n == null) recontarCaixa(box);
+  const n = box._n, erros = box._erros || 0;
+  const aberto = box.classList.contains('tudo');
+  // atualiza NO LUGAR: refazer por innerHTML a cada passo recriava os botoes de
+  // filtro debaixo do cursor
+  let t = $('.pv-txt', cab);
+  if (!t) {
+    t = document.createElement('button');
+    t.type = 'button';
+    t.className = 'pv-txt';
+    t.addEventListener('click', (e) => {
+      e.stopPropagation();
+      box.classList.toggle('tudo');
+      if (!box.classList.contains('tudo')) delete box.dataset.filtro;   // filtro e' coisa da caixa aberta
+      pintarCabecalhoDePassos(box);
+    });
+    cab.appendChild(t);
+  }
+  t.textContent = (aberto ? 'esconder os passos anteriores' : 'ver todos os ' + n + ' passos') + rotuloDeErros(erros);
+  t.title = aberto ? 'Recolher (os 8 últimos e os erros continuam à vista)' : 'Abrir a linha do tempo inteira deste trecho';
+  cab.classList.toggle('com-erro', erros > 0);
+  let filtros = $('.pv-filtros', cab);
+  if (!aberto) { if (filtros) filtros.remove(); return; }
+  if (!filtros) { filtros = criarFiltrosDePassos(box); cab.appendChild(filtros); }
+  for (const b of filtros.children) b.classList.toggle('on', (box.dataset.filtro || '') === (b.dataset.filtro || ''));
+}
+function criarFiltrosDePassos(box) {
+  const filtros = document.createElement('span');
+  filtros.className = 'pv-filtros';
+  for (const [id, rotulo] of [['', 'tudo'], ['terminal', 'terminal'], ['arquivo', 'arquivos'], ['busca', 'buscas'], ['outro', 'outros']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pv-f';
+    b.dataset.filtro = id;
+    b.textContent = rotulo;
+    b.title = id ? 'Mostrar só os passos de ' + rotulo + ' (erros ficam sempre)' : 'Mostrar todos os passos';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (id) box.dataset.filtro = id; else delete box.dataset.filtro;
+      pintarCabecalhoDePassos(box);
+    });
+    filtros.appendChild(b);
+  }
+  return filtros;
 }
 
 /* Fecha a caixa de passos ATUAL sem mexer nela: ela fica no lugar, e a proxima
@@ -1703,7 +2237,9 @@ function passoPronto(P, id, erro) {
    e uma funcao so'. */
 function desligarMotor(P) {
   if (!P) return;
-  P.resumeId = P.sessaoId || P.resumeId;   // <- o que faz a conversa continuar
+  // inclui o guardado: entre ligar o motor e a sessao nascer, os outros dois
+  // sao null, e sem ele a conversa religava do zero
+  P.resumeId = P.sessaoId || P.resumeId || P.resumeAnterior;
   P.started = false;
   clearInterval(P.relogio); P.relogio = 0;
   setDot(P, 'off');
@@ -1726,18 +2262,25 @@ function selarPassos(P) {
    pra dar pra conferir depois o que ele mexeu. */
 function recolherCaixa(box, P) {
   if (!box || box.parentNode !== P.chat) { if (box) box.remove(); return; }
-  const n = box.children.length;
+  const passos = passosDaCaixa(box);
+  const n = passos.length;
   if (!n) { box.remove(); return; }
   if (box.classList.contains('recolhido')) return;
+  // o cabecalho "ao vivo" sai; o de recolhido assume (e os erros ficam a vista)
+  const vivo = $('.passos-vivo', box);
+  if (vivo) vivo.remove();
+  box.classList.remove('grande', 'tudo');
+  delete box.dataset.filtro;
   box.classList.add('recolhido');
+  const erros = passos.filter((x) => x.classList.contains('erro')).length;
+  const rotulo = (n === 1 ? '1 passo' : n + ' passos') + rotuloDeErros(erros);
   const cab = document.createElement('button');
-  cab.className = 'passos-cab';
-  cab.textContent = n === 1 ? '1 passo' : n + ' passos';
+  cab.className = 'passos-cab' + (erros ? ' com-erro' : '');
+  cab.textContent = rotulo;
   cab.title = 'Ver o que ele fez aqui';
   cab.addEventListener('click', () => {
     box.classList.toggle('aberto');
-    cab.textContent = box.classList.contains('aberto')
-      ? 'esconder passos' : (n === 1 ? '1 passo' : n + ' passos');
+    cab.textContent = box.classList.contains('aberto') ? 'esconder passos' : rotulo;
   });
   box.insertBefore(cab, box.firstChild);
 }
@@ -1791,16 +2334,46 @@ function duracaoCurta(ms) {
   const m = Math.floor(s / 60);
   return m + 'm' + String(s % 60).padStart(2, '0') + 's';
 }
-/* linha discreta no fim do turno: quanto levou e quanto ocupou */
+/* linha discreta no fim do turno: quanto levou, quanto consumiu e o que mudou */
 function marcarFimDoTurno(P) {
   if (!P.t0) return;
   const levou = Date.now() - P.t0;
   P.t0 = 0;
-  if (levou < 3000) return;   // resposta curta nao precisa de carimbo
+  const temMudanca = !!(P.diffTurno || (P.mudancasTurno && P.mudancasTurno.length));
+  const prints = (P.printsTurno || []).slice();   // congela: o proximo turno zera
+  // resposta curta, sem mudanca e sem print nao precisa de carimbo
+  if (levou < 3000 && !temMudanca && !prints.length) return;
   const d = document.createElement('div');
   d.className = 'turno-fim';
   const tok = P.tokens ? ' · ' + (P.tokens / 1000).toFixed(1) + 'k de contexto' : '';
-  d.textContent = 'levou ' + duracaoCurta(levou) + tok;
+  // consumo DESTE turno (entrada nova + saida), quando o motor informa
+  const uso = P.usoTurno ? ' · ' + fmtK(P.usoTurno.entrada) + '↑ ' + fmtK(P.usoTurno.saida) + '↓' : '';
+  d.textContent = 'levou ' + duracaoCurta(levou) + uso + tok;
+  if (temMudanca) {
+    const n = P.diffTurno ? arquivosDoDiffUnificado(P.diffTurno) : P.mudancasTurno.length;
+    const bt = document.createElement('button');
+    bt.className = 'turno-mudancas';
+    bt.textContent = 'ver mudanças (' + n + (n === 1 ? ' arquivo' : ' arquivos') + ')';
+    bt.title = 'Tudo que este turno mexeu em arquivo, num lugar só';
+    // congela o rastro DESTE turno: o proximo turno zera P.mudancasTurno
+    const mudancas = (P.mudancasTurno || []).slice();
+    const diffTurno = P.diffTurno || '';
+    bt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const guardaM = P.mudancasTurno, guardaD = P.diffTurno;
+      P.mudancasTurno = mudancas; P.diffTurno = diffTurno;
+      try { mostrarMudancasDoTurno(P); } finally { P.mudancasTurno = guardaM; P.diffTurno = guardaD; }
+    });
+    d.appendChild(bt);
+  }
+  if (prints.length) {
+    const bp = document.createElement('button');
+    bp.className = 'turno-mudancas turno-prints';
+    bp.textContent = prints.length + (prints.length === 1 ? ' print' : ' prints');
+    bp.title = 'As imagens que o agente viu neste turno';
+    bp.addEventListener('click', (e) => { e.stopPropagation(); mostrarPrintsDoTurno(P, prints); });
+    d.appendChild(bp);
+  }
   P.chat.appendChild(d); scroll(P);
 }
 function atBottom(P) { return P.chat.scrollHeight - P.chat.scrollTop - P.chat.clientHeight < 100; }
@@ -1878,6 +2451,17 @@ function verImagemGrande(src) {
 
 function userMsg(P, text, anexos, imagensSalvas) {
   clearEmpty(P);
+  /* fala que o PROPRIO CLI injeta como se fosse sua (ao retomar um turno
+     cortado): vira faixa, nao balao, e nao entra no historico */
+  const marca = marcaDoSistema(text);
+  if (marca && !(anexos && anexos.length) && !(imagensSalvas && imagensSalvas.length)) {
+    const f = document.createElement('div');
+    f.className = 'troca retomada';
+    f.innerHTML = '<span></span>';
+    $('span', f).textContent = marca;
+    P.chat.appendChild(f); scroll(P, true);
+    return { balao: f, entrada: null };
+  }
   const d = document.createElement('div');
   d.className = 'msg user';
   d.innerHTML = '<div class="msg-role"><span class="av"></span>Você</div>'
@@ -1892,6 +2476,21 @@ function userMsg(P, text, anexos, imagensSalvas) {
   const galeria = imagensDoHistorico(P, imagensSalvas);
   if (galeria) d.insertBefore(galeria, $('.msg-body', d));
   $('.msg-body', d).textContent = text;
+  /* "voltar para cá": abre um RAMO com a conversa ate' esta mensagem, sem
+     mexer no painel atual. Conta-se a posicao DO FIM na hora do clique - a
+     tela pode mostrar so' a cauda da conversa, e do fim a conta sempre bate. */
+  const btVoltar = document.createElement('button');
+  btVoltar.className = 'msg-voltar';
+  btVoltar.title = 'Voltar para cá: abre um painel novo com a conversa até esta mensagem';
+  btVoltar.innerHTML = ico('rotate-cw') + '<span>voltar para cá</span>';
+  btVoltar.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const todas = [...P.chat.querySelectorAll('.msg.user')];
+    const i = todas.indexOf(d);
+    if (i < 0) return;
+    ramificarAte(P, todas.length - i);
+  });
+  d.appendChild(btVoltar);
   P.chat.appendChild(d); scroll(P, true);
   const vazia = !String(text || '').trim();
   if (vazia) $('.msg-body', d).classList.add('hidden');
@@ -1901,8 +2500,12 @@ function userMsg(P, text, anexos, imagensSalvas) {
   return { balao: d, entrada };
 }
 function pintarAvatar(el) {
-  if (cfg.foto) el.innerHTML = '<img src="' + cfg.foto + '" alt="">';
-  else el.innerHTML = ico('user');
+  // a foto vem do config: montada como texto de HTML, um valor com aspas
+  // quebrava o atributo. Como elemento, o valor e' so' valor.
+  if (cfg.foto) {
+    el.innerHTML = '';
+    const im = new Image(); im.alt = ''; im.src = cfg.foto; el.appendChild(im);
+  } else el.innerHTML = ico('user');
 }
 function repintarAvatares() { $$('.msg.user .av').forEach(pintarAvatar); $('#fotoPrev') && pintarAvatar($('#fotoPrev')); }
 
@@ -1940,7 +2543,7 @@ function botBlock(P, key) {
      parecer que ele tinha respondido quatro vezes. */
   if (P.blocks && P.blocks.get('resp')) d.classList.add('msg-seguida');
   d.innerHTML = '<div class="msg-role"><span class="av">' + svgMotor(P.engine) + '</span>'
-    + (P.engine === 'codex' ? 'Codex' : 'Claude') + '</div>'
+    + nomeDoMotor(P.engine) + '</div>'
     + '<button class="msg-copiar" title="Copiar esta resposta">copiar</button>'
     + '<div class="msg-body"></div>';
   P.chat.appendChild(d);
@@ -1974,7 +2577,22 @@ function textDelta(P, key, text) {
     // continuacao da MESMA fala: o que saiu no meio fica antes dela
     P.chat.insertBefore(P.passosEl, b.el.parentElement);
   }
-  b.raw += text; b.el.innerHTML = mdSeguro(b.raw);
+  b.raw += text;
+  /* Nao redesenha a cada pedacinho. Cada redesenho reprocessa a resposta
+     INTEIRA em markdown, entao o custo cresce ao quadrado: medido nesta
+     maquina, uma resposta de 100 KB gastava 23s de processador desenhando a
+     cada pedaco, contra 3,9s desenhando a cada 100ms -- 6x menos, e a tela
+     para de engasgar quando varios paineis respondem juntos.
+     O texto aparece com ate' 100ms de atraso; resposta curta que termina antes
+     disso e' desenhada pelo textFinal, que cancela este temporizador. */
+  if (!b._timer) {
+    b._timer = setTimeout(() => {
+      b._timer = 0;
+      try { b.el.innerHTML = mdSeguro(b.raw); } catch { b.el.textContent = b.raw; }
+      scroll(P);
+      legendarTrabalho(P, b.raw);   // aqui, no freio, e nao a cada letra
+    }, 100);
+  }
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
 }
@@ -1982,7 +2600,13 @@ let ultimoPensar = 0;
 function thinkDelta(P, text) {
   trabalhando(P, 'pensando');
   const agora = Date.now();
-  if (agora - ultimoPensar > 8000) { ultimoPensar = agora; passo(P, { txt: 'Pensando no problema', det: '' }); }
+  if (agora - ultimoPensar > 8000) {
+    ultimoPensar = agora;
+    // sem o teto de 8 passos, um pensamento longo empilharia dezenas destes:
+    // se o ultimo passo ja e' "Pensando", nao repete
+    const ult = P.passosEl ? passosDaCaixa(P.passosEl).slice(-1)[0] : null;
+    if (!(ult && $('.pa-t', ult) && $('.pa-t', ult).textContent === 'Pensando no problema')) passo(P, { txt: 'Pensando no problema', det: '' });
+  }
 }
 function marcarLinksWeb(el) {
   for (const a of el.querySelectorAll('a[href^="http"]')) {
@@ -2008,7 +2632,10 @@ function linkarArquivos(P, el) {
           const a = document.createElement('a');
           a.className = 'arquivo'; a.textContent = caminho; a.href = '#';
           a.title = 'abre aqui dentro';
-          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminho); };
+          /* O caminho veio do MODELO. Num painel da VPS ele escreve
+             /home/hugo/app.js, e ate' a leva 37 o clique ia ler o disco deste
+             PC e dizia "Nao consegui abrir". Quem manda e' o PAINEL. */
+          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); verArquivo(P, caminho, remotoDoPane(P)); };
           frag.appendChild(a);
           ult = m.index + caminho.length;
         }
@@ -2043,15 +2670,22 @@ function textFinal(P, key, text) {
     // MESMA fala - continua no mesmo bloco em vez de repetir tudo embaixo.
     const corrente = P.blocks.get('resp');
     if (corrente && mesmaFala(corrente.raw, text)) { b = corrente; fundiu = true; }
-    else b = botBlock(P, 'b:' + key);
+    else {
+      // fala NOVA sem streaming (ACP, Gemini, Grok): o que ele fez ate agora fica
+      // acima, senao a caixa de passos era arrastada pro fim a cada ferramenta
+      selarPassos(P);
+      b = botBlock(P, 'b:' + key);
+    }
     P.blocks.set('b:' + key, b);
     P.blocks.set('resp', b); P.blocks.set('respKey', key);
   }
+  if (b._timer) { clearTimeout(b._timer); b._timer = 0; }   // o desenho final manda
   b.raw = text; b.el.innerHTML = mdSeguro(text);
-  linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCodigo(b.el);
+  linkarArquivos(P, b.el); marcarLinksWeb(b.el); botoesDeCodigo(b.el); marcarRecibo(b.el);
+  legendarTrabalho(P, text);
   if (P.trabEl) P.chat.appendChild(P.trabEl);
   scroll(P);
-  const quem = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const quem = nomeDoMotor(P.engine);
   const ult = P.hist[P.hist.length - 1];
   // mesma chave = continuacao do mesmo bloco; chave nova = fala nova.
   // 'fundiu' so' e' true quando a bolha na tela tambem era a mesma fala: sem
@@ -2060,8 +2694,15 @@ function textFinal(P, key, text) {
   else P.hist.push({ quem, texto: text, chave: key });
 }
 function toolStart(P, id, name, arg, mudanca) {
-  passo(P, fraseDoPasso(name, arg), id);
+  passo(P, fraseDoPasso(name, arg), id, name);
+  if (mudanca) anexarMudancaAoPasso(P, id, mudanca);
+}
+/* o diff pode chegar junto do passo (Claude; tool_call do ACP) ou depois
+   (tool_call_update do ACP): o mesmo botao "ver mudanca" serve aos dois */
+function anexarMudancaAoPasso(P, id, mudanca) {
   if (!mudanca) return;
+  // rastro do turno: alimenta o "ver mudanças" do carimbo de fim de turno
+  (P.mudancasTurno = P.mudancasTurno || []).push({ path: mudanca.path || '', mudanca });
   const d = acharPasso(P, id);
   if (!d || $('.pa-diff', d)) return;
   const bt = document.createElement('button');
@@ -2202,22 +2843,31 @@ function elDiff(mudanca) {
 }
 
 function acharPasso(P, id) {
-  const box = P.passosEl;
-  if (!box || !id) return null;
-  return [...box.children].reverse().find(x => x.dataset.id === id) || null;
+  if (!id) return null;
+  /* tambem nas caixas ja seladas por uma fala nova: o fim do passo (ok/erro,
+     saida, print, diff tardio) pode chegar depois que ele falou no meio */
+  const caixas = [P.passosEl, ...((P.passosSelados || []).slice().reverse())].filter(Boolean);
+  for (const box of caixas) {
+    const d = [...box.children].reverse().find((x) => x.dataset && x.dataset.id === id);
+    if (d) return d;
+  }
+  return null;
 }
 function toolOutput(P, id, text) {
   const d = acharPasso(P, id);
   if (!d || !text) return;
-  d._saida = ((d._saida || '') + text).slice(-20000);
+  // teto por passo: sem ele, uma conversa de 950 passos guardava dezenas de MB
+  // de texto pra sempre. 8.000 ainda mostra um stack trace inteiro no "ver saida".
+  d._saida = ((d._saida || '') + text).slice(-8000);
 }
-function toolEnd(P, id, output, isErr) {
+function toolEnd(P, id, output, isErr, imagens) {
   const d = acharPasso(P, id);
   passoPronto(P, id, isErr);
+  if (imagens && imagens.length) mostrarPrintsDoPasso(P, d, imagens);
   if (!d) return;
   const txt = String(output || d._saida || '').trim();
   if (!txt) return;
-  d._saida = txt.slice(-20000);
+  d._saida = txt.slice(-8000);
   d.classList.add('tem-saida');
   if (!$('.pa-abrir', d)) {
     const bt = document.createElement('button');
@@ -2281,22 +2931,58 @@ function juntarNaFila(P, texto) {
 }
 
 /* ============ envio ============ */
+/* as opcoes de ligar o motor num lugar so': os DOIS pontos que ligam (o start
+   normal e o religa apos queda) tem que mandar exatamente o mesmo pacote */
+function opcoesDeStart(P) {
+  return {
+    paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined,
+    approval: P.mode, effort: esforcoDe(P), resumeId: P.resumeId || undefined,
+    remoto: remotoDoPane(P) || undefined,
+    // ramo pendente: o start leva --fork-session (sessao nova com todo o historico)
+    fork: P.forkPendente || undefined,
+    sugestoes: cfg.sugestoes !== false,
+    // se o modelo escolhido cair, o Sonnet assume (so' Claude; opcao no menu de modelos)
+    fallback: (P.engine === 'claude' && cfg.fallbackClaude) ? 'claude-sonnet-5' : undefined,
+    // branch isolada (menu /) e conectores que a aba desligou (editor da aba)
+    worktree: (P.engine === 'claude' && P.worktree) || undefined,
+    semConectores: conectoresForaDaAba(P),
+  };
+}
 async function send(P) {
   const inp = $('.p-input', P.el);
   /* ditando? o ditado acaba aqui. Sem isto o campo era limpo pelo envio, a
      legenda seguinte via "mudou por fora", adotava o vazio como base e
      reescrevia o ditado inteiro em cima da mensagem que acabou de sair. */
-  if (P._ditado && P.pararDitado) { try { await P.pararDitado('enviou'); } catch {} }
-  const text = inp.value.trim();
+  const ditava = !!(P._ditado && P.pararDitado);
+  if (ditava) { try { await P.pararDitado('enviou'); } catch {} }
+  let text = inp.value.trim();
+  /* Enter no campo vazio COM o chip "Continuar" na tela = "continue" ("continue"
+     e' a 1a palavra de 17% das suas mensagens). O chip so' nasce no fim de um
+     turno desta sessao - conversa recem-aberta nao liga o motor sem querer.
+     Nao vale depois de um ditado que nao captou som (o vazio ali e' falha, nao
+     pedido), nem com anexo pendente (esquecimento). */
+  if (!text && !ditava && $('.p-cont', P.el) && podeContinuar(P) && !(P.anexos && P.anexos.length)) { text = 'continue'; inp.value = text; }
   if (!text) return;
 
-  if (P.busy) {
+  /* A mensagem vai sair: a busca do "@" que ainda estiver em voo morre aqui.
+     Sem isto ela ficava viva, porque o campo e' limpo NA MAO logo abaixo
+     (inp.value = '') e limpar por codigo nao dispara o evento 'input' -- o
+     unico lugar de onde o cancelamento saia. No servidor o temporizador de
+     450 ms acordava DEPOIS do envio e abria o menu de arquivos por cima da
+     resposta que estava chegando. */
+  pararBuscaDeArquivos(P);
+  soltarNavArquivos(P);   // e o atalho de setas sai junto: sem menu, sem dono
+
+  /* trabalhando OU ligando: durante os 10-90s do "Ligando o ACP…" um 2o Enter
+     abria um 2o start e a tela lia a resposta como "conexao caiu", religando
+     por cima do turno. Agora vai pra fila, igual ao painel ocupado. */
+  if (P.busy || P.ligando) {
     const anx = P.anexos.slice(); P.anexos = []; pintarAnexos(P);
     inp.value = ''; inp.style.height = 'auto';
     userMsg(P, text, anx);
     let envio = text;
     if (anx.length) envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n' + anx.map(a => '- ' + a.path).join('\n');
-    if (P.envio === 'entra') {
+    if (P.envio === 'entra' && !P.ligando) {
       const nota = avisoEnvio(P, 'Mandando para dentro do trabalho…');
       let r = null;
       try { r = await window.api.paneSteer({ paneId: P.id, engine: P.engine, text: envio }); } catch { r = null; }
@@ -2322,38 +3008,52 @@ async function send(P) {
 
   if (!P.started) {
     setDot(P, 'busy');
-    note(P, P.engine === 'codex' ? 'Ligando o Codex…' : 'Ligando o Claude…');
+    note(P, 'Ligando o ' + nomeDoMotor(P.engine) + '…');
+    P.ligando = true;
     try {
       // o main devolve false quando nao consegue ligar (SSH invalido, binario
       // sumido): sem olhar o retorno, o painel dizia "trabalhando" pra sempre
-      const ligou = await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd, model: P.model || undefined, approval: P.mode, effort: esforcoDe(P), resumeId: P.resumeId || undefined, remoto: remotoDoPane(P) || undefined });
+      const ligou = await window.api.paneStart(opcoesDeStart(P));
       if (ligou === false) throw new Error('o motor não subiu');
+      // guarda o endereco ate' o evento 'sessao' trazer o definitivo: entre um e
+      // outro, uma queda de SSH apagava a conversa (religava do zero)
+      P.resumeAnterior = P.resumeId || P.resumeAnterior || null;
       P.started = true; P.resumeId = null;
+      P.forkPendente = false;   // o ramo ja nasceu no start; nao pode forkar de novo
     } catch (e) {
       setDot(P, 'off'); pararTrabalho(P);
       desfazerEnvio(P, escrito, text, anexos);
       note(P, 'Não consegui ligar: ' + (e && e.message || e), true);
       return;
-    }
+    } finally { P.ligando = false; }
   }
-  P.busy = true; setDot(P, 'busy'); P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
+  P.busy = true; setDot(P, 'busy'); zerarTurno(P); P.blocks.clear(); pararTrabalho(P); limparPassos(P); trabalhando(P);
   subirNaLista(P);
   let envio = text;
-  // no Claude a imagem viaja dentro da mensagem; no Codex continua indo o caminho
+  // Claude E Codex recebem imagem DENTRO da mensagem (no Codex virou item
+  // localImage no turn/start); Gemini/Grok continuam indo pelo caminho no texto
   const ehClaude = P.engine === 'claude';
-  const listar = ehClaude ? anexos.filter(x => !IMG_EXT.includes(String(x.ext || '').toLowerCase())) : anexos;
+  const mandaImagem = ehClaude || P.engine === 'codex' || P.engine === 'acp';
+  const listar = mandaImagem ? anexos.filter(x => !IMG_EXT.includes(String(x.ext || '').toLowerCase())) : anexos;
+  /* o aviso morava DENTRO do if abaixo, entao um print grande (que vira caminho
+     em vez de imagem, acima de 4 MB) passava calado: o servidor recebe um
+     "C:\..." que nao existe la. Agora avisa sempre que houver anexo. */
+  const TETO_IMG = 4 * 1024 * 1024;   // acima disso a imagem vira caminho, e o servidor nao le
+  const soCaminho = listar.length
+    || anexos.some(x => IMG_EXT.includes(String(x.ext || '').toLowerCase()) && (x.bytes || 0) > TETO_IMG);
+  if (remotoDoPane(P) && soCaminho) {
+    note(P, 'Atenção: este painel roda no servidor, e o caminho do arquivo é do seu PC — ele não vai conseguir abrir.', true);
+  }
   if (listar.length) {
     envio += '\n\nArquivos que anexei (abra cada um antes de responder):\n'
       + listar.map(x => '- ' + x.path).join('\n');
-    // painel remoto: o caminho do PC nao existe la dentro
-    if (remotoDoPane(P)) note(P, 'Atenção: este painel roda no servidor, e o caminho do arquivo é do seu PC — ele não vai conseguir abrir.', true);
   }
   const contextoUsado = P.passarContexto;
   if (P.passarContexto) { envio = P.passarContexto + envio; P.passarContexto = null; }
 
   const pacote = () => ({ paneId: P.id, engine: P.engine, text: envio,
     // so' imagem: o resto ja foi listado no texto acima, mandar de novo duplicava
-    anexos: ehClaude ? anexos.filter(x => IMG_EXT.includes(String(x.ext || '').toLowerCase())).map(x => x.path) : undefined,
+    anexos: mandaImagem ? anexos.filter(x => IMG_EXT.includes(String(x.ext || '').toLowerCase())).map(x => x.path) : undefined,
     effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
 
   try {
@@ -2365,13 +3065,15 @@ async function send(P) {
          reescrever a que se perdeu. Agora ele religa na MESMA conversa e manda
          de novo aqui, uma vez. */
       note(P, 'A conexão tinha caído. Religando e mandando de novo…');
-      P.resumeId = P.sessaoId || P.resumeId;   // continua a mesma conversa
+      P.resumeId = P.sessaoId || P.resumeId || P.resumeAnterior;   // continua a mesma conversa
       P.started = false;
-      const ligou = await window.api.paneStart({ paneId: P.id, engine: P.engine, cwd: P.cwd,
-        model: P.model || undefined, approval: P.mode, effort: esforcoDe(P),
-        resumeId: P.resumeId || undefined, remoto: remotoDoPane(P) || undefined });
+      const ligou = await window.api.paneStart(opcoesDeStart(P));
       if (ligou === false) throw new Error('não consegui religar o motor');
+      // guarda o endereco ate' o evento 'sessao' trazer o definitivo: entre um e
+      // outro, uma queda de SSH apagava a conversa (religava do zero)
+      P.resumeAnterior = P.resumeId || P.resumeAnterior || null;
       P.started = true; P.resumeId = null;
+      P.forkPendente = false;
       const foiDeNovo = await window.api.paneSend(pacote());
       if (foiDeNovo === false) throw new Error('o motor não está ligado');
     }
@@ -2386,19 +3088,58 @@ async function send(P) {
 }
 
 /* ============ eventos vindos do motor ============ */
-window.api.onPaneEvent((ev) => {
+/* Rede de seguranca: antes, um erro no desenho de um unico evento derrubava o
+   resto do tratamento -- inclusive o envio da mensagem que estava na fila. */
+window.api.onPaneEvent((ev) => { try { tratarEventoDoPainel(ev); } catch (e) { console.error('evento', ev && ev.kind, e); } });
+function tratarEventoDoPainel(ev) {
   // acharPainel, nao panes.get: o painel pode estar rodando em outra aba
   const P = acharPainel(ev.paneId); if (!P) return;
   const noFundo = !panes.has(ev.paneId);
   switch (ev.kind) {
-    case 'busy': P.busy = true; setDot(P, 'busy'); trabalhando(P); if (noFundo) pintarAbasLocal(); break;
-    case 'sessao': P.sessaoId = ev.id; P.sessaoFile = ev.file || ''; P.sessaoRemota = !!ev.remoto; savePanes(); break;   // sessaoRemota entra no savePanes abaixo
+    case 'busy': P.busy = true; setDot(P, 'busy'); zerarTurno(P); trabalhando(P); if (noFundo) pintarAbasLocal(); break;
+    // a checklist do proprio agente (TodoWrite / turn-plan / write_todos)
+    case 'plano': desenharPlano(P, ev.itens); break;
+    // proxima mensagem sugerida (chip acima do campo; nunca envia sozinho)
+    case 'sugestao': mostrarSugestoes(P, ev.itens); break;
+    // ---- leva 33: motor ACP ----
+    case 'acp-info':
+      P.acpInfo = ev; P.acpModelos = ev.modelos || []; P.acpModeloAtual = ev.modeloAtual || '';
+      if (ev.comandos && ev.comandos.length) P.acpComandos = ev.comandos;
+      note(P, 'Agente ACP ligado: ' + (ev.agente || '?') + (ev.versao ? ' ' + ev.versao : '')
+        + (ev.retomou ? ' · conversa retomada' : '') + (ev.modoAtual ? ' · modo: ' + nomeDoModoAcp(ev.modoAtual) : ''));
+      break;
+    case 'acp-comandos': P.acpComandos = ev.itens || []; break;
+    case 'acp-modo': if (P.acpInfo) P.acpInfo.modoAtual = ev.modo; break;
+    // ---- leva 35: torre ----
+    // conectores que a sessao do Claude conhece: alimentam o editor de abas
+    case 'conectores': registrarConectores(ev.itens, P); break;
+    // ---- leva 36: entrada ----
+    case 'anexo-pronto': anexar(P, [ev.arquivo]).then(() => { if ((P.anexos || []).some((x) => x && x.path === ev.arquivo)) note(P, (ev.origem === 'recorte' ? 'Recorte' : 'Imagem') + ' anexado.'); const c = $('.p-input', P.el); if (c) c.focus(); }); break;
+    // o diff de um passo que chegou DEPOIS do passo (tool_call_update do ACP)
+    case 'tool-mudanca': anexarMudancaAoPasso(P, ev.id, ev.mudanca); break;
+    // ---- leva 34: sinais ----
+    // o agente te chamou (PushNotification interceptada no main)
+    case 'aviso-agente': avisoDoAgente(P, ev.texto); break;
+    // consumo DESTE turno (vai pro carimbo de fim de turno)
+    case 'turno-uso': P.usoTurno = { entrada: ev.entrada || 0, saida: ev.saida || 0 }; break;
+    // diff agregado do turno, pronto do motor (Codex)
+    case 'diff-turno': P.diffTurno = ev.diff || ''; break;
+    // qual modelo respondeu de fato (pra detectar fallback assumindo)
+    case 'modelo-usado':
+      if (ev.modelo && P.model && ev.modelo !== P.model && P.avisoModelo !== ev.modelo
+          && !String(P.model).startsWith(ev.modelo) && !ev.modelo.startsWith(String(P.model).replace(/\[.*$/, ''))) {
+        P.avisoModelo = ev.modelo;
+        note(P, 'Quem respondeu este turno foi ' + ev.modelo + ' (o modelo escolhido não estava disponível).');
+      }
+      break;
+    // chegou o endereco definitivo: o guardado nao serve mais pra nada
+    case 'sessao': P.sessaoId = ev.id; P.sessaoFile = ev.file || ''; P.sessaoRemota = !!ev.remoto; P.resumeAnterior = null; savePanes(); break;   // sessaoRemota entra no savePanes abaixo
     case 'text-delta': textDelta(P, ev.id, ev.text); break;
     case 'think-delta': thinkDelta(P, ev.text); break;
     case 'text-final': textFinal(P, ev.id, ev.text); break;
     case 'tool-start': toolStart(P, ev.id, ev.name, ev.arg, ev.mudanca); break;
     case 'tool-output': toolOutput(P, ev.id, ev.text); break;
-    case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error); break;
+    case 'tool-end': toolEnd(P, ev.id, ev.output, ev.error, ev.imagens); break;
     case 'compactou': $('.p-compactar', P.el).classList.remove('rodando'); avisoEnvio(P, 'Conversa resumida. O que importa foi mantido.'); break;
     case 'tokens':
       /* Dois avisos diferentes chegam por aqui: o 'assistant' manda o TOTAL
@@ -2418,6 +3159,7 @@ window.api.onPaneEvent((ev) => {
       // esperando uma resposta pra sempre
       P.busy = false; setDot(P, 'idle'); P.blocks.clear(); pararTrabalho(P); limparPassos(P);
       marcarFimDoTurno(P);
+      mostrarContinuar(P);
       avisarPainel(P, 'terminou');
       atualizarGit(P);
       // acabou o motivo de segurar o motor fora da tela: desliga e devolve pro
@@ -2435,13 +3177,17 @@ window.api.onPaneEvent((ev) => {
       setTimeout(() => { if (!P.busy) { pararTrabalho(P); limparPassos(P); } }, 400);
       histCache[P.engine] = null;
       setTimeout(() => buscarNome(P), 1200);
-      if (!$('.side-view[data-view="h' + P.engine + '"]').classList.contains('hidden')) loadHist(P.engine, true);
-      if (P.queued) { const q = P.queued; P.queued = null; pintarFila(P);
+      const abaHist = $('.side-view[data-view="h' + P.engine + '"]');
+      if (abaHist && !abaHist.classList.contains('hidden')) loadHist(P.engine, true);
+      if (P.queued) {
         setTimeout(async () => {
+          // a fila so' esvazia AQUI: nos 150ms de espera o painel segue "com
+          // fila", entao o chip Continuar nao aparece nem um Enter vazio dobra o envio
+          const q = P.queued; if (!q) return; P.queued = null; pintarFila(P);
           // painel FECHADO nao envia mais nada. Mas painel que so' mudou de aba
           // continua vivo e a mensagem da fila tem que ir - antes ela sumia calada
           if (P.morto || !acharPainel(P.id)) return;
-          P.busy = true; setDot(P, 'busy');
+          P.busy = true; setDot(P, 'busy'); zerarTurno(P);   // turno novo: rastro do anterior nao acumula
           try {
             const ok = await window.api.paneSend({ paneId: P.id, engine: P.engine, text: q, effort: P.engine === 'codex' ? esforcoDe(P) : undefined });
             if (ok === false) throw new Error('o motor não está mais ligado');
@@ -2471,16 +3217,249 @@ window.api.onPaneEvent((ev) => {
       break;
     }
     case 'approval': showApproval(P, ev); avisarPainel(P, 'está pedindo permissão'); break;
+    case 'pergunta': mostrarPergunta(P, ev); avisarPainel(P, 'está perguntando'); break;
+    case 'pergunta-cancelada': {
+      // o motor desistiu de esperar (deu o teto de 30 min)
+      const aberta = P.perguntaAberta && P.perguntaAberta.id === ev.id;
+      if (P.filaPerg) P.filaPerg = P.filaPerg.filter((x) => x.id !== ev.id);
+      if (aberta) { note(P, 'A pergunta expirou — ele seguiu sem a sua resposta.', true); proximaPergunta(P); }
+      break;
+    }
     case 'auto-liberado':
+      // alem do aviso que some, entra na auditoria do painel (distintivo ⚡N)
+      registrarAuto(P, ev);
       note(P, 'liberado automaticamente: ' + ev.tool + (ev.arg ? ' · ' + String(ev.arg).slice(0, 60) : ''));
       break;
   }
-});
+}
 
 /* a barra de permissao e' UMA por painel, mas o modelo pede varias ferramentas
    na mesma volta. O segundo pedido sobrescrevia o botao do primeiro, que nunca
    era respondido - e o motor ficava esperando pra sempre, painel travado em
    "trabalhando...". Agora os pedidos entram numa fila e aparecem um a um. */
+/* ===================== CAIXA DE PERGUNTAS =====================
+   O motor parou pra te perguntar alguma coisa e esta esperando. A caixa nasce
+   presa embaixo da conversa, no mesmo lugar e com a mesma cara do pedido de
+   permissao - que ja e' como o Cockpit diz "parei, preciso de voce".
+
+   Enquanto ela esta aberta, o turno NAO morreu: a ferramenta do outro lado esta
+   parada esperando o arquivo de resposta. Por isso fechar a caixa nao e' de
+   graca - manda "cancelado" e o motor segue pelo caminho conservador. */
+
+function esconderPergunta(P) {
+  const cx = P && P.el && $('.pane-perg', P.el);
+  if (!cx) return;
+  cx.classList.add('hidden');
+  cx.innerHTML = '';
+  P.perguntaAberta = null;
+}
+
+/* uma pergunta de cada vez: se chegar outra com uma aberta, a nova espera */
+function mostrarPergunta(P, ev) {
+  if (!P.filaPerg) P.filaPerg = [];
+  // o mesmo pedido pode chegar duas vezes (o fs.watch e a varredura de 1s):
+  // sem esta guarda, a caixa era redesenhada e perdia o que voce ja marcou
+  const jaTem = (P.perguntaAberta && P.perguntaAberta.id === ev.id)
+    || P.filaPerg.some((x) => x.id === ev.id);
+  if (jaTem) return;
+  P.filaPerg.push(ev);
+  if (!P.perguntaAberta) desenharPergunta(P);
+  else note(P, 'Mais uma pergunta na fila (' + P.filaPerg.length + ' esperando).');
+
+  // painel fora da tela: sem aviso, o motor ficaria parado ate o teto de 30min
+  // e a unica pista seria a bolinha, que diz "trabalhando", nao "esperando voce"
+  if (!panes.has(P.id) && panesFundo.has(P.id)) {
+    pintarAbasLocal();
+    try {
+      new Notification('Cockpit — uma pergunta pra você', {
+        body: (P.titulo || 'Um painel') + ' parou pra perguntar, na aba ' + nomeCurtoDaAba(abaPorId(P.abaId)),
+      });
+    } catch {}
+  }
+}
+
+function proximaPergunta(P) {
+  if (P.filaPerg && P.filaPerg.length) P.filaPerg.shift();
+  P.perguntaAberta = null;
+  if (P.filaPerg && P.filaPerg.length) desenharPergunta(P);
+  else { esconderPergunta(P); pintarAbasLocal(); }
+}
+
+function desenharPergunta(P) {
+  const ev = (P.filaPerg && P.filaPerg[0]);
+  const cx = $('.pane-perg', P.el);
+  if (!ev || !cx) return;
+  P.perguntaAberta = ev;
+  cx.innerHTML = '';
+  cx.classList.remove('hidden');
+
+  const perguntas = Array.isArray(ev.perguntas) ? ev.perguntas.slice(0, 4) : [];
+  // o que esta marcado em cada pergunta: Set pra multipla, string pra unica
+  const escolhas = perguntas.map((q) => (q && q.varias ? new Set() : null));
+  const livres = perguntas.map(() => '');
+
+  const topo = document.createElement('div');
+  topo.className = 'perg-topo';
+  topo.innerHTML = '<span class="perg-sino"></span><b>'
+    + (perguntas.length > 1 ? perguntas.length + ' perguntas antes de seguir' : 'Uma pergunta antes de seguir')
+    + '</b><span class="perg-dica">ele está esperando aqui</span>';
+  cx.appendChild(topo);
+
+  perguntas.forEach((q, i) => {
+    const bloco = document.createElement('div');
+    bloco.className = 'perg-item';
+
+    if (q.titulo) {
+      const t = document.createElement('div');
+      t.className = 'perg-tit';
+      t.textContent = q.titulo;
+      bloco.appendChild(t);
+    }
+    const pq = document.createElement('div');
+    pq.className = 'perg-txt';
+    pq.textContent = String(q.pergunta || '');
+    bloco.appendChild(pq);
+
+    const lista = document.createElement('div');
+    lista.className = 'perg-ops';
+    /* pergunta de senha/chave nao mostra opcao pronta: clicar num rotulo
+       publico viraria resposta, e o resumo depois esconderia esse rotulo como
+       "(resposta oculta)" - o que engana quem le a conversa */
+    const opcoes = (q.segredo || !Array.isArray(q.opcoes)) ? [] : q.opcoes.slice(0, 5);
+    opcoes.forEach((op) => {
+      const rotulo = String((op && op.rotulo) || '');
+      if (!rotulo) return;
+      const bt = document.createElement('button');
+      bt.className = 'perg-op';
+      bt.type = 'button';
+      const linha = document.createElement('span');
+      linha.className = 'po-rot';
+      linha.textContent = rotulo;
+      bt.appendChild(linha);
+      if (op.detalhe) {
+        const d = document.createElement('span');
+        d.className = 'po-det';
+        d.textContent = String(op.detalhe);
+        bt.appendChild(d);
+      }
+      bt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (q.varias) {
+          const s = escolhas[i];
+          if (s.has(rotulo)) s.delete(rotulo); else s.add(rotulo);
+          bt.classList.toggle('marcada', s.has(rotulo));
+        } else {
+          escolhas[i] = rotulo;
+          for (const outro of lista.querySelectorAll('.perg-op')) outro.classList.remove('marcada');
+          bt.classList.add('marcada');
+          /* clicar MARCA, nao envia. Chegou a enviar direto quando havia uma
+             pergunta so' - era rapido, mas um clique errado virava resposta
+             definitiva no meio do trabalho, sem desfazer. Um clique a mais e'
+             barato; resposta errada custa o turno inteiro. Quem quer rapidez
+             tem o Enter, logo abaixo. */
+        }
+        conferir();
+      });
+      lista.appendChild(bt);
+    });
+    bloco.appendChild(lista);
+
+    // sempre cabe escrever a resposta que nao estava na lista
+    const livre = document.createElement('input');
+    if (q.segredo) livre.dataset.segredo = '1';
+    livre.className = 'perg-livre';
+    // o Codex marca isSecret quando pede senha/chave: nao pode ficar na tela
+    livre.type = q.segredo ? 'password' : 'text';
+    livre.placeholder = q.segredo ? 'digite aqui (fica oculto)' : 'ou escreva a sua resposta…';
+    livre.addEventListener('input', () => { livres[i] = livre.value; conferir(); });
+    livre.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); enviar(); }
+    });
+    bloco.appendChild(livre);
+    cx.appendChild(bloco);
+  });
+
+  const pe = document.createElement('div');
+  pe.className = 'perg-pe';
+  const btOk = document.createElement('button');
+  btOk.className = 'perg-ok';
+  btOk.type = 'button';
+  btOk.textContent = 'Responder';
+  const btNao = document.createElement('button');
+  btNao.className = 'perg-nao';
+  btNao.type = 'button';
+  btNao.textContent = 'Decide você';
+  btNao.title = 'Fecha sem responder: ele segue pelo caminho mais conservador e diz o que ficou em aberto';
+  pe.appendChild(btOk); pe.appendChild(btNao);
+  cx.appendChild(pe);
+
+  const respostaDe = (i) => {
+    const livre = String(livres[i] || '').trim();
+    const q = perguntas[i] || {};
+    if (q.varias) {
+      const marcadas = [...(escolhas[i] || [])];
+      if (livre) marcadas.push(livre);
+      return marcadas.length ? marcadas : null;
+    }
+    if (livre) return livre;             // o que voce escreve vale mais que o botao
+    return escolhas[i] || null;
+  };
+  const conferir = () => {
+    const faltam = perguntas.filter((_, i) => respostaDe(i) == null).length;
+    btOk.disabled = faltam > 0;
+    btOk.textContent = faltam > 0
+      ? (faltam === perguntas.length ? 'Responder' : 'Falta ' + faltam)
+      : 'Responder';
+  };
+
+  let mandou = false;
+  const enviar = () => {
+    if (mandou) return;
+    const respostas = perguntas.map((_, i) => respostaDe(i));
+    if (respostas.some((r) => r == null)) return conferir();
+    mandou = true;
+    window.api.perguntaResponder({ id: ev.id, respostas });
+    // fica na conversa o que voce respondeu, pra dar pra reler depois
+    const resumo = perguntas.map((q, i) => {
+      const r = respostas[i];
+      // resposta secreta nao vai pro historico da conversa
+      if (q.segredo) return '• ' + String(q.pergunta || '') + '  →  (resposta oculta)';
+      return '• ' + String(q.pergunta || '') + '  →  ' + (Array.isArray(r) ? r.join(' + ') : String(r));
+    }).join('\n');
+    note(P, 'Você respondeu:\n' + resumo);
+    proximaPergunta(P);
+  };
+  const desistir = () => {
+    if (mandou) return;
+    mandou = true;
+    window.api.perguntaResponder({ id: ev.id, cancelado: true });
+    note(P, 'Você deixou a decisão com ele.');
+    proximaPergunta(P);
+  };
+  btOk.addEventListener('click', (e) => { e.stopPropagation(); enviar(); });
+  btNao.addEventListener('click', (e) => { e.stopPropagation(); desistir(); });
+
+  /* Enter manda, quando ja da' pra mandar; Esc devolve a decisao pra ele.
+     Fica na caixa (nao na janela) pra nao atrapalhar quem esta digitando no
+     campo de mensagem do painel. */
+  cx.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !btOk.disabled) { e.preventDefault(); e.stopPropagation(); enviar(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); desistir(); }
+  });
+  conferir();
+
+  piscar(P);   // painel fora de vista: chama atencao, igual ao pedido de permissao
+  if (quadro) avisarNoQuadro('⚠ ' + (P.titulo || 'O painel') + ' fez uma pergunta — feche o quadro pra responder.', true);
+  /* o foco vai pro comeco do PRIMEIRO bloco, nao pro primeiro campo secreto do
+     cartao: com o segredo na 2a pergunta, o foco pulava a 1a por cima e o Enter
+     nao enviava (faltava resposta), o que parecia que o botao estava quebrado */
+  const bloco1 = $('.perg-item', cx) || cx;
+  const primeira = $('.perg-livre[data-segredo]', bloco1) || $('.perg-op', bloco1) || $('.perg-livre', bloco1);
+  if (primeira && panes.has(P.id)) setTimeout(() => { try { primeira.focus(); } catch {} }, 60);
+  scroll(P, true);
+}
+
 function showApproval(P, ev) {
   // pedido chegou numa aba que nao esta na tela: sem avisar, o motor esperava
   // pra sempre e a unica pista era a bolinha, que diz "trabalhando", nao "travado"
@@ -2522,54 +3501,111 @@ function desenharPermissao(P) {
   const btSempre = $('.pp-sempre', bar);
   if (btSempre) {
     btSempre.classList.toggle('hidden', !ev.tool);
-    btSempre.textContent = ev.tool ? 'Sempre permitir ' + ev.tool : 'Sempre permitir';
-    btSempre.title = ev.tool ? 'Não perguntar mais por ' + ev.tool + ' neste painel (vale até fechar o painel)' : '';
+    btSempre.textContent = ev.tool ? 'Sempre permitir ' + (ev.rotulo || ev.tool) : 'Sempre permitir';
+    btSempre.title = ev.tool ? 'Não perguntar mais por ' + (ev.rotulo || ev.tool) + ' neste painel (vale até fechar o painel)' : '';
   }
   bar.classList.remove('hidden');
   piscar(P);   // painel fora de vista: chama atencao
-  const done = (allow) => {
+  if (quadro) avisarNoQuadro('⚠ ' + (P.titulo || 'O painel') + ' está pedindo permissão — feche o quadro pra responder.', true);
+  let respondido = false;   // duplo clique nao pode responder o pedido SEGUINTE
+  const done = async (allow) => {
+    if (respondido) return;
+    respondido = true;
     const d = $('.diff', bar); if (d) d.remove();
-    window.api.approve({ key: ev.key, allow });
+    try {
+      const ok = await window.api.approve({ key: ev.key, allow });
+      // pedido que ja morreu (turno acabou, motor caiu): avisa em vez de sumir
+      if (ok === false) note(P, 'Esse pedido já tinha expirado — o motor não estava mais esperando.', true);
+    } catch (e) {
+      note(P, 'Não consegui enviar a resposta: ' + (e && e.message || e), true);
+    }
+    if (P.morto) return;
     proximaPermissao(P);   // mostra o proximo pedido em vez de sumir com ele
   };
   $('.pp-yes', bar).onclick = () => done(true);
   $('.pp-no', bar).onclick = () => done(false);
   if (btSempre) btSempre.onclick = async () => {
     if (ev.tool) await window.api.autoLiberar({ paneId: P.id, tool: ev.tool });
-    note(P, 'Não vou mais perguntar por ' + ev.tool + ' neste painel.');
+    note(P, 'Não vou mais perguntar por ' + (ev.rotulo || ev.tool) + ' neste painel.');
     done(true);
   };
 }
 
 /* ============ arvore de arquivos ============ */
+/* O 'expanded' e' um Set GLOBAL, e caminho sozinho nao identifica pasta:
+   '/home/hugo/x' existe igualzinho em dois servidores diferentes -- e no dia em
+   que o Cockpit rodar num Mac, tambem aqui. Por isso a chave leva o ALVO junto:
+   'usuario@host|caminho' no servidor, 'local|caminho' neste PC. Assim cada
+   arvore lembra so' do que e' dela e uma nao abre pasta da outra. */
 const expanded = new Set();
+const chaveAberta = (remoto, caminho) =>
+  (remoto ? (remoto.usuario || '') + '@' + (remoto.host || '') : 'local') + '|' + caminho;
 let treeGen = 0;
-async function loadTree(dir) {
+/* O 'remoto' ({host, usuario, chave, caminhoRemoto}) vem do PAINEL em foco. Sem
+   ele tudo le' o disco deste PC, exatamente como antes. */
+async function loadTree(dir, remoto) {
   const gen = ++treeGen;                    // cancela um carregamento anterior ainda em andamento
-  $('#projName').textContent = dir === HOME ? 'Pasta: ' + ESTE_PC + ' inteiro' : ('Pasta: ' + baseNome(dir));
+  $('#projName').textContent = remoto
+    ? ('🖧 ' + (remoto.usuario || '') + '@' + (remoto.host || ''))
+    : (dir === HOME ? 'Pasta: ' + ESTE_PC + ' inteiro' : ('Pasta: ' + baseNome(dir)));
   const box = $('#tree'); box.innerHTML = '';
-  await level(dir, box, 0, gen);
+  // aba de servidor em branco: nao adianta pedir nada, e ler o disco daqui seria pior
+  if (faltaConfigurarServidor(remoto)) {
+    const d = document.createElement('div');
+    d.className = 'hint'; d.style.padding = '10px 14px'; d.textContent = AVISO_ABA_EM_BRANCO;
+    box.appendChild(d);
+    return;
+  }
+  await level(dir, box, 0, gen, remoto);
 }
-async function level(dir, container, depth, gen) {
+async function level(dir, container, depth, gen, remoto) {
   if (gen !== undefined && gen !== treeGen) return;
-  const r = await window.api.listDir(dir);
+  /* SSH leva segundos, nao milissegundos. Sem esta linha a barra da esquerda
+     fica em branco e o usuario le' "quebrado" onde e' so' "lento". */
+  if (remoto) container.innerHTML = '<div class="tree-carregando">Lendo o servidor…</div>';
+  let r = null;
+  try { r = await window.api.listDir(dir, remoto || undefined); }
+  catch (e) { r = { error: 'Não consegui ler esta pasta: ' + ((e && e.message) || e) }; }
   if (gen !== undefined && gen !== treeGen) return;
-  if (r.error) { container.innerHTML = '<div class="hint" style="padding:6px 14px">' + r.error + '</div>'; return; }
-  for (const e of r.entries) {
+  container.innerHTML = '';                 // tira o "lendo…" (no local ja' estava vazio)
+  if (!r) r = { error: 'Não veio resposta ao listar esta pasta.' };
+  if (r.error) {
+    // textContent, nao innerHTML: o motivo pode vir do servidor e nao vira marcacao
+    const d = document.createElement('div');
+    d.className = 'hint'; d.style.padding = '6px 14px'; d.textContent = r.error;
+    container.appendChild(d);
+    return;
+  }
+  for (const e of (r.entries || [])) {
+    /* Confere a geracao a CADA volta, nao so' na entrada. O 'await level(...)'
+       de uma subpasta aberta suspende este laco por segundos no remoto; se voce
+       trocar de painel nesse meio-tempo, o loadTree novo limpa a caixa e comeca
+       a pintar a arvore do servidor B -- e este laco, ao voltar, continuava
+       despejando os itens do servidor A por baixo. Clicar num intruso colava
+       caminho do servidor A na mensagem do painel B. */
+    if (gen !== undefined && gen !== treeGen) return;
     const n = document.createElement('div');
     n.className = 'node ' + (e.dir ? 'd' : 'f');
     n.style.paddingLeft = (8 + depth * 12) + 'px';
-    const open = expanded.has(e.path);
+    const chave = chaveAberta(remoto, e.path);
+    const open = expanded.has(chave);
     n.innerHTML = '<span class="chev">' + (e.dir ? (open ? ico('chevron-down') : ico('chevron-right')) : '') + '</span>'
       + '<span class="ico">' + (e.dir ? ico('folder') : icon(e.name)) + '</span><span class="nm"></span>';
     $('.nm', n).textContent = e.name;
     container.appendChild(n);
     if (e.dir) {
       const kids = document.createElement('div'); container.appendChild(kids);
-      if (open) await level(e.path, kids, depth + 1, gen);
+      if (open) await level(e.path, kids, depth + 1, gen, remoto);
       n.addEventListener('click', async () => {
-        if (expanded.has(e.path)) { expanded.delete(e.path); kids.innerHTML = ''; $('.chev', n).innerHTML = ico('chevron-right'); }
-        else { expanded.add(e.path); $('.chev', n).innerHTML = ico('chevron-down'); await level(e.path, kids, depth + 1); }
+        // abrir pasta tambem carrega o gen: trocou de painel no meio, nao pinta
+        if (expanded.has(chave)) { expanded.delete(chave); kids.innerHTML = ''; $('.chev', n).innerHTML = ico('chevron-right'); return; }
+        expanded.add(chave); $('.chev', n).innerHTML = ico('chevron-down');
+        await level(e.path, kids, depth + 1, gen, remoto);
+        /* No servidor a resposta demora segundos: da' tempo de o 2o clique
+           fechar a pasta antes dela chegar. Sem esta conferencia a resposta
+           atrasada pintava os filhos assim mesmo, e a pasta ficava com seta
+           fechada e conteudo aberto embaixo. */
+        if (!expanded.has(chave)) { kids.innerHTML = ''; $('.chev', n).innerHTML = ico('chevron-right'); }
       });
     } else {
       n.addEventListener('click', () => {
@@ -2579,9 +3615,13 @@ async function level(dir, container, depth, gen) {
         inp.focus();
       });
       n.addEventListener('dblclick', async () => {
-        const r = await window.api.openPath(e.path);
+        /* No servidor "abrir no PC" nao existe -- o duplo clique abre no visor,
+           que agora sabe ler la' dentro. A rota e' pelo PAINEL, nunca pelo
+           formato do caminho. */
+        if (remoto) { if (focusPane) verArquivo(focusPane, e.path, remotoDoPane(focusPane)); return; }
+        const r2 = await window.api.openPath(e.path);
         // sem isso, arquivo recusado por seguranca nao abria e nao explicava nada
-        if (r && r.error && focusPane) note(focusPane, r.error, true);
+        if (r2 && r2.error && focusPane) note(focusPane, r2.error, true);
       });
     }
   }
@@ -2608,11 +3648,51 @@ const MODOS = {
   codex: [
     { id: 'manual',    ic: 'hand', nome: 'Manual',                 desc: 'Pergunta antes de cada ação' },
     { id: 'auto',      ic: 'zap', nome: 'Auto',                   desc: 'Segue sozinho no que é seguro e para no que é arriscado' },
+    /* approvalsReviewer: auto_review no thread/start - um revisor automatico do
+       proprio Codex decide os pedidos arriscados, dentro do sandbox da pasta */
+    { id: 'revisado',  ic: 'sparkles', nome: 'Revisado por IA',   desc: 'Um revisor automático aprova ou barra os pedidos arriscados, sem te interromper' },
     { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'Faz tudo sem perguntar, inclusive o que é perigoso' },
+  ],
+  /* No ACP o pedido de permissao chega pelo protocolo (session/request_permission)
+     e vira o mesmo cartao Permitir/Negar. Os modos sao traduzidos pro vocabulario
+     de cada agente (default/autoEdit/plan/yolo no Gemini) quando ele os tem;
+     "sem pedir permissao" vale sempre, porque quem aprova ai e' o Cockpit. */
+  acp: [
+    { id: 'manual',    ic: 'hand', nome: 'Manual',                 desc: 'O agente pergunta antes de cada ação' },
+    { id: 'auto-edit', ic: 'code-xml', nome: 'Editar automaticamente', desc: 'Mexe nos arquivos sozinho e pergunta o resto (se o agente tiver esse modo)' },
+    { id: 'plan',      ic: 'clipboard-list', nome: 'Plano',                  desc: 'Só estuda e mostra o plano (se o agente tiver esse modo)' },
+    { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'O Cockpit aprova todo pedido do agente sozinho' },
+  ],
+  /* No Gemini e no Grok o Cockpit conversa por fora da tela deles, e o pedido de
+     permissao nao tem por onde chegar ate' voce. Entao so' entram os modos que
+     funcionam de verdade sem ninguem pra responder: "faz tudo" e "so' leitura". */
+  gemini: [
+    { id: 'plan',      ic: 'clipboard-list', nome: 'Só leitura',    desc: 'Estuda e responde, mas não altera nada' },
+    { id: 'auto',      ic: 'code-xml', nome: 'Editar automaticamente', desc: 'Mexe nos arquivos sozinho' },
+    { id: 'bypass',    ic: 'unlock', nome: 'Sem pedir permissão',    desc: 'Faz tudo sem perguntar, inclusive o que é perigoso' },
+  ],
+  /* O Grok tem modos proprios, mas a flag exata ainda nao foi confirmada (precisa
+     de assinatura pra testar). Oferecer "so' leitura" sem mandar nada na linha
+     seria prometer uma trava que nao existe -- entao aqui so' aparece o que ele
+     de fato faz: o que estiver no ~/.grok/config.toml. */
+  grok: [
+    { id: 'bypass',    ic: 'sliders-horizontal', nome: 'O que estiver no Grok', desc: 'vale a configuração do próprio Grok, no ~/.grok/config.toml' },
   ],
 };
 const esforcoDe = (P) => P.effort;
-const modoDe = (P) => (MODOS[P.engine].find(m => m.id === P.mode) || MODOS[P.engine][MODOS[P.engine].length - 1]);
+/* Modo salvo que nao existe neste motor (ex.: "plan" do Gemini indo pro Codex)
+   cai no PRIMEIRO da lista, que e' o mais cuidadoso. Caindo no ultimo, como
+   antes, um painel novo nascia em "faz tudo sem perguntar" so' porque o modo do
+   outro motor nao existia aqui. */
+/* O padrao guardado e' de um motor so'; o painel novo pode ser de outro. */
+function modoValido(engine, modo) {
+  const lista = MODOS[engine] || MODOS.claude;
+  return lista.some((m) => m.id === modo) ? modo : lista[0].id;
+}
+const modoDe = (P) => {
+  const lista = MODOS[P.engine] || MODOS.claude;
+  return lista.find((m) => m.id === P.mode) || lista[0];
+};
 
 /* ---- barra de esforço: trilho contínuo, arrasta com ímã e volta no encaixe ---- */
 const clamp01 = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -2843,6 +3923,18 @@ function barraEsforco(P) {
   return box;
 }
 
+/* Depois de derrubar o motor de proposito (trocou de modelo, de modo, de conta),
+   a proxima mensagem tem que voltar NA MESMA conversa. O Claude e os motores por
+   turno (Gemini, Grok) retomam pelo endereco da sessao; o Codex nao usa isso, ele
+   guarda a thread do lado dele.
+   Isto estava escrito como "se for claude" em cinco lugares -- e por isso trocar
+   o modelo de um painel do Gemini comecava uma conversa NOVA, calada, jogando
+   fora tudo que ja tinha sido dito. */
+function guardarConversaPraVoltar(P) {
+  if (P.engine === 'codex') return;
+  P.resumeId = P.sessaoId || P.resumeId;
+}
+
 async function trocarEsforco(P, id) {
   P.effort = id; cfg.defEffort = id; window.api.setConfig(cfg);
   if (P.engine === 'claude' && P.started) {
@@ -2978,19 +4070,36 @@ async function buscarNome(P) {
   if (!t && P.tentouNome <= 6) P.timerNome = setTimeout(() => buscarNome(P), 20000);
 }
 
+/* Em aba de servidor o motor do Claude sobe sempre sem pedir permissao (o
+   pedido nao atravessa o SSH). Deixar P.mode com outra coisa faz o crachá
+   prometer uma revisao que nao vai existir. */
+function ajeitarModoRemoto(P) {
+  if (P && P.engine === 'claude' && remotoDoPane(P) && P.mode !== 'bypass') P.mode = 'bypass';
+}
+
 function pintarModo(P) {
+  ajeitarModoRemoto(P);
   const m = modoDe(P);
   P.mode = m.id;
   $('.modo-ic', P.el).innerHTML = ico(m.ic);
   $('.modo-nome', P.el).textContent = m.nome;
 }
 
-function fecharMenus() {
+/* 'cancelarBusca' so' chega FALSE de dentro do novoMenu -- ali quem fecha e'
+   quem vai abrir outro menu no lugar, e a busca do "@" nao pode se matar
+   sozinha. Em todo o resto (clique fora, Esc, janelaTerminal, conectores,
+   conta, diff do git) fechar o menu MATA a busca que ainda vinha pela rede.
+   Sem isso ela voltava do servidor segundos depois, chamava novoMenu e fazia
+   cx.className='modal-cx'; cx.innerHTML='' na janelinha que a essa altura era o
+   TERMINAL do "Entrar na conta": o terminal perdia o DOM e o pty ficava vivo e
+   orfao por tras -- a telinha preta de novo, por outra porta. */
+function fecharMenus(cancelarBusca) {
   for (const P of panes.values()) {
     const m = $('.p-modal', P.el);
     if (m && m.classList.contains('como-menu')) { m.classList.add('hidden'); m.classList.remove('como-menu'); $('.modal-cx', m).innerHTML = ''; }
     soltarNavArquivos(P);
   }
+  if (cancelarBusca !== false) pararBuscaEmVoo();
   fecharPopGlobal();
 }
 document.addEventListener('click', fecharMenus);
@@ -3010,7 +4119,7 @@ document.addEventListener('click', (e) => {
   else if (href.startsWith('/')) window.api.abrirLink(href);
 }, true);
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || quadro) return;   // com o quadro aberto o Esc e' do Excalidraw
   // dentro do terminal embutido, Esc é do terminal, não fecha a janelinha
   const dentroTerm = document.activeElement && document.activeElement.closest && document.activeElement.closest('.term-wrap');
   if (dentroTerm) return;
@@ -3034,7 +4143,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 function novoMenu(P) {
-  fecharMenus();
+  fecharMenus(false);   // e' a propria busca do "@" reabrindo a janelinha: nao pode se cancelar
   const modal = $('.p-modal', P.el);
   modal.classList.remove('hidden');
   modal.classList.add('como-menu');
@@ -3077,10 +4186,10 @@ function elLinha() { const d = document.createElement('div'); d.className = 'men
 
 /* Shift+Tab: anda pelos modos de permissao na ordem da lista, igual ao CLI. */
 async function girarModo(P) {
-  // 'bypass' (faz tudo sem perguntar, inclusive o perigoso) fica FORA do ciclo:
-  // no CLI o Shift+Tab tambem nao alcanca ele, e chegar la sem querer, so' de
-  // teclar 4 vezes, e' grave demais. Pra usar bypass, pelo menu de modos.
-  const lista = (MODOS[P.engine] || []).filter(m => m.id !== 'bypass');
+  // 'bypass' (faz tudo sem perguntar) e 'revisado' (aprova arriscado sozinho,
+  // via revisor) ficam FORA do ciclo: chegar neles sem querer, so' de teclar
+  // rapido, e' grave demais. Pra usar, pelo menu de modos.
+  const lista = (MODOS[P.engine] || []).filter(m => m.id !== 'bypass' && m.id !== 'revisado');
   if (!lista.length) return;
   const i = lista.findIndex(m => m.id === P.mode);
   const mo = lista[(i + 1) % lista.length];
@@ -3090,7 +4199,7 @@ async function girarModo(P) {
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
   if (P.morto) return;
   if (estavaOcupado) note(P, 'A resposta em andamento foi interrompida para trocar o modo.', true);
-  if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+  guardarConversaPraVoltar(P);
   destravarPainel(P);
   P.started = false; setDot(P, 'off');
   note(P, 'Modo: ' + mo.nome + ' — ' + mo.desc.toLowerCase() + '.');
@@ -3100,17 +4209,91 @@ async function girarModo(P) {
 }
 
 /* ---- menu de Modos + barrinha de esforço ---- */
+/* Escolher entre os quatro motores. O interruptor do topo do painel so' tem
+   dois lados (Claude e Codex, que sao os do dia a dia); os outros entram por
+   aqui, sem mexer no desenho da barra. */
+function menuMotores(P) {
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Motores'));
+  m.appendChild(subPopup('A conversa continua: o motor novo recebe o que já foi dito.'));
+  for (const eng of MOTORES) {
+    const dispo = motorDisponivel[eng];
+    m.appendChild(elItem({
+      ic: 'sparkles', nome: nomeDoMotor(eng), on: eng === P.engine,
+      desc: eng === P.engine ? 'é o que está em uso agora'
+        : dispo === false ? 'não instalado nesta máquina' : DICA_MOTOR[eng] || '',
+    }, () => {
+      if (eng === P.engine) return;
+      if (dispo === false) {
+        note(P, 'O ' + nomeDoMotor(eng) + ' não está instalado nesta máquina. ' + (COMO_INSTALAR[eng] || ''), true);
+        return;
+      }
+      trocarMotor(P, eng);
+    }));
+  }
+}
+
+const DICA_MOTOR = {
+  claude: 'o mais completo aqui: pergunta antes de agir e roda no servidor',
+  codex: 'o da OpenAI, com aprovação passo a passo',
+  gemini: 'o do Google, com camada grátis',
+  grok: 'o do xAI, precisa de SuperGrok ou X Premium+',
+  acp: 'qualquer agente que fale ACP (Gemini, Claude Code, Codex, OpenCode…) por um comando',
+};
+const COMO_INSTALAR = {
+  gemini: 'Instale com "npm i -g @google/gemini-cli" e entre na conta rodando "gemini" no terminal.',
+  grok: 'Instale pelo site do xAI e entre na conta rodando "grok" no terminal.',
+  acp: 'Precisa do Gemini CLI ("npm i -g @google/gemini-cli") ou do npx pra baixar um adaptador ACP.',
+};
+/* Preenchido no arranque. Enquanto for null a tela nao afirma nada: so' depois
+   da resposta e' que um motor aparece como "nao instalado". */
+const motorDisponivel = { claude: true, codex: true, gemini: null, grok: null, acp: null };
+async function verMotoresDisponiveis() {
+  try {
+    const r = await window.api.motoresDisponiveis();
+    if (r && typeof r === 'object') Object.assign(motorDisponivel, r);
+  } catch {}
+  /* a resposta chega depois da tela desenhada: aqui e o momento de marcar na
+     abertura quem nao esta instalado, em vez de deixar o botao mentir. */
+  for (const eng of MOTORES) {
+    const bt = document.querySelector('.bv-bt[data-motor="' + eng + '"]');
+    if (!bt) continue;
+    const fora = motorDisponivel[eng] === false;
+    bt.classList.toggle('fora', fora);
+    bt.title = fora ? 'Não está instalado nesta máquina' : '';
+    // o icone da barra tambem: senao ele promete uma coluna de conversas de
+    // um motor que nem esta na maquina
+    const icone = document.querySelector('.act[data-view="h' + eng + '"]');
+    if (!icone) continue;
+    icone.classList.toggle('fora', fora);
+    icone.title = 'Conversas do ' + nomeDoMotor(eng) + (fora ? ' — não instalado nesta máquina' : '');
+  }
+}
+
 function menuModos(P) {
   const m = novoMenu(P);
   m.appendChild(tituloPopup('Modos'));
   m.appendChild(subPopup('O que ele pode fazer sem te perguntar.'));
 
+  // so' o Claude atravessa o SSH; o Codex roda no PC mesmo em aba de servidor
+  const ehRemoto = !!remotoDoPane(P) && P.engine === 'claude';
+  if (ehRemoto) {
+    m.appendChild(subPopup('Nesta aba o Claude trabalha dentro do servidor, e o pedido de permissão não atravessa o SSH: lá ele age sem perguntar. Para revisar antes, use um painel do PC.'));
+  }
   for (const mo of MODOS[P.engine]) {
     m.appendChild(elItem({ ic: mo.ic, nome: mo.nome, desc: mo.desc, on: mo.id === P.mode }, async () => {
-      P.mode = mo.id; cfg.defMode = mo.id; window.api.setConfig(cfg); pintarModo(P);
+      if (ehRemoto && mo.id !== 'bypass') {
+        note(P, 'Este painel roda dentro do servidor: lá o Claude age sem pedir permissão, independente do modo. Para revisar cada passo, use um painel do PC.', true);
+        return;
+      }
+      P.mode = mo.id;
+      // aba de servidor so' aceita bypass: gravar isso como padrao rebaixaria
+      // tambem os paineis do PC, que sao a maioria
+      if (!ehRemoto) { cfg.defMode = mo.id; window.api.setConfig(cfg); }
+      pintarModo(P);
       await window.api.paneStop({ paneId: P.id, engine: P.engine });
       // so o Claude reaplica o modo ao retomar; no Codex a politica antiga ficaria valendo
-      if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+      guardarConversaPraVoltar(P);
       destravarPainel(P);
       P.started = false; setDot(P, 'off');
       note(P, 'Modo: ' + mo.nome + ' — ' + mo.desc.toLowerCase() + '.');
@@ -3127,6 +4310,7 @@ async function menuModelos(P) {
   const m = novoMenu(P);
   const pintar = () => {
     m.innerHTML = '';
+    if (P.engine === 'acp') { pintarMenuAcp(P, m); return; }
     m.appendChild(tituloPopup('Modelo'));
     m.appendChild(subPopup('Qual cérebro este painel vai usar, e quanto ele deve pensar.'));
     for (const mo of modelosDe(P)) {
@@ -3136,9 +4320,29 @@ async function menuModelos(P) {
         if (!ef.find(e => e.id === P.effort)) P.effort = mo.padraoEffort || ef[0].id;
         fillModels(P);
         await window.api.paneStop({ paneId: P.id, engine: P.engine });
-        if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+        guardarConversaPraVoltar(P);
         destravarPainel(P);
         P.started = false; setDot(P, 'off'); savePanes();
+      }));
+    }
+    if (P.engine === 'claude') {
+      m.appendChild(elLinha());
+      m.appendChild(elItem({
+        ic: 'refresh-cw', nome: 'Se o modelo cair, usar o Sonnet',
+        desc: 'quando o escolhido estiver fora do ar, o Sonnet 5 assume o turno e o painel avisa',
+        on: !!cfg.fallbackClaude,
+      }, async () => {
+        cfg.fallbackClaude = !cfg.fallbackClaude;
+        window.api.setConfig(cfg);
+        // religa pra flag valer JA, na mesma conversa
+        await window.api.paneStop({ paneId: P.id, engine: P.engine });
+        if (P.morto) return;
+        guardarConversaPraVoltar(P);
+        destravarPainel(P);
+        P.started = false; setDot(P, 'off'); savePanes();
+        note(P, cfg.fallbackClaude
+          ? 'Combinado: se o modelo escolhido cair, o Sonnet assume e eu aviso aqui.'
+          : 'Fallback desligado: se o modelo cair, o turno falha e você decide.');
       }));
     }
     m.appendChild(elLinha());
@@ -3148,6 +4352,79 @@ async function menuModelos(P) {
   if (P.engine === 'codex' && !MODELOS_CODEX) {
     MODELOS_CODEX = (await window.api.codexModels()) || null;
     if (MODELOS_CODEX && MODELOS_CODEX.length) { fillModels(P); pintar(); }
+  }
+}
+
+/* o modo que o agente anunciou, no vocabulario da tela quando da' pra traduzir */
+function nomeDoModoAcp(id) {
+  const s = String(id || '');
+  if (!s) return '';
+  if (/^(yolo|bypassPermissions|bypass_permissions|bypass|full-auto|fullAuto)$/i.test(s)) return 'sem pedir permissão';
+  if (/^(autoEdit|auto_edit|acceptEdits|accept_edits|auto-edit)$/i.test(s)) return 'editar automaticamente';
+  if (/^(plan|planning|readOnly|read-only|read_only)$/i.test(s)) return 'plano';
+  if (/^(default|ask|normal|interactive)$/i.test(s)) return 'manual';
+  return s;
+}
+
+/* menu do painel ACP: o "modelo" e' o agente (um comando), e embaixo os
+   modelos que o proprio agente anunciou ao abrir a sessao (session/set_model,
+   provado no Gemini). Trocar de agente e' sessao nova - o id pertence ao outro. */
+function pintarMenuAcp(P, m) {
+  m.appendChild(tituloPopup('Agente ACP'));
+  m.appendChild(subPopup('Qual programa este painel roda. Todos falam o mesmo protocolo; trocar leva a conversa junto.'));
+  const trocarAgente = async (cmd) => {
+    if (!cmd || cmd === P.model) return;   // mesmo agente: nada a trocar
+    const antigo = modeloAtual(P).nome;
+    const contexto = P.hist.length ? montarContexto(P) : null;
+    await window.api.paneStop({ paneId: P.id, engine: P.engine });
+    if (P.morto) return;
+    destravarPainel(P);
+    // o painel vai reiniciar: o microfone nao pode continuar ligado sozinho
+    if (P.pararGravacao) { try { P.pararGravacao(); } catch {} }
+    P.model = cmd; fillModels(P);
+    // mesma limpeza da troca de motor: a sessao, o contexto medido e o rastro
+    // do turno eram do agente anterior
+    P.resumeId = null; P.sessaoId = null; P.sessaoFile = ''; P.resumeAnterior = null;
+    P.acpInfo = null; P.acpModelos = null; P.acpModeloAtual = ''; P.acpComandos = null;
+    P.tokens = 0; P.janela = 0; pintarTokens(P);
+    P.blocks.clear(); esquecerPassos(P);
+    limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false;
+    P.started = false; setDot(P, 'off');
+    P.passarContexto = contexto;
+    savePanes();
+    marcaTroca(P, antigo, modeloAtual(P).nome);
+  };
+  for (const mo of modelosDe(P)) {
+    m.appendChild(elItem({ nome: mo.nome, desc: mo.desc, on: mo.id === P.model }, () => { if (mo.id !== P.model) trocarAgente(mo.id); }));
+  }
+  const cx = document.createElement('div');
+  cx.className = 'menu-cmd';
+  const inp = document.createElement('input');
+  inp.className = 'menu-search';
+  inp.placeholder = 'Outro comando… (ex.: meu-agente --acp) e Enter';
+  inp.addEventListener('click', (e) => e.stopPropagation());
+  inp.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') e.stopPropagation();   // o Esc continua fechando o menu
+    if (e.key === 'Enter') { const v = inp.value.trim(); if (v) { fecharMenus(); trocarAgente(v); } }
+  });
+  cx.appendChild(inp);
+  m.appendChild(cx);
+  const modelos = P.acpModelos || [];
+  if (modelos.length) {
+    m.appendChild(elLinha());
+    m.appendChild(elSecao('Modelo do agente'));
+    for (const mo of modelos) {
+      m.appendChild(elItem({ nome: mo.nome || mo.id, desc: mo.desc || '', on: mo.id === P.acpModeloAtual }, async () => {
+        const r = await window.api.acpConfig({ paneId: P.id, modelo: mo.id });
+        if (r && r.ok) { P.acpModeloAtual = mo.id; note(P, 'Modelo do agente: ' + (mo.nome || mo.id)); }
+        else note(P, (r && r.error) || 'Não deu para trocar o modelo.', true);
+      }));
+    }
+  }
+  const info = P.acpInfo;
+  if (info && info.agente) {
+    m.appendChild(elLinha());
+    m.appendChild(subPopup('Ligado: ' + info.agente + (info.versao ? ' ' + info.versao : '') + (info.modoAtual ? ' · modo: ' + nomeDoModoAcp(info.modoAtual) : '')));
   }
 }
 
@@ -3161,9 +4438,15 @@ function menuAnexo(P) {
     { ic: 'image', nome: 'Enviar imagem', desc: 'png, jpg, webp', act: 'image' },
     { ic: 'folder', nome: 'Adicionar pasta', desc: 'manda o caminho da pasta', act: 'folder' },
     { ic: 'map-pin', nome: 'Pasta deste painel', desc: shortPath(P.cwd), act: 'cwd' },
+    { ic: 'image', nome: 'Recortar a tela', desc: 'esconde o Cockpit, você arrasta o pedaço (Ctrl+Alt+R de qualquer lugar, se ligado nos Ajustes)', act: 'recorte' },
+    { ic: 'image', nome: 'Fotografar', desc: 'pela webcam: rascunho no papel, quadro físico (o celular aparece se estiver como câmera)', act: 'foto' },
+    { ic: 'pencil', nome: 'Desenhar no quadro', desc: 'quadro branco (Excalidraw) aqui dentro: arquitetura, fluxo, tela — vira imagem no prompt', act: 'quadro' },
   ];
   for (const i of itens) m.appendChild(elItem(i, async () => {
     if (i.act === 'cwd') return inserirNoInput(P, P.cwd);
+    if (i.act === 'recorte') return recortarTela(P);
+    if (i.act === 'foto') return fotografar(P);
+    if (i.act === 'quadro') return abrirQuadro(P);
     const files = await window.api.pickFiles(i.act);
     if (files && files.length) {
       if (i.act === 'folder') inserirNoInput(P, files.join(' '));
@@ -3173,6 +4456,16 @@ function menuAnexo(P) {
 }
 
 /* ---- menu do / (ações, modelo e comandos) ---- */
+/* Etiqueta de escopo na lista de skills.
+   So' aparece no que FOGE do normal: quase tudo e' "pessoal" (315 de 316 aqui),
+   e etiquetar todas so' encheria a lista de ruido. Skill que vem da PASTA do
+   projeto, essa sim muda conforme o painel - e por isso ganha etiqueta. */
+const ESCOPO_PT = { project: 'do projeto', workspace: 'do projeto', plugin: 'plugin', builtin: 'nativa', system: 'sistema' };
+function etiquetaSkill(sk) {
+  if (!sk || sk.source !== 'native') return '';
+  return ESCOPO_PT[String(sk.scope || '').toLowerCase()] || '';
+}
+
 async function menuSkills(P, filtroInicial, focar) {
   const m = novoMenu(P);
   m.appendChild(tituloPopup('Ações e comandos'));
@@ -3195,20 +4488,34 @@ async function menuSkills(P, filtroInicial, focar) {
       await window.api.liberacoes({ paneId: P.id, limpar: true });
       note(P, 'Pronto: volto a perguntar antes de usar qualquer ferramenta.');
     } },
-    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: P.engine === 'codex' ? 'Codex' : 'Claude', desc: 'continua a mesma conversa com o outro', act: () => trocarMotor(P, P.engine === 'codex' ? 'claude' : 'codex') },
+    { sec: 'Modelo', ic: 'arrow-left-right', nome: 'Trocar de motor', tag: nomeDoMotor(P.engine), desc: 'continua a mesma conversa com outro', act: () => menuMotores(P) },
     { sec: 'Painel', ic: 'folder-open', nome: 'Trocar a pasta deste painel', tag: nomePasta(P.cwd), act: () => $('.p-cwd', P.el).click() },
-    { sec: 'Painel', ic: 'plus', nome: 'Abrir outro painel ao lado', act: () => { if (totalDePaineis() < 12) newPane({ engine: P.engine, cwd: P.cwd }); } },
+    { sec: 'Painel', ic: 'plus', nome: 'Abrir outro painel ao lado', act: () => { if (cabeMaisPainel()) newPane({ engine: P.engine, cwd: P.cwd }); } },
+    { sec: 'Painel', ic: 'pencil', nome: 'Quadro branco', tag: (P.quadroCena || P.quadroArquivo) ? 'com desenho' : '', desc: 'desenhar e mandar como imagem (Excalidraw embutido)', act: () => abrirQuadro(P) },
     { sec: 'Painel', ic: 'arrow-left-right', nome: 'Continuar em outro painel', desc: 'leva o assunto pra um painel novo, sem mexer neste', act: () => ramificar(P) },
+    { sec: 'Painel', ic: 'folder-open', nome: P.worktree ? 'Sair do worktree "' + P.worktree + '"' : 'Abrir em worktree…', tag: P.worktree ? '⎇' : '',
+      desc: P.worktree ? 'volta a trabalhar na pasta principal do painel' : 'branch isolada (worktree-<nome>) em .claude/worktrees: experimenta sem sujar a branch (só Claude)', act: () => alternarWorktree(P) },
+    { sec: 'Prompts', ic: 'star', nome: 'Salvar o texto do campo como prompt…', desc: 'pra reaproveitar pedidos longos (fica em ~/.claude/cockpit-prompts.json)', act: () => salvarPromptDoCampo(P) },
+    { sec: 'Prompts', ic: 'eraser', nome: 'Apagar um prompt salvo…', act: () => apagarPromptSalvo(P) },
     { sec: 'Conectores', ic: 'plug', nome: 'conectores', desc: 'ver, reconectar ou adicionar um conector', act: () => janelaConectores(P) },
     { sec: 'Painel', ic: 'terminal', nome: 'terminal', desc: 'rodar comandos aqui dentro, sem abrir o Terminal do sistema', act: () => janelaTerminal(P, linhaShell(P.cwd, remotoDoPane(P)), 'Terminal — ' + (remotoDoPane(P) ? nomeCurtoDaAba(abaPorId(P.abaId)) : nomePasta(P.cwd))) },
     { sec: 'Conta', ic: 'arrow-left-right', nome: 'Trocar de conta', desc: 'alternar entre as contas já guardadas, sem sair desta conversa', act: () => menuContas(P.engine, ancoraDoPainel(P), null) },
-    { sec: 'Conta', ic: 'key-round', nome: 'login', desc: 'entrar com outra conta ' + (P.engine === 'codex' ? 'do Codex' : 'do Claude'), act: () => contaAcao(P, 'login') },
+    { sec: 'Conta', ic: 'key-round', nome: 'login', desc: 'entrar com outra conta do ' + nomeDoMotor(P.engine), act: () => contaAcao(P, 'login') },
     { sec: 'Conta', ic: 'log-out', nome: 'logout', desc: 'sair da conta atual', act: () => contaAcao(P, 'logout') },
     { sec: 'Conta', ic: 'user', nome: 'conta', desc: 'quem está entrado e quanto do limite já foi', act: () => janelaConta(P) },
   ];
 
   let skills = [];
+  let prompts = [];
   const pintar = (f) => {
+    /* as skills do Codex chegam DEPOIS (o menu abre na hora e se completa
+       sozinho). Sem guardar quem estava marcado, esse repintar apagava a
+       selecao e o Enter disparava o primeiro item da lista, nao o escolhido.
+       Guarda o TEXTO, nao a posicao: com outro filtro a lista muda inteira, e
+       remarcar "a linha 3" apontaria pra uma acao que nao tem nada a ver -
+       um Enter ali chamaria logout, ou limparia a tela. */
+    const marcadoEl = corpo.querySelector('.mi.sel');
+    const marcado = marcadoEl ? marcadoEl.textContent : null;
     corpo.innerHTML = '';
     const q = (f || '').toLowerCase().replace(/^\//, '');
     let secAtual = '';
@@ -3224,16 +4531,31 @@ async function menuSkills(P, filtroInicial, focar) {
     // quem bate no nome vem antes de quem so bate na descricao
     const porNome = skills.filter(sk => q && sk.name.toLowerCase().includes(q));
     const porDesc = q ? skills.filter(sk => !sk.name.toLowerCase().includes(q) && (sk.desc || '').toLowerCase().includes(q)) : skills;
+    // prompts salvos: filtram pelo nome e pelo comeco do texto, e entram no campo
+    const promptsVis = prompts.filter((p) => !q || String(p.nome || '').toLowerCase().includes(q) || String(p.texto || '').toLowerCase().includes(q)).slice(0, 40);
+    if (promptsVis.length) {
+      corpo.appendChild(elSecao('Prompts salvos (' + prompts.length + ')'));
+      for (const p of promptsVis) corpo.appendChild(elItem({ ic: 'star', nome: p.nome, desc: String(p.texto || '').replace(/\s+/g, ' ').slice(0, 90) }, () => {
+        const inp = $('.p-input', P.el);
+        if (inp.value.startsWith('/') && !inp.value.includes(' ')) inp.value = '';
+        inserirNoInput(P, p.texto);
+      }));
+    }
     const vis = (q ? [...porNome, ...porDesc] : skills).slice(0, 150);
     if (vis.length) {
       corpo.appendChild(elSecao('Comandos e skills' + (skills.length ? ' (' + skills.length + ')' : '')));
-      for (const sk of vis) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc }, () => {
+      for (const sk of vis) corpo.appendChild(elItem({ ic: '/', nome: sk.name, desc: sk.desc, tag: etiquetaSkill(sk) }, () => {
         const inp = $('.p-input', P.el);
         if (inp.value.startsWith('/') && !inp.value.includes(' ')) inp.value = '';
         inserirNoInput(P, '/' + sk.name);
       }));
     } else if (!corpo.children.length) {
       corpo.innerHTML = '<div class="menu-empty">Nada encontrado.</div>';
+    }
+    if (marcado != null) {
+      const volta = [...corpo.querySelectorAll('.mi')].find((x) => x.textContent === marcado);
+      // nao achou o mesmo item: fica sem selecao, que e' melhor do que marcar outro
+      if (volta) { volta.classList.add('sel'); volta.scrollIntoView({ block: 'nearest' }); }
     }
   };
   busca.value = filtroInicial || '';
@@ -3256,7 +4578,11 @@ async function menuSkills(P, filtroInicial, focar) {
     }
   });
   if (filtroInicial === undefined || focar) setTimeout(() => { busca.focus(); busca.setSelectionRange(busca.value.length, busca.value.length); }, 30);
-  skills = (await window.api.skills(P.engine)) || [];
+  [skills, prompts] = await Promise.all([
+    // a pasta vai junto: no Codex as skills mudam conforme o projeto do painel
+    window.api.skills({ engine: P.engine, paneId: P.id, cwd: P.cwd }).then((s) => s || []).catch(() => []),
+    window.api.promptsLer().then((p) => p || []).catch(() => []),
+  ]);
   pintar(busca.value);
 }
 
@@ -3268,7 +4594,7 @@ async function menuSkills(P, filtroInicial, focar) {
    - reseta: quando a semana (ou a sessao) vira, a dispensa antiga morre junto.
      Sem isso, dispensar em 100% calava o aviso na semana seguinte inteira. */
 const avisosFechados = new Map();
-function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta }) {
+function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta, aoFechar }) {
   const caixa = $('#avisos');
   if (!caixa) return;
   // dispensado antes: fica calado ate' a situacao piorar ou a janela virar
@@ -3279,8 +4605,13 @@ function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta }) 
     if (!virou && !piorou) return;
     avisosFechados.delete(id);
   }
+  if (typeof quadro !== 'undefined' && quadro) avisarNoQuadro(texto, tipo === 'erro' || tipo === 'alerta');   // a tarja fica atras do quadro
   // ja esta na tela: atualiza o texto em vez de empilhar outra tarja
-  const existente = id && $('[data-aviso="' + id + '"]', caixa);
+  /* CSS.escape (como os outros dois call sites ja' fazem): o id vem de dado
+     real. O das rotinas e' caminho + nome -- 'rotina-\BackupVPSHostinger' -- e
+     dentro de um seletor CSS o '\B' vira 'B': o seletor nao casava com nada e
+     disparar 3x empilhava 3 tarjas em vez de atualizar uma. */
+  const existente = id && $('[data-aviso="' + CSS.escape(id) + '"]', caixa);
   if (existente) {
     const t = $('.avi-txt', existente);
     if (t) t.textContent = texto;
@@ -3290,12 +4621,25 @@ function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta }) 
     const ic = $('.av-ic', existente);
     if (ic) ic.innerHTML = ico(tipo === 'alerta' ? 'circle-help' : tipo === 'erro' ? 'x' : 'circle');
     // se agora tem acao e antes nao tinha, o botao precisa aparecer
-    if (acao && !$('.avi-acao', existente)) {
-      const bt = document.createElement('button');
+    // o texto novo vem com acao nova: "usar" e o X tem que apontar pra ESTA chamada
+    const btAntigo = $('.avi-acao', existente);
+    if (acao) {
+      const bt = btAntigo || document.createElement('button');
       bt.className = 'avi-acao';
       bt.textContent = acao;
       bt.onclick = () => { try { aoClicar && aoClicar(); } catch {} existente.remove(); };
-      existente.insertBefore(bt, $('.avi-x', existente));
+      if (!btAntigo) existente.insertBefore(bt, $('.avi-x', existente));
+    } else if (btAntigo) btAntigo.remove();
+    const xAntigo = $('.avi-x', existente);
+    if (xAntigo) xAntigo.onclick = () => { if (id) avisosFechados.set(id, { nivel: existente.dataset.nivel !== undefined ? Number(existente.dataset.nivel) : 0, reseta: existente.dataset.reseta !== undefined ? Number(existente.dataset.reseta) : 0 }); existente.remove(); if (aoFechar) { try { aoFechar(); } catch {} } };
+    // aviso repetido (o do agente repete): o prazo de 20s recomeca, senao o
+    // timer do primeiro apagava o segundo poucos segundos depois de aparecer
+    if (!fixo) {
+      clearTimeout(existente._t);
+      existente._t = setTimeout(() => {
+        if (id) avisosFechados.set(id, { nivel: existente.dataset.nivel !== undefined ? Number(existente.dataset.nivel) : 0, reseta: existente.dataset.reseta !== undefined ? Number(existente.dataset.reseta) : 0 });
+        existente.remove();
+      }, 20000);
     }
     return;
   }
@@ -3320,17 +4664,17 @@ function mostrarAviso({ id, texto, tipo, acao, aoClicar, fixo, nivel, reseta }) 
     nivel: d.dataset.nivel !== undefined ? Number(d.dataset.nivel) : 0,
     reseta: d.dataset.reseta !== undefined ? Number(d.dataset.reseta) : 0,
   });
-  $('.avi-x', d).onclick = () => { if (id) avisosFechados.set(id, comoEsta()); d.remove(); };
+  $('.avi-x', d).onclick = () => { if (id) avisosFechados.set(id, comoEsta()); d.remove(); if (aoFechar) { try { aoFechar(); } catch {} } };
   caixa.appendChild(d);
   // some sozinho, mas NAO cala pra sempre: se o limite subir, avisa de novo
-  if (!fixo) setTimeout(() => { if (id) avisosFechados.set(id, comoEsta()); d.remove(); }, 20000);
+  if (!fixo) d._t = setTimeout(() => { if (id) avisosFechados.set(id, comoEsta()); d.remove(); }, 20000);
 }
 
 /* avisa quando o limite de uso esta perto do fim - o dado ja existia, so'
    nao chegava ate voce a nao ser que abrisse a lista de conversas */
 function checarLimite(engine, c) {
   if (!c || !c.entrou) return;
-  const nome = engine === 'codex' ? 'Codex' : 'Claude';
+  const nome = nomeDoMotor(engine);
   const sem = c.semana && c.semana.pct;
   const ses = c.sessao && c.sessao.pct;
   if (sem >= 80) {
@@ -3352,19 +4696,46 @@ function checarLimite(engine, c) {
   }
 }
 
+/* O botao "Entrar no X" do topo da coluna chamava contaAcao(focusPane) -- o
+   motor do PAINEL EM FOCO, nao o da coluna. Com um painel do Gemini aberto,
+   clicar em "Entrar no Grok" rodava o login do Gemini. Agora o login e' sempre
+   do motor da coluna, e sem painel dele a tela diz isso em vez de errar calada. */
+function entrarNaConta(engine) {
+  const P = (focusPane && focusPane.engine === engine)
+    ? focusPane
+    : [...panes.values()].find((q) => q.engine === engine && !q.morto);
+  if (P) { setFocus(P); contaAcao(P, 'login'); return; }
+  const recado = 'Abra um painel do ' + nomeDoMotor(engine) + ' para entrar na conta dele.';
+  if (focusPane) { note(focusPane, recado, true); return; }
+  const box = caixaDoMotor('hist', engine);
+  if (box) {
+    box.innerHTML = '';
+    const d = document.createElement('div');
+    d.className = 'hist-load';
+    d.textContent = recado;
+    box.appendChild(d);
+  }
+}
+
 /* ---- cartao da conta, no topo da lista de conversas ---- */
 async function pintarCartaoConta(engine) {
-  const alvo = $(engine === 'claude' ? '#contaClaude' : '#contaCodex');
+  const alvo = caixaDoMotor('conta', engine);
   if (!alvo) return;
   // ler a conta demora (o do Claude tem prazo de 25s): se outra pintura comecar
   // no meio, esta aqui desiste em vez de empilhar botao repetido
   const geracao = (alvo._geracao = (alvo._geracao || 0) + 1);
+  if (engine === 'acp') {
+    // a conta e' do programa que cada painel escolher: nao ha' o que entrar ou trocar aqui
+    alvo.innerHTML = '<div class="ct-fixo"></div>';
+    $('.ct-fixo', alvo).textContent = 'A conta é a do próprio agente (Gemini, Claude Code, Codex…), a mesma que ele usa no terminal.';
+    return;
+  }
   let c = null;
   try { c = await window.api.contaLer(engine); } catch {}
   if (geracao !== alvo._geracao) return;
   if (!c || !c.entrou) {
-    alvo.innerHTML = '<button class="ct-entrar">Entrar no ' + (engine === 'codex' ? 'Codex' : 'Claude') + '</button>';
-    $('.ct-entrar', alvo).onclick = () => { if (focusPane) contaAcao(focusPane, 'login'); };
+    alvo.innerHTML = '<button class="ct-entrar">Entrar no ' + (nomeDoMotor(engine)) + '</button>';
+    $('.ct-entrar', alvo).onclick = () => entrarNaConta(engine);
     // tem conta guardada? entao da' pra voltar pra ela sem refazer login
     try {
       const gs = await window.api.contasListar(engine) || [];
@@ -3387,7 +4758,7 @@ async function pintarCartaoConta(engine) {
     + '<span class="ct-info"><span class="ct-email"></span><span class="ct-plano"></span></span>'
     + '<span class="ct-seta"></span></button>';
   $('.ct-ini', alvo).textContent = inicial;
-  $('.ct-ini', alvo).style.background = engine === 'codex' ? 'var(--codex)' : 'var(--claude)';
+  $('.ct-ini', alvo).style.background = 'var(--' + engine + ')';
   $('.ct-email', alvo).textContent = email;
   $('.ct-plano', alvo).textContent = [c.plano, c.via].filter(Boolean).join(' · ') || 'conectado';
   $('.ct-seta', alvo).innerHTML = ico('chevron-down');
@@ -3402,7 +4773,7 @@ function ancoraDoPainel(P) {
 
 async function menuContas(engine, ancora, c) {
   const pop = abrirPopGlobal(ancora);
-  const nomeEngine = engine === 'codex' ? 'Codex' : 'Claude';
+  const nomeEngine = nomeDoMotor(engine);
   const item = (texto, sub, icone, aoClicar, marcado) => {
     const d = document.createElement('div');
     d.className = 'mi' + (marcado ? ' on' : '');
@@ -3538,6 +4909,36 @@ async function menuContas(engine, ancora, c) {
 
 /* ---- completar caminho de arquivo com "@" ---- */
 let buscaArqTimer = 0;
+/* Geracao da busca. No servidor a resposta demora e pode chegar DEPOIS da tecla
+   seguinte -- sem isto a lista velha pintava por cima da nova. */
+let buscaArqGen = 0;
+/* Tirou o "@" do campo: a busca que ainda estava voltando do servidor nao pode
+   abrir o menu segundos depois. No local a busca e' instantanea e o caminho
+   segue exatamente como antes (esta funcao nao faz nada). */
+/* Para a busca de arquivo do "@" que ainda esta' em voo. Vale nos DOIS ramos:
+   o temporizador e' de 140 ms no disco e de 450 ms no servidor, e nos dois ele
+   pode acordar depois de o campo ter sido limpo -- ai o menu de arquivos abre
+   sozinho por cima do que ja' esta' acontecendo na tela. */
+/* O miolo do cancelamento, sem tocar na tela. Separado de proposito: o
+   pararBuscaDeArquivos fecha menu, e fechar menu chama o cancelamento de volta
+   -- em circulo. O fecharMenus usa ESTE. */
+function pararBuscaEmVoo() {
+  clearTimeout(buscaArqTimer);
+  buscaArqGen++;
+}
+function pararBuscaDeArquivos(P) {
+  if (!P) return;
+  pararBuscaEmVoo();
+  // o "procurando…" pode ja' estar na tela: some junto, senao ficava pra sempre
+  if ($('.menu-arquivos', P.el)) fecharMenus();
+}
+/* Chamado pelo ouvinte de 'input' quando o "@" some do texto. No ramo local
+   quem fecha o menu e' o proprio call site, entao aqui ele segue sem efeito -
+   o comportamento no disco continua byte por byte o de sempre. */
+function cancelarBuscaArquivos(P) {
+  if (!P || !remotoDoPane(P)) return;
+  pararBuscaDeArquivos(P);
+}
 /* solta o atalho de setas do menu de arquivos. Se ficar preso, ele engole o
    Enter do campo e a mensagem nunca e' enviada. */
 function soltarNavArquivos(P) {
@@ -3546,13 +4947,51 @@ function soltarNavArquivos(P) {
   }
   if (P) { P._navArq = null; P._navArqInp = null; }
 }
+/* Uma caixinha de "Arquivos" so' com um recado dentro (procurando / deu erro).
+   Vale so' pro ramo remoto: no local a lista chega antes de dar tempo de ler. */
+function recadoDeArquivos(P, texto, ehErro) {
+  const m = novoMenu(P);
+  m.classList.add('menu-arquivos');
+  m.appendChild(tituloPopup('Arquivos'));
+  const s = subPopup(texto);
+  if (ehErro) s.classList.add('erro');
+  m.appendChild(s);
+}
+/* A janelinha do painel (.p-modal) e' UMA so': o terminal do "Entrar na
+   conta", os conectores, a conta e o diff do git moram nela tambem. Uma
+   resposta atrasada da busca so' pode escrever ali se a janelinha estiver
+   fechada ou se ainda for o menu ('como-menu'). Sem esta conferencia ela
+   apagava o conteudo de quem tinha ocupado o lugar no meio-tempo. */
+function janelinhaOcupada(P) {
+  const m = P && P.el && $('.p-modal', P.el);
+  if (!m || !m.classList) return false;
+  if (m.classList.contains('hidden')) return false;
+  return !m.classList.contains('como-menu');
+}
 async function menuArquivos(P, termo, posArroba) {
   const remoto = remotoDoPane(P);
-  if (remoto) return;   // painel remoto: a busca teria que ir por SSH, fica pra depois
   clearTimeout(buscaArqTimer);
+  const meuGen = ++buscaArqGen;
   buscaArqTimer = setTimeout(async () => {
-    let itens = [];
-    try { itens = await window.api.buscarArquivos({ cwd: P.cwd, termo }) || []; } catch {}
+    if (meuGen !== buscaArqGen) return;
+    if (janelinhaOcupada(P)) return;   // a janelinha virou terminal/conta/diff: nao e' mais nossa
+    // aba de servidor em branco: sem isso o pedido cairia no disco DESTE PC calado
+    if (faltaConfigurarServidor(remoto)) { recadoDeArquivos(P, AVISO_ABA_EM_BRANCO, true); return; }
+    // no servidor a ida e volta demora: avisa que esta procurando, senao parece travado
+    if (remoto) recadoDeArquivos(P, 'Procurando em ' + (remoto.usuario || '') + '@' + (remoto.host || '') + '…');
+    let itens = [], erro = '';
+    try {
+      const r = await window.api.buscarArquivos({ cwd: P.cwd, termo, remoto: remoto || undefined });
+      /* As DUAS formas, de proposito: o ramo LOCAL devolve a lista crua (como
+         sempre) e o REMOTO devolve { itens, error } -- porque falha de rede nao
+         pode virar "essa pasta nao tem arquivo nenhum". */
+      if (Array.isArray(r)) itens = r;
+      else if (r && typeof r === 'object') { itens = Array.isArray(r.itens) ? r.itens : []; erro = r.error || ''; }
+    } catch (e) { erro = 'Não consegui buscar os arquivos: ' + ((e && e.message) || e); }
+    if (meuGen !== buscaArqGen) return;   // outra tecla ja' pediu uma busca mais nova
+    if (janelinhaOcupada(P)) return;      // enquanto o SSH voltava, a janelinha virou outra coisa
+    // rede fora aparece como MOTIVO no lugar da lista; fechar calado parecia travamento
+    if (erro) { recadoDeArquivos(P, erro, true); return; }
     if (!itens.length) { if ($('.menu-arquivos', P.el)) fecharMenus(); return; }
     const m = novoMenu(P);
     m.classList.add('menu-arquivos');
@@ -3604,7 +5043,9 @@ async function menuArquivos(P, termo, posArroba) {
     };
     P._navArq = nav; P._navArqInp = inp;
     inp.addEventListener('keydown', nav, true);
-  }, 140);
+    // 140 ms e' o tempo de varrer um disco; por SSH cada tecla viraria uma
+    // conexao, entao no remoto a espera sobe e a tela avisa que esta procurando
+  }, remoto ? 450 : 140);
 }
 
 /* ---- buscar dentro da conversa aberta (Ctrl+F) ---- */
@@ -3700,6 +5141,7 @@ function irAtePainel(P) {
 }
 
 function painelVisivel(P) {
+  if (quadro) return false;   // o quadro cobre a tela inteira: todo painel esta' fora de vista
   try {
     const r = P.el.getBoundingClientRect();
     const caixa = $('#panes').getBoundingClientRect();
@@ -3741,6 +5183,7 @@ function pintarTarjaAviso() {
   $('.av-x', tarja).innerHTML = ico('x');
   tarja.classList.add('ver');
   $('.av-ir', tarja).onclick = () => {
+    if (quadro) fecharQuadro();   // o quadro cobre tudo: fecha antes de levar ate' o painel
     const alvo = [...tarja._itens.values()][0];
     if (alvo) {
       tarja._itens.delete(alvo.P.id);
@@ -3780,8 +5223,14 @@ async function atualizarGit(P) {
   if (!chip) return;
   if (remotoDoPane(P)) { chip.classList.add('hidden'); return; }
   let g = null;
-  try { g = await window.api.gitStatus({ cwd: P.cwd }); } catch {}
-  if (!g || !g.branch) { chip.classList.add('hidden'); return; }
+  // no worktree o chip mostra a branch isolada (a pasta nasce na 1a mensagem)
+  const pastaGit = P.worktree ? P.cwd.replace(/[\\/]+$/, '') + '/.claude/worktrees/' + P.worktree : P.cwd;
+  try { g = await window.api.gitStatus({ cwd: pastaGit }); } catch {}
+  if (!g || !g.branch) {
+    if (P.worktree) { chip.classList.remove('hidden'); chip.textContent = '⎇ ' + P.worktree + ' (a criar)'; chip.title = 'O worktree nasce na primeira mensagem'; chip.onclick = null; }
+    else chip.classList.add('hidden');
+    return;
+  }
   chip.classList.remove('hidden');
   const n = (g.arquivos || []).length;
   chip.textContent = g.branch + (n ? '  ±' + n : '');
@@ -3837,11 +5286,29 @@ const nomeLimpo = (n) => String(n || '').replace(/^claude\.ai\s+/i, '').replace(
 function fecharTerminalDoPainel(P) {
   if (P && P._fecharTerm) { const f = P._fecharTerm; P._fecharTerm = null; f(); }
 }
+
+/* Fecha o terminal do painel SEM avisar quem o abriu.
+   O "aoFechar" existe pra reagir ao fim do trabalho (religar na conta nova,
+   voltar pra lista de conectores). Quando so' estamos dando lugar a um terminal
+   NOVO, disparar isso apaga a janelinha recem-criada e ainda escreve na tela que
+   a conta foi trocada -- sem login nenhum ter acontecido. */
+function fecharTerminalEmSilencio(P) {
+  if (!P || !P._fecharTerm) return;
+  const f = P._fecharTerm; P._fecharTerm = null;
+  P._semAvisar = true;
+  try { f(); } finally { P._semAvisar = false; }
+}
 function fecharModal(P) {
   // matar o terminal e' decisao de quem fecha, nao efeito colateral de esconder
   // a caixa: o Esc global fecha a caixa de TODOS os paineis de uma vez
   const m = $('.p-modal', P.el);
   m.classList.add('hidden'); $('.modal-cx', m).innerHTML = '';
+}
+
+/* texto de fora (nome de App, recado de erro da API) nunca entra cru no HTML */
+function escHtml(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
 async function janelaConectores(P) {
@@ -3853,7 +5320,7 @@ async function janelaConectores(P) {
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
 
-  const motor = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(P.engine);
   const cabeca = () =>
     '<div class="mo-top"><span class="mo-tit">Conectores</span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">Serviços ligados ao ' + motor + ' neste ' + ESTE_PC + '.</div>';
@@ -3861,12 +5328,71 @@ async function janelaConectores(P) {
   cx.innerHTML = cabeca() + '<div class="mo-carregando">Verificando conectores…</div>';
   $('.mo-x', cx).onclick = () => fecharModal(P);
 
-  const lista = await window.api.mcpList(P.engine);
+  /* No Codex sao DUAS coisas diferentes na mesma tela: os Apps do ChatGPT (que
+     vivem na conta e valem em qualquer maquina) e os conectores MCP que rodam
+     aqui no PC. As duas chamadas vao juntas pra tela nao abrir em dois tempos. */
+  const [lista, appsR] = await Promise.all([
+    window.api.mcpList(P.engine),
+    P.engine === 'codex' && window.api.codexApps
+      ? window.api.codexApps().catch(() => null)
+      : Promise.resolve(null),
+  ]);
   if (!modal || modal.classList.contains('hidden')) return;
 
+  const apps = (appsR && Array.isArray(appsR.apps)) ? appsR.apps : [];
+  const blocoApps = () => {
+    if (!appsR) return '';
+    const cabecaApps = '<div class="mo-sec">Apps do ChatGPT<span class="mo-sec-d">valem na sua conta, em qualquer computador</span></div>';
+    if (appsR.error) return cabecaApps + '<div class="mo-erro">' + escHtml(appsR.error) + '</div>';
+    if (!apps.length) return cabecaApps + '<div class="mo-carregando">Nenhum App por enquanto.</div>';
+    const linhas = apps.map((a, i) => {
+      /* amarelo e' "precisa de voce" (a lista de MCP usa a mesma cor pra
+         "precisa entrar"): App desligado de proposito e' cinza, nao amarelo */
+      /* amarelo so' quando ha' o que voce possa fazer (como "precisa entrar" na
+         lista de MCP). App ligado que simplesmente nao expoe ferramenta nenhuma
+         nao e' problema seu: fica cinza, com o texto explicando. */
+      const classe = a.chamavel ? 'ok' : 'off';
+      // sem acesso na conta, "Instalar" so' leva a uma pagina que nao resolve
+      const podeInstalar = a.acessivel && !a.instalado && a.installUrl;
+      return '<div class="co ap" data-i="' + i + '">'
+        + '<span class="co-pt ' + classe + '"></span>'
+        + '<span class="co-txt"><span class="co-n"></span><span class="co-s"></span></span>'
+        + (podeInstalar ? '<button class="co-bt destaque" data-ac="instalar">Instalar</button>' : '')
+        + '</div>';
+    }).join('');
+    return cabecaApps
+      + (appsR.aviso ? '<div class="mo-dica">' + escHtml(appsR.aviso) + '</div>' : '')
+      + '<div class="mo-lista">' + linhas + '</div>';
+  };
+  const ligarApps = () => {
+    $$('.co.ap', cx).forEach((el) => {
+      const a = apps[Number(el.dataset.i)];
+      if (!a) return;
+      $('.co-n', el).textContent = a.nome;
+      $('.co-s', el).textContent = a.status;
+      el.title = a.desc || a.nome;
+      const bt = $('.co-bt', el);
+      if (bt) bt.onclick = () => window.api.abrirLink(a.installUrl);
+    });
+  };
+
   if (lista && lista.error) {
-    cx.innerHTML = cabeca() + '<div class="mo-erro">' + lista.error + '</div>';
+    /* o erro dos conectores locais nao pode apagar os Apps que carregaram bem,
+       nem sumir com o rodape - senao a tela fica sem "Atualizar" e sem saida.
+       E o texto vem de fora (mensagem do CLI): entra escapado. */
+    cx.innerHTML = cabeca()
+      + blocoApps()
+      + (appsR ? '<div class="mo-sec">Conectores deste ' + ESTE_PC + '<span class="mo-sec-d">MCP instalados aqui</span></div>' : '')
+      + '<div class="mo-erro">' + escHtml(lista.error) + '</div>'
+      /* "Adicionar conector" fica MESMO no erro: quando a lista falha por nao
+         haver nada configurado, adicionar e' justamente o que resolve - sem o
+         botao o "Atualizar" so' repete o mesmo erro, em circulo */
+      + '<div class="mo-rodape"><button class="mo-btn destaque" id="btAdd">Adicionar conector</button>'
+      + '<button class="mo-btn" id="btRe">Atualizar</button></div>';
     $('.mo-x', cx).onclick = () => fecharModal(P);
+    ligarApps();
+    $('#btRe', cx).onclick = () => janelaConectores(P);
+    $('#btAdd', cx).onclick = () => formConector(P);
     return;
   }
 
@@ -3882,11 +5408,16 @@ async function janelaConectores(P) {
         + '</div>';
     }).join('');
     cx.innerHTML = cabeca()
+      + blocoApps()
+      + (appsR ? '<div class="mo-sec">Conectores deste ' + ESTE_PC + '<span class="mo-sec-d">MCP instalados aqui</span></div>' : '')
       + '<div class="mo-lista">' + (linhas || '<div class="mo-carregando">Nenhum conector ainda.</div>') + '</div>'
       + '<div class="mo-rodape"><button class="mo-btn destaque" id="btAdd">Adicionar conector</button>'
       + '<button class="mo-btn" id="btRe">Atualizar</button></div>';
     $('.mo-x', cx).onclick = () => fecharModal(P);
-    $$('.co', cx).forEach((el) => {
+    ligarApps();
+    // ":not(.ap)" e' essencial: sem isso as linhas dos Apps entravam neste laco
+    // e o data-i delas apontava pro conector MCP errado
+    $$('.co:not(.ap)', cx).forEach((el) => {
       const c = arr[Number(el.dataset.i)];
       $('.co-n', el).textContent = nomeLimpo(c.nome);
       $('.co-s', el).textContent = c.precisaEntrar ? 'precisa entrar' : c.status;
@@ -3909,7 +5440,7 @@ async function janelaConectores(P) {
 
 function formConector(P) {
   const cx = $('.p-modal .modal-cx', P.el);
-  const motor = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(P.engine);
   cx.innerHTML =
     '<div class="mo-top"><span class="mo-tit">Adicionar conector</span><button class="mo-x">' + ico('x') + '</button></div>'
     + '<div class="mo-sub">Cole o endereço que o serviço te deu. Se for um programa que roda aqui no ' + ESTE_PC + ', use o campo de baixo.</div>'
@@ -3938,7 +5469,7 @@ function formConector(P) {
     avisoTemp(P, 'Conector "' + nome + '" adicionado. Vale na próxima conversa deste painel.');
     await window.api.paneStop({ paneId: P.id, engine: P.engine });
     if (P.morto) return;
-    if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+    guardarConversaPraVoltar(P);
     destravarPainel(P);   // era o unico paneStop do renderer que faltava
     P.started = false; setDot(P, 'off');
   };
@@ -3957,8 +5488,19 @@ function linhaShell(cwd, remoto) {
     const cd = p === '~' ? 'cd ~'
       : p.startsWith('~/') ? "cd ~/'" + escapa(p.slice(2)) + "'"
       : "cd '" + escapa(p) + "'";
+    /* host, usuario e chave vao pra uma linha que o cmd.exe executa: sem
+       conferir, um deles com aspas ou "&" roda comando LOCAL no PC em vez de
+       conectar. Nome de maquina e de usuario nao tem esses caracteres. */
+    // nao pode COMECAR com "-": o ssh leria como opcao (-o ProxyCommand=...)
+    const simples = (s) => /^[A-Za-z0-9._@:][A-Za-z0-9._@:-]*$/.test(String(s || ''));
+    if (!simples(remoto.usuario) || !simples(remoto.host)) return null;
+    const chave = String(remoto.chave || '');
+    if (/["`\r\n%]/.test(chave)) return null;   // o cmd expande %VAR% aqui tambem
+    // o caminho vai pra MESMA linha: uma aspa dupla fecha o bloco do cmd.exe e o
+    // que vier depois roda no PC, nao no servidor. E "%VAR%" o cmd expande antes.
+    if (/["`\r\n%]/.test(p)) return null;
     const alvo = remoto.usuario + '@' + remoto.host;
-    return 'ssh -t -i "' + remoto.chave + '" -o StrictHostKeyChecking=accept-new ' + alvo + ' "' + cd + ' || exit 1; exec \$SHELL -l"';
+    return 'ssh -t -i "' + chave + '" -o StrictHostKeyChecking=accept-new ' + alvo + ' "' + cd + ' || exit 1; exec \$SHELL -l"';
   }
   const ehWin = (window.api && window.api.plataforma)
     ? window.api.plataforma === 'win32'
@@ -3982,11 +5524,61 @@ window.api.onTermEvent(({ id, kind, data, code }) => {
   if (kind === 'exit') {
     t.vivo = false;
     t.term.write('\r\n\x1b[90m— terminou' + (code ? ' (código ' + code + ')' : ', tudo certo') + ' —\x1b[0m\r\n');
+    /* solta o painel. Enquanto o id continuava em P.terms, o motor era
+       considerado ocupado e NUNCA desligava -- nem no fim do turno, nem ao sair
+       da aba. Um painel esquecido assim segura o claude vivo (centenas de MB)
+       pelo resto do dia. A janela do terminal continua na tela pra leitura. */
+    for (const P of [...panes.values(), ...panesFundo.values()]) {
+      if (!P.terms || !P.terms.delete(id)) continue;
+      // lembra que este terminal foi deste painel: o closePane ainda precisa
+      // soltar o xterm, que continua na tela pra leitura
+      (P.termsMortos = P.termsMortos || new Set()).add(id);
+    }
   }
 });
 
+/* Ajusta o terminal ao tamanho real da caixa. Sem isto ele fica fixo em 92
+   colunas: com 3 paineis lado a lado, metade do texto cai fora e nao ha rolagem
+   -- inclusive o link e o codigo do "claude /login". */
+function ajustarTerminal(t, caixa) {
+  if (!t || !t.term || !caixa) return;
+  const larg = caixa.clientWidth, alt = caixa.clientHeight;
+  if (!larg || !alt) return;
+  // medida de um caractere: o xterm usa fonte monoespacada
+  const cw = (t.term._core && t.term._core._renderService && t.term._core._renderService.dimensions
+    && t.term._core._renderService.dimensions.css
+    && t.term._core._renderService.dimensions.css.cell) || null;
+  const larguraCar = (cw && cw.width) || 7.03;
+  const alturaCar = (cw && cw.height) || 17;
+  const cols = Math.max(20, Math.floor((larg - 16) / larguraCar));
+  const rows = Math.max(6, Math.floor((alt - 12) / alturaCar));
+  if (t.cols === cols && t.rows === rows) return;
+  t.cols = cols; t.rows = rows;
+  try { t.term.resize(cols, rows); } catch {}
+  try { window.api.termResize({ id: t.id, cols, rows }); } catch {}
+}
+
 function janelaTerminal(P, linha, titulo, aoFechar) {
   fecharMenus();
+
+  if (!linha) {
+    const r = remotoDoPane(P);
+    const vazio = r && (!String(r.usuario || '').trim() || !String(r.host || '').trim());
+    mostrarAviso({
+      texto: vazio
+        ? 'Esta aba ainda não tem servidor configurado — preencha usuário, host e chave em Editar aba.'
+        : 'Um dos campos desta aba (usuário, host, chave ou pasta no servidor) tem caractere que não pode entrar num comando — normalmente aspas ou %. Confira em Editar aba.',
+      tipo: 'erro',
+    });
+    return;
+  }
+  /* O terminal anterior deste painel sai AGORA, antes do novo nascer. Fechar
+     depois de montar matava o terminal NOVO: P._fecharTerm ja apontava pra ele,
+     entao o fechamento "em silencio" dava dispose no xterm recem-criado e o
+     tirava de termsVivos -- o comando ate rodava, mas nada mais chegava na tela.
+     Era isso que deixava o "Entrar na conta" com a telinha preta vazia. */
+  fecharTerminalEmSilencio(P);
+
   const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
   modal.classList.remove('hidden');
   cx.className = 'modal-cx cx-term';
@@ -4014,7 +5606,7 @@ function janelaTerminal(P, linha, titulo, aoFechar) {
 
   const elLink = $('.term-link', cx), txtLink = $('.mono', elLink);
   const reg = {
-    term, buf: '', vivo: true,
+    id, term, buf: '', vivo: true,   // sem o id, o redimensionamento nao chegava no pty
     viu(d) {
       this.buf = (this.buf + d).slice(-8000);
       const achou = this.buf.match(REG_LINK);
@@ -4029,11 +5621,13 @@ function janelaTerminal(P, linha, titulo, aoFechar) {
 
   const fechar = () => {
     P._fecharTerm = null;
+    if (reg.ro) { try { reg.ro.disconnect(); } catch {} reg.ro = null; }
     window.api.termKill({ id });
     try { term.dispose(); } catch {}
     termsVivos.delete(id);
     if (P.terms) P.terms.delete(id);
     cx.className = 'modal-cx';
+    if (P._semAvisar) return;   // so' abrindo espaco pro terminal novo
     fecharModal(P);
     aoFechar && aoFechar();
   };
@@ -4045,10 +5639,20 @@ function janelaTerminal(P, linha, titulo, aoFechar) {
   $('#tmFecha', cx).onclick = fechar;
   $('#tmCancela', cx).onclick = () => { window.api.termInput({ id, data: '\x03' }); term.focus(); };
 
-  window.api.termRun({ id, linha, cols: 92, rows: 22 }).then((r) => {
+  /* o terminal nascia fixo em 92 colunas: com 3 paineis lado a lado sumia
+     metade do texto, sem rolagem -- inclusive o codigo do "claude /login".
+     Agora ele mede a caixa antes de rodar e acompanha quando ela muda. */
+  // o antigo ja saiu la em cima, antes deste nascer
+  const caixaTerm = $('.term-wrap', cx);
+  ajustarTerminal(reg, caixaTerm);
+  if (window.ResizeObserver) {
+    reg.ro = new ResizeObserver(() => ajustarTerminal(reg, caixaTerm));
+    try { reg.ro.observe(caixaTerm); } catch {}
+  }
+  window.api.termRun({ id, linha, cols: reg.cols || 92, rows: reg.rows || 22 }).then((r) => {
     if (r && r.error) term.write('\r\n\x1b[31m[não consegui rodar: ' + r.error + ']\x1b[0m\r\n');
   });
-  setTimeout(() => term.focus(), 60);
+  setTimeout(() => { ajustarTerminal(reg, caixaTerm); term.focus(); }, 60);
 }
 
 function barraUso(titulo, j) {
@@ -4062,7 +5666,7 @@ function barraUso(titulo, j) {
     + '</div>';
 }
 async function carregarUsoSidebar(engine) {
-  const alvo = $(engine === 'claude' ? '#usoClaude' : '#usoCodex');
+  const alvo = caixaDoMotor('uso', engine);
   if (!alvo) return;
   try {
     const c = await window.api.contaLer(engine);
@@ -4082,7 +5686,7 @@ async function janelaConta(P) {
   modal.classList.remove('hidden');
   modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
   cx.onclick = (e) => e.stopPropagation();
-  const motor = P.engine === 'codex' ? 'Codex' : 'Claude';
+  const motor = nomeDoMotor(P.engine);
   const topo = '<div class="mo-top"><span class="mo-tit">Conta do ' + motor + '</span>'
     + '<button class="mo-x">' + ico('x') + '</button></div>';
   cx.innerHTML = topo + '<div class="mo-carregando">Vendo a conta e o quanto já foi usado…</div>';
@@ -4160,7 +5764,7 @@ async function contaAcao(P, acao) {
       avisoTemp(P, 'Pronto. Mande uma mensagem para o painel começar de novo com a conta certa.');
       await window.api.paneStop({ paneId: P.id, engine: P.engine });
       if (P.morto) return;
-      if (P.engine === 'claude') P.resumeId = P.sessaoId || P.resumeId;
+      guardarConversaPraVoltar(P);
       // o motor parou de proposito: 'engine-down' nao vem, entao um painel que
       // estava trabalhando ficaria travado em "trabalhando…" pra sempre
       destravarPainel(P);
@@ -4213,7 +5817,10 @@ async function anexar(P, caminhos) {
 function fichaAnexo(a, comX, aoTirar, P) {
   const d = document.createElement('div');
   d.className = 'anx' + (P ? ' clicavel' : '');
-  if (P) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path); };
+  /* ANEXO E' SEMPRE DESTE PC, mesmo com o painel rodando na VPS: ele mora em
+     userData/colados, aqui no Windows. Por isso o null e' EXPLICITO -- se um dia
+     alguem trocar por remotoDoPane(P), o preview de anexo quebra no servidor. */
+  if (P) d.onclick = (e) => { if (!e.target.closest('.anx-x')) verArquivo(P, a.path, null); };
   d.title = a.path;
   d.innerHTML = '<div class="anx-mini"></div><div class="anx-txt">'
     + '<span class="anx-n"></span><span class="anx-s"></span></div>'
@@ -4224,6 +5831,17 @@ function fichaAnexo(a, comX, aoTirar, P) {
   $('.anx-n', d).textContent = a.nome;
   $('.anx-s', d).textContent = [(a.ext || '').toUpperCase(), tamanhoBonito(a.bytes)].filter(Boolean).join(' · ');
   if (comX) $('.anx-x', d).onclick = () => aoTirar(a);
+  // imagem anexada: "texto" tira o que esta' escrito nela (OCR local do Windows)
+  // e poe no campo, pra editar antes de mandar
+  if (P && IMG_EXT.includes(String(a.ext || '').toLowerCase()) && !/svg/i.test(String(a.ext || ''))) {
+    const bt = document.createElement('button');
+    bt.className = 'anx-ocr';
+    bt.textContent = a._ocr ? 'lendo…' : 'texto';
+    bt.disabled = !!a._ocr;
+    bt.title = 'Extrair o texto desta imagem (OCR local, ~1 s) e colocar no campo';
+    bt.onclick = (e) => { e.stopPropagation(); extrairTexto(P, a, bt); };
+    d.appendChild(bt);
+  }
   return d;
 }
 
@@ -4253,7 +5871,7 @@ function pintarAnexos(P) {
     barra.appendChild(fichaAnexo(a, true, (x) => {
       P.anexos = P.anexos.filter(y => y.path !== x.path);
       pintarAnexos(P);
-    }));
+    }, P));   // com o painel: clique abre no visor e imagem ganha o botao "texto" (OCR)
   }
 }
 
@@ -4268,32 +5886,91 @@ function inserirNoInput(P, txt) {
 /* ============ visualizador de arquivo ============ */
 function fecharVisor() { $$('.p-visor').forEach(v => { v.classList.add('hidden'); $('.visor-corpo', v).innerHTML = ''; }); }
 
-async function verArquivo(P, caminho) {
+// resposta de SSH demora: dois cliques seguidos nao podem pintar fora de ordem
+let visorGen = 0;
+/* recado simples no corpo do visor, montado com textContent -- o motivo pode vir
+   do servidor e nao pode virar marcacao dentro da tela */
+function recadoVisor(corpo, linhas) {
+  corpo.innerHTML = '';
+  const d = document.createElement('div');
+  d.className = 'visor-vazio';
+  linhas.filter(Boolean).forEach((t, i) => {
+    if (i) d.appendChild(document.createElement('br'));
+    d.appendChild(document.createTextNode(t));
+  });
+  corpo.appendChild(d);
+  return d;
+}
+/* O 'remoto' vem de QUEM CHAMA, painel por painel -- nunca do formato do
+   caminho. "Parece POSIX, entao e' do servidor" quebra no dia em que o Cockpit
+   rodar num Mac. Os tres chamadores:
+     - link de arquivo no texto do modelo  -> o remoto do PAINEL;
+     - duplo clique na arvore              -> o remoto do PAINEL;
+     - ficha de anexo                      -> null EXPLICITO (anexo colado mora
+       em userData/colados, aqui neste PC, mesmo com o painel na VPS). */
+async function verArquivo(P, caminho, remoto) {
   const v = $('.p-visor', P.el);
   const corpo = $('.visor-corpo', v);
+  const meuGen = ++visorGen; P._visorGen = meuGen;
   v.classList.remove('hidden');
   v.onclick = (e) => { if (e.target === v) fecharVisor(); };
   $('.visor-nome', v).textContent = baseNome(caminho);
   $('.visor-x', v).innerHTML = ico('x');
   $('.visor-x', v).onclick = fecharVisor;
-  $('.visor-abrir', v).innerHTML = ico('upload');
-  $('.visor-abrir', v).title = 'Abrir no ' + ESTE_PC;
-  $('.visor-abrir', v).onclick = async () => {
+  const btAbrir = $('.visor-abrir', v);
+  // "Abrir no PC" so' vale pro que esta' neste PC: no servidor o botao some
+  btAbrir.classList.toggle('hidden', !!remoto);
+  btAbrir.innerHTML = ico('upload');
+  btAbrir.title = 'Abrir no ' + ESTE_PC;
+  btAbrir.onclick = async () => {
     const r = await window.api.openPath(caminho);
     if (r && r.error) { const c = $('.visor-corpo', v); if (c) c.insertAdjacentHTML('afterbegin', '<div class="visor-vazio"></div>'); const av = $('.visor-vazio', c); if (av) av.textContent = r.error; }
   };
-  corpo.innerHTML = '<div class="visor-vazio">abrindo…</div>';
+  corpo.innerHTML = '<div class="visor-vazio">' + (remoto ? 'lendo no servidor…' : 'abrindo…') + '</div>';
+  // aba de servidor em branco: sem isso o pedido leria o disco DESTE PC calado
+  if (faltaConfigurarServidor(remoto)) { recadoVisor(corpo, [AVISO_ABA_EM_BRANCO]); return; }
 
-  const a = await window.api.verArquivo(caminho);
-  if (!a || a.erro) { corpo.innerHTML = '<div class="visor-vazio">Não consegui abrir.<br>' + ((a && a.erro) || '') + '</div>'; return; }
+  let a = null;
+  try { a = await window.api.verArquivo(caminho, remoto || undefined); }
+  catch (e) { a = { erro: 'Não consegui abrir: ' + ((e && e.message) || e) }; }
+  if (P._visorGen !== meuGen) return;   // ja' clicaram em outro arquivo
+  if (!a || a.erro) { recadoVisor(corpo, ['Não consegui abrir.', (a && a.erro) || '']); return; }
+  // cena do Excalidraw (o agente pode ter escrito uma): abre no quadro pra voce editar e devolver
+  if (/\.excalidraw$/i.test(caminho)) {
+    corpo.innerHTML = '';
+    const dica = document.createElement('div');
+    dica.className = 'visor-vazio';
+    if (remoto) {
+      /* o quadro le' e grava em userData deste PC (arquivo:lerTexto / imagem:salvar),
+         entao desenho que esta' no servidor nao tem como ir e voltar ainda */
+      dica.textContent = 'Desenho do Excalidraw (' + tamanhoBonito(a.bytes) + ') no servidor. '
+        + 'O quadro só abre desenho deste ' + ESTE_PC + ' — traga o arquivo pra cá para editar.';
+      corpo.appendChild(dica);
+      return;
+    }
+    const bt = document.createElement('button');
+    bt.className = 'mo-btn destaque';
+    bt.textContent = 'Abrir no quadro';
+    bt.addEventListener('click', async () => {
+      let r = null;
+      try { r = await window.api.textoLer({ arquivo: caminho }); } catch (e) { r = { error: String(e && e.message || e) }; }
+      if (!r || !r.content) { note(P, 'Não consegui ler esse desenho: ' + ((r && r.error) || 'arquivo vazio'), true); return; }
+      fecharVisor();
+      abrirQuadro(P, r.content);
+    });
+    dica.textContent = 'Desenho do Excalidraw (' + tamanhoBonito(a.bytes) + ').';
+    corpo.appendChild(dica); corpo.appendChild(bt);
+    return;
+  }
   $('.visor-nome', v).textContent = a.nome + '  ·  ' + tamanhoBonito(a.bytes);
   if (a.tipo === 'imagem') { corpo.innerHTML = ''; const i = document.createElement('img'); i.src = a.dados; corpo.appendChild(i); }
   else if (a.tipo === 'texto') { corpo.innerHTML = '<pre></pre>'; $('pre', corpo).textContent = a.dados; }
-  else corpo.innerHTML = '<div class="visor-vazio">Este tipo não abre aqui dentro.<br>Use o botão do canto para abrir no ' + ESTE_PC + '.</div>';
+  else if (remoto) recadoVisor(corpo, ['Este tipo não abre aqui dentro.', 'Ele está no servidor — use o terminal (menu /) para trabalhar nele.']);
+  else recadoVisor(corpo, ['Este tipo não abre aqui dentro.', 'Use o botão do canto para abrir no ' + ESTE_PC + '.']);
 }
 
 /* ============ conversas recentes ============ */
-const histCache = { claude: null, codex: null };
+const histCache = porMotor(null);
 
 function grupoDoTempo(ms) {
   if (!ms) return 'Sem data';
@@ -4329,16 +6006,17 @@ function mesmaPasta(cwdSessao, cwdAba) {
   return norm(cwdSessao) === norm(cwdAba);
 }
 
-const histGen = { claude: 0, codex: 0 };
-const pintaGen = { claude: 0, codex: 0 };
-const escondidasPorFiltro = { claude: 0, codex: 0 };
+const histGen = porMotor(0);
+const pintaGen = porMotor(0);
+const escondidasPorFiltro = porMotor(0);
 /* a aba sem pasta ("PC inteiro") tambem filtra agora. Sem isto, o aviso
    "clique para ver todas" levava pra ela mesma e nao fazia nada. */
-const semPastaFiltrou = { claude: false, codex: false };
-const verTodasAsConversas = { claude: false, codex: false };
+const semPastaFiltrou = porMotor(false);
+const verTodasAsConversas = porMotor(false);
 async function loadHist(engine, force) {
   const meuGen = ++histGen[engine];
-  const box = $(engine === 'claude' ? '#histClaude' : '#histCodex');
+  const box = caixaDoMotor('hist', engine);
+  if (!box) return;
   if (histCache[engine]) paintHist(engine, histCache[engine]);   // mostra o que ja tem
   else box.innerHTML = '<div class="hist-load">Carregando…</div>';
 
@@ -4347,13 +6025,18 @@ async function loadHist(engine, force) {
   if (aba && aba.tipo === 'ssh') {
     // as conversas de uma aba remota ficam gravadas dentro do servidor, nao aqui
     escondidasPorFiltro[engine] = 0;   // aba remota nao filtra por pasta local
-    if (engine === 'codex') { r = []; }
+    // so' o Claude atravessa o SSH: os outros nao tem conversa GRAVADA no servidor
+    if (engine !== 'claude') { r = []; }
     else {
       box.innerHTML = '<div class="hist-load">Buscando no servidor…</div>';
+      // o { error } que o main devolve agora cai no tratamento que ja existe
+      // logo abaixo ("Nao consegui ler: ..."), em vez de virar lista vazia
       r = await window.api.sessionsClaudeRemoto({ remoto: remotoDoAba(aba) });
     }
   } else {
-    r = engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos) : await window.api.sessionsCodex(!!cfg.verRobos);
+    r = engine === 'claude' ? await window.api.sessionsClaude(!!cfg.verRobos)
+      : engine === 'codex' ? await window.api.sessionsCodex(!!cfg.verRobos)
+      : await window.api.sessionsCli(engine);
     const pastas = pastasDaAba(aba);
     if (pastas.length && Array.isArray(r)) {
       const todas = r.length;
@@ -4377,12 +6060,30 @@ async function loadHist(engine, force) {
   }
   // chegou tarde: o usuario ja trocou de aba ou pediu outra lista
   if (meuGen !== histGen[engine]) return;
-  if (r && r.error) { box.innerHTML = '<div class="hist-load">Não consegui ler: ' + r.error + '</div>'; return; }
+  if (r && r.aviso) {
+    box.innerHTML = '';
+    const av = document.createElement('div');
+    av.className = 'hist-load';
+    av.textContent = r.aviso;
+    box.appendChild(av);
+    histCache[engine] = [];
+    return;
+  }
+  if (r && r.error) {
+    // o motivo vem do servidor: entra como TEXTO, nunca como HTML
+    box.innerHTML = '';
+    const av = document.createElement('div');
+    av.className = 'hist-load';
+    av.textContent = 'Não consegui ler: ' + r.error;
+    box.appendChild(av);
+    histCache[engine] = [];   // senao a busca repinta a lista da aba anterior por cima
+    return;
+  }
   histCache[engine] = r || [];
   paintHist(engine, histCache[engine]);
 }
 
-const buscaAtual = { claude: '', codex: '' };
+const buscaAtual = porMotor('');
 
 const chaveFav = (s) => s.engine + ':' + s.id;
 const ehFavorita = (s) => Array.isArray(cfg.favoritos) && cfg.favoritos.includes(chaveFav(s));
@@ -4396,10 +6097,10 @@ function trocarFavorita(s) {
 
 /* ============ grupos de conversa, compartilhados entre Claude e Codex ============ */
 const GRUPO_CORES = ['#6ea8fe','#d97757','#5aa469','#d7ba7d','#e05252','#b083f0','#f0839f','#4fd1c5'];
-const filtroGrupo = { claude: null, codex: null };   // aba ativa em cada lista; nao e' salvo, reseta a cada abertura
+const filtroGrupo = porMotor(null);   // aba ativa em cada lista; nao e' salvo, reseta a cada abertura
 
 function pintarAbasGrupo(engine) {
-  const box = $(engine === 'claude' ? '#abasClaude' : '#abasCodex');
+  const box = caixaDoMotor('abas', engine);
   if (!box) return;
   const ativo = filtroGrupo[engine];
   box.innerHTML = '';
@@ -4449,7 +6150,11 @@ function alternarGrupoRecolhido(id) {
 }
 
 /* modal central, fora de qualquer painel (a lista de conversas nao pertence a nenhum) */
+/* quem abre o modal pode deixar aqui o que precisa rodar quando ele fechar por
+   QUALQUER caminho (X, veu, Esc): a camera desliga, a Promise resolve */
+let aoFecharModalGlobal = null;
 function abrirModalGlobal() {
+  aoFecharModalGlobal = null;
   const modal = $('#modalGrupo'), cx = $('.modal-cx', modal);
   cx.className = 'modal-cx';   // limpa marca de uso anterior (ex: a de imagem,
                                // que tira fundo e borda e deixava o formulario
@@ -4461,6 +6166,8 @@ function abrirModalGlobal() {
   return cx;
 }
 function fecharModalGlobal() {
+  const f = aoFecharModalGlobal; aoFecharModalGlobal = null;
+  if (f) { try { f(); } catch {} }
   const modal = $('#modalGrupo');
   modal.classList.add('hidden'); $('.modal-cx', modal).innerHTML = '';
 }
@@ -4543,9 +6250,7 @@ function abrirModalGrupo(existente) {
     else cfg.grupos.push({ id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), nome, cor: corEscolhida });
     window.api.setConfig(cfg);
     fecharModalGlobal();
-    pintarAbasGrupo('claude'); pintarAbasGrupo('codex');
-    histCache.claude && paintHist('claude', histCache.claude);
-    histCache.codex && paintHist('codex', histCache.codex);
+    for (const eng of MOTORES) { pintarAbasGrupo(eng); if (histCache[eng]) paintHist(eng, histCache[eng]); }
   };
   $('#pnOk', cx).onclick = salvar;
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') salvar(); });
@@ -4559,9 +6264,7 @@ function apagarGrupo(g) {
   if (filtroGrupo.codex === g.id) filtroGrupo.codex = null;
   window.api.setConfig(cfg);
   fecharPopGlobal();
-  pintarAbasGrupo('claude'); pintarAbasGrupo('codex');
-  histCache.claude && paintHist('claude', histCache.claude);
-  histCache.codex && paintHist('codex', histCache.codex);
+  for (const eng of MOTORES) { pintarAbasGrupo(eng); if (histCache[eng]) paintHist(eng, histCache[eng]); }
 }
 
 /* popup: mover uma sessao pra um grupo (o "botao ou botao direito com selecao" pedido) */
@@ -4686,10 +6389,10 @@ function linhaConversa(s, termo, trecho) {
       d.remove();
       // painel aberto que usava esta conversa: para o motor de verdade
       for (const Q of [...panes.values(), ...panesFundo.values()]) {
-        if (Q.sessaoId === s.id || Q.resumeId === s.id) {
+        if (Q.sessaoId === s.id || Q.resumeId === s.id || Q.resumeAnterior === s.id) {
           try { await window.api.paneStop({ paneId: Q.id, engine: Q.engine }); } catch {}
           destravarPainel(Q);
-          Q.sessaoId = null; Q.resumeId = null; Q.sessaoFile = ''; Q.started = false;
+          Q.sessaoId = null; Q.resumeId = null; Q.resumeAnterior = null; Q.sessaoFile = ''; Q.started = false;
           setDot(Q, 'off');
           note(Q, 'Esta conversa foi apagada. A próxima mensagem começa uma nova.', true);
         }
@@ -4770,7 +6473,8 @@ async function paintHist(engine, list) {
   // a busca dentro das conversas demora segundos. Sem esta marca, o resultado
   // de uma busca ja cancelada chegava depois e apagava a lista que estava na tela
   const meuGen = ++pintaGen[engine];
-  const box = $(engine === 'claude' ? '#histClaude' : '#histCodex');
+  const box = caixaDoMotor('hist', engine);
+  if (!box) return;
   const termo = (buscaAtual[engine] || '').toLowerCase().trim();
   box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="hist-load">Nenhuma conversa ainda.</div>'; return; }
@@ -4891,7 +6595,7 @@ async function openSession(s, el) {
   }
   // cada conversa da lista abre no seu proprio painel, sem atropelar o que ja esta rolando
   let P = null;
-  if (totalDePaineis() < 12) P = newPane({ engine: s.engine, cwd: s.cwd, titulo: s.title });
+  if (cabeMaisPainel()) P = newPane({ engine: s.engine, cwd: s.cwd, titulo: s.title });
   else {
     P = [...panes.values()].find(q => !q.busy && !q.hist.length) || [...panes.values()].find(q => !q.busy);
     if (!P) { const q = focusPane; if (q) avisoTemp(q, 'Todos os painéis estão ocupados. Feche um para abrir esta conversa.'); return; }
@@ -4904,30 +6608,42 @@ async function openSession(s, el) {
   if (P.morto) return;
   destravarPainel(P);
   P.engine = s.engine; P.cwd = s.cwd; P.resumeId = s.id; P.started = false; P.busy = false; P.model = '';
+  if (s.engine === 'acp' && s.comando) P.model = s.comando;   // a conversa e' daquele agente
   // a conversa que voce renomeou a mao chega com o apelido em s.title: zerar o
   // nomeManual deixava o titulo automatico sobrescrever no fim do turno
   P.titulo = s.title || ''; P.hist = []; P.nomeManual = !!s.nome;
   // sobra da conversa ANTERIOR: sem limpar, o savePanes logo abaixo gravava a
   // conversa velha, o titulo vinha do arquivo errado e o anel de contexto mentia
-  P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
+  P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false; P.resumeAnterior = null;
   P.tokens = 0; P.janela = 0; P.passarContexto = null;
   P.anexos = []; pintarAnexos(P); pintarTokens(P); esconderPermissao(P);
   P.blocks.clear(); P.tools.clear(); P.chat.innerHTML = ''; esquecerPassos(P);
+  limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false; P.avisoModelo = null; P.acpInfo = null; P.acpModelos = null; P.worktree = null;
   fillModels(P); paintEngine(P); setDot(P, 'off');
-  $('.p-cwd', P.el).textContent = nomePasta(P.cwd);
+  // em aba de servidor o motor roda SEMPRE na pasta da aba: mostrar a pasta de
+  // origem da conversa deixaria o cabecalho dizendo um lugar onde ele nao esta'
+  const abaAqui = abaPorId(P.abaId);
+  $('.p-cwd', P.el).textContent = remotoDoPane(P)
+    ? ('🖧 ' + (abaAqui ? abaAqui.nome : 'servidor'))
+    : nomePasta(P.cwd);
   pintarModo(P); pintarNome(P);
   setFocus(P); savePanes();
 
   note(P, 'Conversa: ' + s.title);
   const remotoAqui = remotoDoAba(abaAtual());
-  const msgs = (remotoAqui
-    ? await window.api.sessionHistoryRemoto({ remoto: remotoAqui, id: s.id })
-    : await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.id })) || [];
+  let msgs = [];
+  if (remotoAqui) {
+    const lido = listaOuErro(await window.api.sessionHistoryRemoto({ remoto: remotoAqui, id: s.id }));
+    if (lido.erro) note(P, 'Não consegui ler esta conversa no servidor. ' + lido.erro, true);
+    msgs = lido.itens;
+  } else {
+    msgs = (await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.id })) || [];
+  }
   for (const m of (msgs || [])) {
     if (m.role === 'user') userMsg(P, m.text, null, m.imagens);   // o userMsg ja grava no historico
     else if (m.role === 'bot') {
-      const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = mdSeguro(m.text);
-      P.hist.push({ quem: s.engine === 'codex' ? 'Codex' : 'Claude', texto: m.text });
+      const b = botBlock(P, 'h' + Math.random()); b.raw = m.text; b.el.innerHTML = mdSeguro(m.text); marcarRecibo(b.el);
+      P.hist.push({ quem: nomeDoMotor(s.engine), texto: m.text });
     }
     else if (m.role === 'tool') { toolStart(P, 'h' + Math.random(), m.name, m.arg); }
   }
@@ -4947,11 +6663,27 @@ async function restaurarPaineis(salvos, abaId, gen) {
 }
 
 async function restaurarPaineisMiolo(salvos, abaId, gen) {
-  for (const s of salvos.slice(0, 12)) {
-    // o usuario trocou de aba de novo enquanto isso carregava: para aqui
-    if (gen !== undefined && gen !== abaGen) return;
+  // sem corte: com o teto de 12 fora, tudo o que estava aberto volta a abrir
+  const lista = salvos;
+  for (let i = 0; i < lista.length; i++) {
+    const s = lista[i];
+    /* Trocou de aba enquanto isto carregava: para aqui, MAS guarda quem ficou
+       pra tras. Antes o laco so' voltava, e o proximo savePanes apagava esses
+       painéis do config como se voce os tivesse fechado. */
+    if (gen !== undefined && gen !== abaGen) { guardarPendentes(abaId, lista.slice(i)); return; }
     const P = newPane({ engine: s.engine, cwd: s.cwd, model: s.model, mode: s.mode, effort: s.effort, titulo: s.titulo, abaId });
     P.resumeId = s.sessaoId;
+    P.forkPendente = !!s.fork;   // ramo que ainda nao mandou a 1a mensagem
+    P.worktree = s.worktree || null;
+    if (P.worktree) mostrarPastaNoPainel(P);   // o newPane pintou antes de saber do worktree
+    // ficha nova traz o caminho do arquivo; ficha antiga trazia a cena em JSON
+    if (s.quadro && String(s.quadro).trim().startsWith('{')) {
+      P.quadroCena = s.quadro; P.quadroArquivo = null;
+      // ficha do pacote anterior: vira arquivo ja, senao o proximo savePanes descartava o desenho
+      window.api.textoSalvar({ texto: s.quadro, prefixo: 'quadro', ext: 'excalidraw', nome: 'quadro-' + P.id })
+        .then((r) => { if (r && r.arquivo) { P.quadroArquivo = r.arquivo; savePanes(); } }).catch(() => {});
+    } else { P.quadroCena = null; P.quadroArquivo = s.quadro || null; }
+    soltarPendente(abaId, P);   // nasceu: nao e' mais pendencia
     if (s.coluna != null) P.coluna = s.coluna;   // a montagem acontece no fim do lote
     if (s.larguraColuna) P.larguraColuna = s.larguraColuna;
     if (s.contexto) P.passarContexto = s.contexto;
@@ -4969,17 +6701,21 @@ async function restaurarPaineisMiolo(salvos, abaId, gen) {
       // aba SSH: a conversa mora no servidor, ponto. Nao olhar o "file" salvo -
       // painel gravado antes desta correcao tem um caminho local FALSO que
       // fazia o app procurar no PC e voltar sempre vazio.
-      msgs = (remotoAqui
-        ? await window.api.sessionHistoryRemoto({ remoto: remotoAqui, id: s.sessaoId })
-        : await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.sessaoId })) || [];
+      if (remotoAqui) {
+        const lido = listaOuErro(await window.api.sessionHistoryRemoto({ remoto: remotoAqui, id: s.sessaoId }));
+        if (lido.erro) note(P, 'Não consegui trazer o histórico do servidor. ' + lido.erro, true);
+        msgs = lido.itens;
+      } else {
+        msgs = (await window.api.sessionHistory({ engine: s.engine, file: s.file, id: s.sessaoId })) || [];
+      }
     } catch {}
     for (const msg of msgs) {
       // o historico em memoria tambem: sem ele, trocar de motor depois de
       // reabrir o app mandava o outro comecar do zero, sem saber de nada
       if (msg.role === 'user') userMsg(P, msg.text, null, msg.imagens);   // o userMsg ja grava no historico
       else if (msg.role === 'bot') {
-        const b = botBlock(P, 'r' + Math.random()); b.raw = msg.text; b.el.innerHTML = mdSeguro(msg.text);
-        P.hist.push({ quem: s.engine === 'codex' ? 'Codex' : 'Claude', texto: msg.text });
+        const b = botBlock(P, 'r' + Math.random()); b.raw = msg.text; b.el.innerHTML = mdSeguro(msg.text); marcarRecibo(b.el);
+        P.hist.push({ quem: nomeDoMotor(s.engine), texto: msg.text });
       }
     }
     if (msgs.length) {
@@ -4996,40 +6732,1221 @@ async function restaurarPaineisMiolo(salvos, abaId, gen) {
   savePanes();
 }
 
-/* abre um painel novo ja sabendo do que voce estava falando, sem tocar no
-   painel atual - a mesma mecanica usada quando se troca Claude<->Codex */
-function ramificar(P) {
-  if (totalDePaineis() >= 12) { note(P, 'Já são 12 painéis. Feche um para ramificar.', true); return; }
-  if (!P.hist.length) { note(P, 'Ainda não há conversa para levar adiante.', true); return; }
-  const novo = newPane({ engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, abaId: P.abaId });
-  novo.passarContexto = montarContexto(P);
+/* ===================== RAMIFICAR (fork de verdade) =====================
+   Antes, "ramificar" colava so' um resumo de 14k no painel novo e o resto se
+   perdia. Agora o ramo e' REAL onde o motor sabe fazer: Claude usa
+   --fork-session (sessao nova com o historico inteiro), Codex usa thread/fork
+   (com ponto de corte), Gemini ganha uma copia do arquivo com id novo. O
+   resumo colado continua como reserva pra quem nao tem sessao ainda. */
+function ramificar(P) { ramificarAte(P, null); }
+
+/* doFim: a K-esima mensagem SUA contando do fim (null = conversa inteira).
+   Conta-se do fim de proposito: a tela pode mostrar so' a cauda da conversa,
+   e contar do inicio erraria o ponto. */
+async function ramificarAte(P, doFim) {
+  const id = P.sessaoId || P.resumeId;
+  if (P.engine === 'claude' && id && !remotoDoPane(P) && doFim == null) return forkClaude(P);
+  if ((P.engine === 'codex' || P.engine === 'gemini') && id) {
+    let r = null;
+    try { r = await window.api.sessaoFork({ engine: P.engine, id, doFim: doFim || undefined }); } catch (e) { r = { error: String(e && e.message || e) }; }
+    if (r && r.id) {
+      abrirRamo(P, r.id, doFim);
+      if (r.aviso) note(P, r.aviso);
+      return;
+    }
+    note(P, 'Não deu para ramificar de verdade (' + ((r && r.error) || 'sem resposta') + ') — vou levar só o resumo da conversa.', true);
+  }
+  ramoPorContexto(P, doFim);
+}
+
+/* Claude: o fork acontece no LIGAR do painel novo (--resume + --fork-session).
+   Ate' la, o painel guarda a intencao em forkPendente (vai pra ficha tambem,
+   senao fechar o app antes da 1a mensagem viraria continuacao da origem). */
+function forkClaude(P) {
+  const novo = newPane({ engine: 'claude', cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, abaId: P.abaId });
+  novo.resumeId = P.sessaoId || P.resumeId;
+  novo.forkPendente = true;
   novo.titulo = (P.titulo || 'Conversa') + ' (ramo)';
   pintarNome(novo);
-  const d = document.createElement('div');
-  d.className = 'troca'; d.innerHTML = '<span></span>';
-  $('span', d).textContent = 'ramo de "' + (P.titulo || 'conversa anterior') + '" — escreva pra continuar daqui';
-  clearEmpty(novo);   // a tela de "painel vazio" ocupa 100% da altura e empurrava a faixa pra fora
-  novo.chat.appendChild(d);
+  faixaDeRamo(novo, P, null);
   savePanes();
 }
 
+/* Codex/Gemini: o fork JA aconteceu no motor; o painel novo so' retoma o id */
+function abrirRamo(P, idNovo, doFim) {
+  const novo = newPane({ engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, abaId: P.abaId });
+  novo.resumeId = idNovo;
+  novo.titulo = (P.titulo || 'Conversa') + ' (ramo)';
+  pintarNome(novo);
+  faixaDeRamo(novo, P, doFim);
+  savePanes();
+}
+
+/* reserva: painel novo com o resumo colado (o caminho antigo), com corte opcional */
+function ramoPorContexto(P, doFim) {
+  if (!P.hist.length) { note(P, 'Ainda não há conversa para levar adiante.', true); return; }
+  let hist = P.hist;
+  if (doFim != null && doFim >= 1) {
+    const idxUser = [];
+    for (let i = 0; i < hist.length; i++) if (hist[i].quem === 'Você') idxUser.push(i);
+    const alvo = idxUser[idxUser.length - doFim];
+    if (alvo != null) hist = hist.slice(0, alvo + 1);
+  }
+  const novo = newPane({ engine: P.engine, cwd: P.cwd, model: P.model, mode: P.mode, effort: P.effort, abaId: P.abaId });
+  novo.passarContexto = montarContexto({ hist });
+  novo.titulo = (P.titulo || 'Conversa') + ' (ramo)';
+  pintarNome(novo);
+  faixaDeRamo(novo, P, doFim, true);
+  savePanes();
+}
+
+function faixaDeRamo(novo, P, doFim, soResumo) {
+  clearEmpty(novo);   // a tela de "painel vazio" ocupa 100% da altura e empurrava a faixa pra fora
+  const d = document.createElement('div');
+  d.className = 'troca'; d.innerHTML = '<span></span>';
+  const origem = 'ramo de "' + (P.titulo || 'conversa anterior') + '"';
+  const memoria = soResumo
+    ? ' — levei um resumo do que foi dito'
+    : (doFim != null ? ' — ele lembra de tudo até aquele ponto' : ' — ele lembra da conversa inteira');
+  $('span', d).textContent = origem + memoria + '; a tela começa daqui. Escreva pra continuar.';
+  novo.chat.appendChild(d);
+  const c = $('.p-input', novo.el); if (c) c.focus();
+}
+
+/* ===================== PLANO VIVO DO TURNO =====================
+   A checklist que o proprio agente mantem (TodoWrite no Claude, turn/plan no
+   Codex, write_todos no Gemini) vira um bloco fixo acima do campo: da' pra ver
+   onde ele esta' sem rolar a conversa. */
+function desenharPlano(P, itens) {
+  P.plano = Array.isArray(itens) ? itens : [];
+  let cx = $('.pane-plano', P.el);
+  if (!P.plano.length) { if (cx) cx.remove(); return; }
+  if (!cx) {
+    cx = document.createElement('div');
+    cx.className = 'pane-plano';
+    P.el.insertBefore(cx, $('.pane-perg', P.el));
+    if (P.planoAberto === undefined) P.planoAberto = true;
+  }
+  const feitos = P.plano.filter((x) => x.estado === 'feito').length;
+  cx.innerHTML = '';
+  const cab = document.createElement('button');
+  cab.className = 'pl-cab';
+  cab.innerHTML = '<span class="pl-seta"></span><span class="pl-tit">Plano</span><span class="pl-conta"></span><span class="pl-barra"><span class="pl-cheio"></span></span>';
+  $('.pl-seta', cab).innerHTML = ico(P.planoAberto ? 'chevron-down' : 'chevron-right');
+  $('.pl-conta', cab).textContent = feitos + '/' + P.plano.length;
+  $('.pl-cheio', cab).style.width = Math.round((feitos / P.plano.length) * 100) + '%';
+  cab.title = P.planoAberto ? 'Recolher o plano' : 'Abrir o plano';
+  cab.addEventListener('click', (e) => { e.stopPropagation(); P.planoAberto = !P.planoAberto; desenharPlano(P, P.plano); });
+  cx.appendChild(cab);
+  if (P.planoAberto) {
+    const corpo = document.createElement('div');
+    corpo.className = 'pl-corpo';
+    for (const it of P.plano) {
+      const d = document.createElement('div');
+      d.className = 'pl-item pl-' + (it.estado || 'pendente');
+      d.innerHTML = '<span class="pl-pt"></span><span class="pl-txt"></span>';
+      $('.pl-txt', d).textContent = it.txt || '';
+      corpo.appendChild(d);
+    }
+    cx.appendChild(corpo);
+    corpo.scrollTop = corpo.scrollHeight;   // o passo atual costuma ser o ultimo
+  }
+}
+function limparPlano(P) {
+  if (!P) return;
+  P.plano = [];
+  const cx = P.el && $('.pane-plano', P.el);
+  if (cx) cx.remove();
+}
+
+/* ===================== SUGESTAO DE PROXIMA MENSAGEM =====================
+   O Claude preve a proxima mensagem depois de cada turno (--prompt-suggestions).
+   Vira chip discreto acima do campo: clicou, preencheu - NUNCA envia sozinho. */
+function mostrarSugestoes(P, itens) {
+  limparSugestoes(P);
+  if (cfg.sugestoes === false) return;
+  const lista = (itens || []).filter(Boolean).slice(0, 2);
+  if (!lista.length) return;
+  const cmp = $('.pane-cmp', P.el);
+  if (!cmp) return;
+  const box = document.createElement('div');
+  box.className = 'p-sugs';
+  for (const t of lista) {
+    const bt = document.createElement('button');
+    bt.className = 'sug-chip';
+    bt.textContent = t.length > 90 ? t.slice(0, 90) + '…' : t;
+    bt.title = 'Sugestão dele — clique pra preencher o campo (não envia sozinho)';
+    bt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const inp = $('.p-input', P.el);
+      if (!inp) return;
+      inp.value = t;
+      inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 190) + 'px';
+      inp.focus();
+      limparSugestoes(P);
+    });
+    box.appendChild(bt);
+  }
+  cmp.insertBefore(box, $('.cmp-top', P.el));
+}
+function limparSugestoes(P) {
+  const b = P && P.el && $('.p-sugs', P.el);
+  if (b) b.remove();
+}
+
+/* ===================== AUDITORIA DE AUTONOMIA =====================
+   O que rodou sem perguntar (liberado por "sempre permitir") deixava so' um
+   aviso que some. Agora fica contado num distintivo no cabecalho do painel,
+   com a lista completa a um clique - confianca auditavel, nao cega. */
+function registrarAuto(P, ev) {
+  (P.autoAcoes = P.autoAcoes || []).push({ tool: (ev && ev.tool) || 'ferramenta', arg: String((ev && ev.arg) || ''), quando: Date.now() });
+  pintarAuditoria(P);
+}
+function pintarAuditoria(P) {
+  const n = (P.autoAcoes || []).length;
+  let bt = $('.p-audit', P.el);
+  if (!n) { if (bt) bt.remove(); return; }
+  if (!bt) {
+    bt = document.createElement('button');
+    bt.className = 'p-audit';
+    bt.title = 'Ações que rodaram sem perguntar neste painel — clique pra ver';
+    const dot = $('.p-dot', P.el);
+    if (!dot) return;
+    dot.parentElement.insertBefore(bt, dot);
+    bt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const pop = abrirPopGlobal(bt);
+      const cab = document.createElement('div');
+      cab.className = 'menu-secao';
+      cab.textContent = 'Rodou sem perguntar (' + (P.autoAcoes || []).length + ')';
+      pop.appendChild(cab);
+      for (const a of (P.autoAcoes || []).slice(-30).reverse()) {
+        const d = document.createElement('div');
+        d.className = 'mi';
+        d.innerHTML = '<div class="mi-ic"></div><div class="mi-txt"><div class="mi-n"></div><div class="mi-d"></div></div>';
+        $('.mi-ic', d).innerHTML = ico('zap');
+        $('.mi-n', d).textContent = toolLabel(a.tool);
+        $('.mi-d', d).textContent = (a.arg ? a.arg.slice(0, 70) + '  ·  ' : '') + quando(a.quando);
+        pop.appendChild(d);
+      }
+    });
+  }
+  bt.innerHTML = ico('zap') + '<span>' + n + '</span>';
+}
+function limparAuditoria(P) {
+  if (!P) return;
+  P.autoAcoes = [];
+  const bt = P.el && $('.p-audit', P.el);
+  if (bt) bt.remove();
+}
+
+/* ===================== RASTRO DO TURNO (uso + mudancas) ===================== */
+function zerarTurno(P) {
+  P.usoTurno = null;
+  P.mudancasTurno = [];
+  P.diffTurno = '';
+  P.printsTurno = [];
+  limparSugestoes(P);
+  limparContinuar(P);
+}
+const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0));
+function arquivosDoDiffUnificado(diff) {
+  const m = String(diff || '').match(/^diff --git /gm);
+  return m ? m.length : 1;
+}
+function mostrarMudancasDoTurno(P) {
+  const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+  modal.classList.remove('hidden');
+  modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
+  cx.className = 'modal-cx';
+  cx.onclick = (e) => e.stopPropagation();
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit">O que mudou neste turno</span><button class="mo-x">' + ico('x') + '</button></div>';
+  $('.mo-x', cx).onclick = () => fecharModal(P);
+  const corpo = document.createElement('div');
+  corpo.className = 'mo-lista';
+  cx.appendChild(corpo);
+  if (P.diffTurno) {
+    // o Codex manda o diff agregado pronto (turn/diff/updated): desenha como o do git
+    const box = document.createElement('div');
+    box.className = 'diff diff-git';
+    for (const linha of String(P.diffTurno).split('\n').slice(0, 4000)) {
+      const d = document.createElement('div');
+      const t = linha.startsWith('+') && !linha.startsWith('+++') ? 'mais'
+        : linha.startsWith('-') && !linha.startsWith('---') ? 'menos'
+        : linha.startsWith('@@') || linha.startsWith('diff --git') ? 'pulo' : 'igual';
+      d.className = t === 'pulo' ? 'df-pulo' : 'df-l df-' + t;
+      d.textContent = linha;
+      box.appendChild(d);
+    }
+    corpo.appendChild(box);
+    return;
+  }
+  for (const m of (P.mudancasTurno || [])) {
+    const tit = document.createElement('div');
+    tit.className = 'menu-secao';
+    tit.textContent = m.path || 'arquivo';
+    corpo.appendChild(tit);
+    corpo.appendChild(elDiff(m.mudanca));
+  }
+  if (!(P.mudancasTurno || []).length) corpo.innerHTML = '<div class="mo-carregando">Nenhuma mudança de arquivo neste turno.</div>';
+}
+
+/* ===================== AVISO DO AGENTE (PushNotification) =====================
+   O agente decidiu que voce precisa saber de algo AGORA. O CLI, sem terminal,
+   descartava ("not sent"); o main intercepta a chamada e ela chega aqui:
+   cartao na conversa (fica), tarja no topo (com "ir pro painel") e aviso do
+   sistema quando a janela ou o painel estao fora de vista. */
+function avisoDoAgente(P, texto) {
+  const t = String(texto || '').replace(/\s+/g, ' ').trim();
+  if (!t) return;
+  clearEmpty(P);
+  const d = document.createElement('div');
+  d.className = 'aviso-agente';
+  d.innerHTML = '<span class="ag-ic"></span><span class="ag-txt"></span>';
+  $('.ag-ic', d).innerHTML = ico('zap');
+  $('.ag-txt', d).textContent = t;
+  d.setAttribute('role', 'status');
+  // o cartao entra DEPOIS da caixa de passos atual (selada); o passo da propria
+  // notificacao, que o main manda em seguida, abre outra caixa embaixo
+  selarPassos(P);
+  P.chat.appendChild(d);
+  if (P.trabEl) P.chat.appendChild(P.trabEl);
+  scroll(P);
+  const nome = P.titulo || 'Painel';
+  mostrarAviso({
+    id: 'agente-' + P.id, tipo: 'alerta', texto: nome + ': ' + t, reseta: String(Date.now()),
+    acao: 'ir pro painel',
+    aoClicar: () => irAoPainel(P),
+  });
+  if (document.hidden || !painelVisivel(P)) {
+    try { new Notification('Cockpit — ' + nome, { body: t }); } catch {}
+  }
+}
+
+/* leva voce ate' o painel, inclusive quando ele esta' em OUTRA aba (mesma
+   regra do "ir" da tarja de atencao) */
+function irAoPainel(P) {
+  const focar = (Q) => { setFocus(Q); irAtePainel(Q); piscar(Q); const c = $('.p-input', Q.el); if (c) c.focus(); };
+  if (panes.has(P.id)) return focar(P);
+  if (P.abaId && P.abaId !== cfg.abaAtiva) {
+    trocarAbaLocal(P.abaId).then(() => {
+      const Q = panes.get(P.id) || [...panes.values()].find((q) => q.sessaoId && q.sessaoId === (P.sessaoId || P.resumeId));
+      if (Q) focar(Q);
+    });
+  }
+}
+
+/* ===================== CONTINUAR A UM CLIQUE =====================
+   Chip fixo quando o painel esta' parado com conversa; Enter no campo vazio
+   manda o mesmo "continue". Nunca aparece com trabalho rodando ou fila. */
+function podeContinuar(P) { return !!(P && !P.busy && !P.queued && !P.morto && P.hist && P.hist.length); }
+function mostrarContinuar(P) {
+  limparContinuar(P);
+  if (!podeContinuar(P)) return;
+  const cmp = $('.pane-cmp', P.el);
+  if (!cmp) return;
+  const box = document.createElement('div');
+  box.className = 'p-cont';
+  const bt = document.createElement('button');
+  bt.className = 'cont-chip';
+  bt.innerHTML = '<span class="cont-seta">▶</span><span>Continuar</span>';
+  bt.title = 'Manda "continue" (Enter no campo vazio faz o mesmo)';
+  bt.addEventListener('click', (e) => { e.stopPropagation(); enviarContinue(P); });
+  box.appendChild(bt);
+  cmp.insertBefore(box, $('.cmp-top', P.el));
+}
+function limparContinuar(P) {
+  const b = P && P.el && $('.p-cont', P.el);
+  if (b) b.remove();
+}
+function enviarContinue(P) {
+  if (!podeContinuar(P)) return;
+  const inp = $('.p-input', P.el);
+  if (!inp || inp.value.trim()) return;   // tem texto escrito: nao atropela
+  inp.value = 'continue';
+  send(P);
+}
+
+/* ===================== ULTIMA FALA COMO LEGENDA =====================
+   Num turno de 20 minutos a unica pista era o relogio: as frases-narracao do
+   agente somem no scroll. A ultima frase curta vira legenda do "trabalhando…". */
+function legendaDaFala(texto) {
+  // o corpo de uma cerca de codigo fora ("const x = 1;" nao e' legenda)
+  const cauda = String(texto || '').slice(-600).replace(/```[\s\S]*?(```|$)/g, '');
+  const linhas = cauda.split('\n')
+    .filter((l) => !/^\s*(\||```|~~~)/.test(l))                      // linha de tabela e cerca de codigo nao sao legenda
+    .map((l) => l.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')          // [texto](url) e ![alt](url) -> texto
+      .replace(/^[\s#>*\-•\d.)]+/, '').replace(/[*_`~]/g, '').trim())
+    .filter((l) => l.length > 2 && !/^[|:\-\s]+$/.test(l));
+  const ult = linhas[linhas.length - 1] || '';
+  return ult.length > 90 ? ult.slice(0, 88).trimEnd() + '…' : ult;
+}
+function legendarTrabalho(P, texto) {
+  if (!P || !P.busy || !P.trabEl) return;
+  const el = $('.trab-txt', P.trabEl);
+  if (!el) return;
+  const leg = legendaDaFala(texto);
+  el.textContent = leg ? 'trabalhando… ' + leg : 'trabalhando…';
+  el.title = leg;
+}
+
+/* ===================== RETOMADA HONESTA =====================
+   Ao retomar um turno cortado, o proprio CLI injeta "Continue from where you
+   left off." - e a tela desenhava como fala sua, em ingles. */
+function marcaDoSistema(text) {
+  const t = String(text || '').trim();
+  if (/^Continue from where you left off\.?$/i.test(t)) return 'retomado automaticamente depois de reiniciar';
+  if (/^\[Request interrupted by user( for tool use)?\]$/i.test(t)) return 'você interrompeu aqui';
+  return '';
+}
+
+/* ===================== PRINTS DO AGENTE =====================
+   Imagem dentro do resultado de uma ferramenta (o agente tirou um print) vira
+   miniatura no proprio passo; clique abre grande. No carimbo do turno, a
+   galeria. Antes era jogada fora: 85 prints invisiveis em 30 dias. */
+function mostrarPrintsDoPasso(P, d, imagens) {
+  const lista = (imagens || []).filter((im) => im && im.dados).slice(0, 4);
+  if (!lista.length) return;
+  P.printsTurno = P.printsTurno || [];
+  let cx = d ? $('.pa-imgs', d) : null;
+  if (d && !cx) { cx = document.createElement('div'); cx.className = 'pa-imgs'; d.appendChild(cx); }
+  for (const im of lista) {
+    const src = 'data:' + (im.mime || 'image/png') + ';base64,' + im.dados;
+    if (P.printsTurno.length < 40) P.printsTurno.push(src);
+    if (!cx) continue;
+    const img = document.createElement('img');
+    img.className = 'pa-img';
+    img.src = src;
+    img.alt = 'print tirado pelo agente';
+    img.title = 'Print que o agente tirou — clique pra ver grande';
+    img.addEventListener('click', (e) => { e.stopPropagation(); verImagemGrande(src); });
+    cx.appendChild(img);
+  }
+  if (d) d.classList.add('com-print');
+  scroll(P);
+}
+function mostrarPrintsDoTurno(P, lista) {
+  const modal = $('.p-modal', P.el), cx = $('.modal-cx', modal);
+  modal.classList.remove('hidden');
+  modal.onclick = (e) => { if (e.target === modal) fecharModal(P); };
+  cx.className = 'modal-cx';
+  cx.onclick = (e) => e.stopPropagation();
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit">O que ele viu neste turno</span><button class="mo-x">' + ico('x') + '</button></div>';
+  $('.mo-x', cx).onclick = () => fecharModal(P);
+  const corpo = document.createElement('div');
+  corpo.className = 'mo-lista mo-prints';
+  for (const src of (lista || [])) {
+    const img = document.createElement('img');
+    img.className = 'mo-print';
+    img.alt = 'print tirado pelo agente';
+    img.src = src;
+    img.addEventListener('click', () => verImagemGrande(src));
+    corpo.appendChild(img);
+  }
+  cx.appendChild(corpo);
+}
+
+/* ===================== RECIBO DO TURNO =====================
+   Turno longo termina com "## Recibo" (o que fiz · o que mudou · como testar),
+   pedido nas instrucoes da casa. Aqui ele vira um cartao destacado no fim da
+   fala, em vez de mais um titulo perdido no texto. */
+function marcarRecibo(el) {
+  if (!el || el.querySelector('.recibo')) return;
+  const cabs = [...el.querySelectorAll('h1,h2,h3,h4')];
+  // titulo SO' "Recibo" (ou "Recibo do turno"): "Recibo de pagamento" e' assunto, nao fecho
+  const cab = cabs.find((h) => /^\s*recibo(\s+do\s+turno)?\s*:?\s*$/i.test(h.textContent || ''));
+  if (!cab || cab.parentNode !== el) return;   // so' no nivel de cima da fala
+  const nivel = (h) => Number(h.tagName[1]) || 9;
+  // tem outra secao do mesmo nivel (ou acima) depois dele: nao e' o fecho, nao engole o resto
+  if (cabs.slice(cabs.indexOf(cab) + 1).some((h) => nivel(h) <= nivel(cab))) return;
+  const cx = document.createElement('div');
+  cx.className = 'recibo';
+  el.insertBefore(cx, cab);
+  let n = cab;
+  while (n) { const prox = n.nextSibling; cx.appendChild(n); n = prox; }
+  cab.classList.add('recibo-tit');
+}
+
+/* ===================== PERFIS DE CONECTORES =====================
+   Cada aba escolhe quais conectores (MCP) os paineis do Claude carregam. A
+   lista de nomes vem do 'system init' das sessoes; o que a aba desliga vai pro
+   start como --disallowedTools (tira do contexto: medido 635 -> 475 ferramentas
+   desligando so' dois). */
+function registrarConectores(itens, P) {
+  const nomes = (itens || []).map((x) => String((x && x.nome) || '').trim()).filter(Boolean);
+  if (!nomes.length) return;
+  const antes = Array.isArray(cfg.conectoresVistos) ? cfg.conectoresVistos : [];
+  /* conector de PROJETO (escopo de projeto do ~/.claude.json, .mcp.json) so' aparece
+     nas sessoes daquela pasta: substituir a lista pela de UMA sessao o apagava do
+     editor. Fica a uniao; some so' quem nao e' visto ha' 30 dias. */
+  const quando = (cfg.conectoresQuando && typeof cfg.conectoresQuando === 'object') ? cfg.conectoresQuando : {};
+  const agora = Date.now();
+  for (const n of antes) if (quando[n] == null) quando[n] = agora;   // lista antiga sem data: conta a partir de agora
+  for (const n of nomes) quando[n] = agora;
+  const limite = agora - 30 * 24 * 60 * 60 * 1000;
+  const novos = [...new Set([...antes, ...nomes])].filter((n) => (quando[n] || 0) >= limite).slice(0, 120);
+  for (const n of Object.keys(quando)) if (!novos.includes(n)) delete quando[n];
+  const mudouData = nomes.some((n) => antes.includes(n));   // so' renovou a data: grava tambem, sem barulho
+  cfg.conectoresQuando = quando;
+  if (mudouData || novos.length !== antes.length || novos.some((n, i) => n !== antes[i])) { cfg.conectoresVistos = novos; window.api.setConfig(cfg); }
+}
+function conectoresForaDaAba(P) {
+  if (!P || P.engine !== 'claude' || remotoDoPane(P)) return undefined;
+  const aba = abaPorId(P.abaId);
+  const lista = aba && Array.isArray(aba.conectoresFora) ? aba.conectoresFora.filter(Boolean) : [];
+  return lista.length ? lista : undefined;
+}
+
+/* ===================== PAINEL EM WORKTREE =====================
+   Fork de CODIGO: o painel passa a trabalhar numa branch isolada que o proprio
+   Claude cria em .claude/worktrees/<nome> (flag -w, provada em --print).
+   Gostou? merge. Nao gostou? apaga a pasta. */
+function perguntarTexto(titulo, dica, inicial) {
+  return new Promise((res) => {
+    const cx = abrirModalGlobal();
+    cx.innerHTML = '<div class="mo-top"><span class="mo-tit"></span><button class="mo-x">' + ico('x') + '</button></div>'
+      + '<div class="mo-sub"></div><div class="mo-form"><input id="pedirTextoInp" maxlength="120"></div>'
+      + '<div class="mo-rodape"><button class="mo-btn destaque" id="pedirTextoOk">OK</button><button class="mo-btn" id="pedirTextoCancela">Cancelar</button></div>';
+    $('.mo-tit', cx).textContent = titulo;
+    $('.mo-sub', cx).textContent = dica || '';
+    const inp = $('#pedirTextoInp', cx);
+    inp.value = inicial || '';
+    let feito = false;
+    const fim = (v) => { if (feito) return; feito = true; fecharModalGlobal(); res(v); };
+    aoFecharModalGlobal = () => fim(null);   // veu/Esc: quem esperava a resposta nao fica pendurado
+    $('.mo-x', cx).onclick = () => fim(null);
+    $('#pedirTextoCancela', cx).onclick = () => fim(null);
+    $('#pedirTextoOk', cx).onclick = () => fim(inp.value);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); fim(inp.value); }
+      if (e.key === 'Escape') { e.preventDefault(); fim(null); }
+    });
+    setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  });
+}
+async function alternarWorktree(P) {
+  if (P.engine !== 'claude') { note(P, 'Worktree por aqui só no Claude por enquanto (o Gemini religa a cada mensagem e a flag dele ainda não foi provada assim).', true); return; }
+  if (remotoDoPane(P)) { note(P, 'Worktree não vale em painel remoto.', true); return; }
+  if (P.worktree) { await aplicarWorktree(P, null); return; }
+  const sugestao = 'exp-' + new Date().toISOString().slice(5, 10).replace('-', '');
+  const nome = await perguntarTexto('Abrir em worktree', 'Nome da branch isolada (letras, números, - e _). O Claude cria .claude/worktrees/<nome> dentro da pasta do painel e trabalha lá; a pasta principal fica como está.', sugestao);
+  if (nome == null) return;
+  const limpo = String(nome).trim().replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-._]+/, '').replace(/\.{2,}/g, '.').replace(/\.lock$/i, '').replace(/[.]+$/, '').slice(0, 40);
+  if (!limpo) return;
+  await aplicarWorktree(P, limpo);
+}
+async function aplicarWorktree(P, nome) {
+  await window.api.paneStop({ paneId: P.id, engine: P.engine });
+  if (P.morto) return;
+  destravarPainel(P);
+  P.worktree = nome;
+  // worktree e' outra arvore de arquivos: conversa nova, como na troca de pasta
+  P.resumeId = null; P.sessaoId = null; P.sessaoFile = ''; P.resumeAnterior = null;
+  P.started = false; setDot(P, 'off');
+  limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false;
+  mostrarPastaNoPainel(P);
+  atualizarGit(P);
+  savePanes();
+  note(P, nome
+    ? 'Worktree "' + nome + '": a próxima mensagem cria .claude/worktrees/' + nome + ' (branch worktree-' + nome + ') e trabalha lá. Gostou? faz merge da branch. Não gostou? "git worktree remove --force .claude/worktrees/' + nome + '".'
+    : 'Saiu do worktree: volta a trabalhar na pasta principal do painel (conversa nova).');
+}
+
+/* ===================== TORRE DE CONTROLE =====================
+   Uma tela com TODAS as sessoes: cada painel de cada aba (o que esta fazendo,
+   ha' quanto tempo, se parou esperando voce) e as sessoes do Claude que rodam
+   FORA do Cockpit nesta maquina (VS Code, terminal, Telegram). O maestro vendo
+   o palco inteiro - antes so' havia uma bolinha por aba. */
+let torreAgentes = { quando: 0, itens: [], erro: '' };
+let torreGen = 0;   // repaint em voo: o mais novo ganha, o antigo nao monta por cima
+function torreVisivel() {
+  const v = $('.side-view[data-view="torre"]');
+  return !!v && !v.classList.contains('hidden') && !$('#sidebar').classList.contains('hidden');
+}
+function estadoDoPainel(P) {
+  if (P.pedindoPerm || (P.filaPerm && P.filaPerm.length)) return { txt: 'esperando você autorizar', cls: 'espera' };
+  if (P.perguntaAberta) return { txt: 'esperando sua resposta', cls: 'espera' };
+  if (P.busy) {
+    const el = P.trabEl && $('.trab-txt', P.trabEl);
+    const leg = el ? String(el.textContent || '').replace(/^trabalhando…\s*/, '') : '';
+    return { txt: 'trabalhando há ' + duracaoCurta(Date.now() - (P.t0 || Date.now())) + (leg ? ' · ' + leg : ''), cls: 'ocupado' };
+  }
+  if (P.queued) return { txt: 'com mensagem na fila', cls: 'parado' };
+  if (P.started) return { txt: 'parado, motor ligado', cls: 'parado' };
+  if (P.hist && P.hist.length) return { txt: 'parado', cls: 'parado' };
+  return { txt: 'vazio', cls: 'vazio' };
+}
+function linhaDaTorre({ titulo, motor, estado, aoClicar, acoes }) {
+  const d = document.createElement('div');
+  d.className = 'torre-item ' + (estado.cls || '');
+  d.innerHTML = '<span class="ti-pt"></span><span class="ti-txt"><span class="ti-tit"></span><span class="ti-est"></span></span>';
+  $('.ti-tit', d).textContent = titulo + '  ·  ' + motor;
+  $('.ti-est', d).textContent = estado.txt;
+  if (aoClicar) { d.title = 'Ir até o painel'; d.addEventListener('click', aoClicar); } else d.classList.add('fora');
+  for (const ac of (acoes || [])) {
+    const b = document.createElement('button');
+    b.className = 'ti-acao';
+    b.textContent = ac.rotulo;
+    b.title = ac.dica || '';
+    b.addEventListener('click', (e) => { e.stopPropagation(); ac.aoClicar(b); });
+    d.appendChild(b);
+  }
+  return d;
+}
+async function pintarTorre(forcarAgentes) {
+  const box = $('#torre');
+  if (!box) return;
+  const gen = ++torreGen;
+  const vivos = [...new Map([...panes.values(), ...panesFundo.values()].map((P) => [P.id, P])).values()];
+  const sessoesDaqui = new Set();
+  for (const P of vivos) for (const s of [P.sessaoId, P.resumeId, P.resumeAnterior]) if (s) sessoesDaqui.add(s);
+  const blocos = [];
+  let total = 0, ocupados = 0, esperando = 0;
+  for (const ab of abasLocais()) {
+    const daAba = vivos.filter((P) => P.abaId === ab.id);
+    const idsVivos = new Set(daAba.map((P) => P.id));
+    const guardados = (ab.paineis || []).filter((f) => f && f.paneId && !idsVivos.has(f.paneId) && (f.sessaoId || f.titulo));
+    for (const f of guardados) if (f.sessaoId) sessoesDaqui.add(f.sessaoId);
+    if (!daAba.length && !guardados.length) continue;
+    const sec = document.createElement('div');
+    sec.className = 'torre-aba';
+    sec.innerHTML = '<span class="torre-cor"></span><span class="torre-nome"></span><span class="torre-conta"></span>';
+    $('.torre-cor', sec).style.background = ab.cor || (ab.tipo === 'ssh' ? '#5aa469' : '#6ea8fe');
+    $('.torre-nome', sec).textContent = ab.nome + (ab.tipo === 'ssh' ? ' 🖧' : '');
+    const n = daAba.length + guardados.length;
+    $('.torre-conta', sec).textContent = n + (n === 1 ? ' painel' : ' painéis');
+    blocos.push(sec);
+    for (const P of daAba) {
+      const e = estadoDoPainel(P);
+      total++; if (e.cls === 'ocupado') ocupados++; if (e.cls === 'espera') esperando++;
+      blocos.push(linhaDaTorre({ titulo: P.titulo || 'sem título', motor: nomeDoMotor(P.engine), estado: e, aoClicar: () => irAoPainel(P) }));
+    }
+    for (const f of guardados) {
+      total++;
+      blocos.push(linhaDaTorre({ titulo: f.titulo || 'sem título', motor: nomeDoMotor(f.engine), estado: { txt: 'guardado (volta ao abrir a aba)', cls: 'vazio' }, aoClicar: () => trocarAbaLocal(ab.id).then(() => { const Q = panes.get(f.paneId); if (Q) irAoPainel(Q); }) }));
+    }
+  }
+  const resumo = document.createElement('div');
+  resumo.className = 'torre-resumo';
+  resumo.textContent = total
+    ? total + (total === 1 ? ' painel' : ' painéis') + ' · ' + ocupados + ' trabalhando' + (esperando ? ' · ' + esperando + ' esperando você' : '')
+    : 'Nenhum painel aberto.';
+  box.innerHTML = '';
+  box.appendChild(resumo);
+  for (const b of blocos) box.appendChild(b);
+
+  // as sessoes de fora vem por IPC (claude agents --json), com cache: pinta o
+  // que ja tem e atualiza quando a resposta chega
+  if (forcarAgentes || Date.now() - torreAgentes.quando > 30000) {
+    torreAgentes.quando = Date.now();
+    try {
+      const r = await window.api.agentesClaude();
+      torreAgentes.itens = (r && Array.isArray(r.itens)) ? r.itens : [];
+      torreAgentes.erro = (r && r.error) || '';
+      torreAgentes.velha = !!(r && r.velho);
+    } catch (e) { torreAgentes.erro = String(e && e.message || e); }
+    if (gen !== torreGen) { if (torreVisivel()) pintarTorre(false); return; }   // outro repaint passou na frente: repinta ja com a lista que chegou
+    if (!torreVisivel()) return;
+  }
+  const secFora = document.createElement('div');
+  secFora.className = 'torre-aba torre-fora';
+  secFora.innerHTML = '<span class="torre-nome"></span><span class="torre-conta"></span>';
+  $('.torre-nome', secFora).textContent = 'Claude fora do Cockpit';
+  const vistos = new Set();
+  const fora = torreAgentes.itens.filter((a) => {
+    if (!a || !a.sessionId || sessoesDaqui.has(a.sessionId) || vistos.has(a.sessionId)) return false;
+    vistos.add(a.sessionId); return true;   // o mesmo id aparece 2x quando ha' sub-processo
+  });
+  $('.torre-conta', secFora).textContent = fora.length
+    ? fora.length + (fora.length === 1 ? ' sessão' : ' sessões') + (torreAgentes.velha ? ' (lista antiga: não consegui atualizar)' : '')
+    : (torreAgentes.erro ? 'não consegui listar' : 'nenhuma');
+  box.appendChild(secFora);
+  for (const a of fora) {
+    const ha = a.startedAt ? duracaoCurta(Date.now() - a.startedAt) : '';
+    box.appendChild(linhaDaTorre({
+      titulo: a.name || baseNome(a.cwd) || a.sessionId.slice(0, 8),
+      motor: ({ interactive: 'terminal / VS Code', background: 'segundo plano', subagent: 'subagente', sdk: 'via SDK', headless: 'sem tela' })[a.kind] || 'Claude',
+      estado: { txt: shortPath(a.cwd) + (ha ? ' · há ' + ha : ''), cls: 'fora' },
+      acoes: [
+        { rotulo: 'copiar comando', dica: 'copia "cd <pasta>; claude --resume <id>" pra continuar essa conversa num terminal', aoClicar: (bt) => copiarTexto('cd "' + a.cwd + '"; claude --resume ' + a.sessionId, bt) },
+        { rotulo: 'abrir a pasta', aoClicar: () => window.api.openPath(a.cwd) },
+      ],
+    }));
+  }
+}
+setInterval(() => { const b = $('#torre'); if (torreVisivel() && !(b && b.matches(':hover'))) pintarTorre(false); }, 4000);
+
+/* ===================== ROTINAS DO WINDOWS =====================
+   As automacoes agendadas que rodam sozinhas nesta maquina (backup da VPS,
+   radar diario, gestor de trafego...). A tela existe por um motivo so': quando
+   uma delas para, ninguem fica sabendo -- duas estavam paradas ha semanas em
+   silencio. Por isso o que falhou vem PRIMEIRO, em vermelho e com o motivo em
+   portugues; o resto da lista e' so' contexto. */
+let rotinasCache = { itens: [], erro: '', velha: false, quando: 0 };
+let rotinasGen = 0;                    // repaint em voo: o mais novo ganha, o antigo nao monta por cima
+const rotinasDisparando = new Set();   // trava de duplo clique, uma chave por rotina
+
+function rotinasVisivel() {
+  const v = $('.side-view[data-view="rotinas"]');
+  return !!v && !v.classList.contains('hidden') && !$('#sidebar').classList.contains('hidden');
+}
+const chaveDaRotina = (t) => String((t && t.caminho) || '') + String((t && t.nome) || '');
+
+/* "hoje 08:15", "ontem 22:00", "25/08 08:56". Data crua nao diz nada de
+   relance, e o que se quer saber aqui e' justamente "faz quanto tempo?". */
+function quandoDaRotina(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const soODia = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dias = Math.round((soODia(new Date()) - soODia(d)) / 86400000);
+  if (dias === 0) return 'hoje ' + hora;
+  if (dias === 1) return 'ontem ' + hora;
+  if (dias === -1) return 'amanhã ' + hora;
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + hora;
+}
+
+function linhaDaRotina(t) {
+  /* Quem esta' RODANDO AGORA vem primeiro na conta. O 'falhou' e' o resultado
+     da execucao ANTERIOR: se a rotina esta' trabalhando neste instante, mostrar
+     "falhou" e' dizer que esta quebrado o que esta funcionando. Ao vivo:
+     "RtkAudUService64_BG || falhou em hoje 13:00: codigo 0x40010004", com a
+     tarefa em Running. */
+  const rodando = t.estado === 'rodando';
+  const cls = rodando ? 'ocupado' : t.falhou ? 'espera' : t.estado === 'desativada' ? 'fora' : 'parado';
+  const d = document.createElement('div');
+  d.className = 'rot-item ' + cls;
+  d.innerHTML = '<span class="ri-pt"></span><span class="ri-txt"><span class="ri-tit"></span><span class="ri-est"></span><span class="ri-quando"></span></span>';
+  /* nome, motivo e horario vem do Windows: entram por textContent, nunca por
+     innerHTML -- nome de tarefa aceita < e & e viraria marcacao na tela. */
+  $('.ri-tit', d).textContent = t.nome;
+  const ultima = quandoDaRotina(t.ultima);
+  $('.ri-est', d).textContent = rodando
+    ? 'rodando agora' + (ultima ? ' · começou ' + ultima : '')
+    : t.falhou
+      ? 'falhou' + (ultima ? ' em ' + ultima : '') + ': ' + (t.motivo || 'motivo desconhecido')
+      : (ultima ? 'rodou ' + ultima : 'nunca rodou') + (t.estado === 'desativada' ? ' · desativada' : '');
+  const proxima = quandoDaRotina(t.proxima);
+  $('.ri-quando', d).textContent = proxima ? 'próxima: ' + proxima : 'sem próxima marcada';
+  // nome comprido corta com reticencias na barra de 230px: o inteiro fica na dica
+  d.title = t.nome + (t.caminho && t.caminho !== '\\' ? '  ·  ' + t.caminho : '');
+  const bt = document.createElement('button');
+  bt.className = 'ri-acao';
+  bt.textContent = 'disparar';
+  bt.title = 'Roda esta rotina agora, sem esperar a hora marcada';
+  // repaint no meio de um disparo nao pode devolver o botao habilitado
+  if (rotinasDisparando.has(chaveDaRotina(t))) { bt.disabled = true; bt.textContent = 'disparando…'; }
+  bt.addEventListener('click', (e) => { e.stopPropagation(); dispararRotina(t, bt); });
+  d.appendChild(bt);
+  return d;
+}
+
+/* Disparar dispara trabalho de verdade (o mesmo que a hora marcada dispararia):
+   pergunta antes, e trava a rotina ate' o agendador responder pra o segundo
+   clique nao mandar duas vezes. */
+async function dispararRotina(t, bt) {
+  const chave = chaveDaRotina(t);
+  if (rotinasDisparando.has(chave)) return;
+  if (!confirm('Rodar "' + t.nome + '" agora?\n\nIsso dispara a automação de verdade, na hora, como se fosse o horário marcado.')) return;
+  rotinasDisparando.add(chave);
+  if (bt) { bt.disabled = true; bt.textContent = 'disparando…'; }
+  let erro = '';
+  try {
+    const r = await window.api.rotinasDisparar({ nome: t.nome, caminho: t.caminho });
+    erro = (r && r.error) || '';
+  } catch (e) { erro = String(e && e.message || e); }
+  rotinasDisparando.delete(chave);
+  mostrarAviso({
+    id: 'rotina-' + chave,
+    texto: erro ? 'Não consegui disparar "' + t.nome + '": ' + erro : '"' + t.nome + '" foi disparada agora.',
+    tipo: erro ? 'erro' : 'info',
+  });
+  rotinasCache.quando = 0;   // o "rodando agora" tem que aparecer na proxima pintura
+  if (rotinasVisivel()) pintarRotinas(true);
+}
+
+function grupoDeRotinas(nome, quantas, extra) {
+  const g = document.createElement('div');
+  g.className = 'rot-grupo';
+  g.innerHTML = '<span class="rot-nome"></span><span class="rot-conta"></span>';
+  $('.rot-nome', g).textContent = nome;
+  $('.rot-conta', g).textContent = quantas + (quantas === 1 ? ' rotina' : ' rotinas') + (extra || '');
+  return g;
+}
+
+/* As rotinas de fabricante (OneDrive, Realtek, Zoom, Samsung, Chrome) entram
+   num grupo proprio, RECOLHIDO. Elas nao somem -- um clique abre -- mas saem do
+   caminho: o bloco vermelho existe pra ele ver as DELE, e antes metade do que
+   estava la' era ruido do sistema. */
+let rotinasOutrasAbertas = false;
+function cabecalhoDasOutras(quantas, quantasFalharam) {
+  const g = grupoDeRotinas('Do sistema e de programas', quantas,
+    quantasFalharam ? ' · ' + quantasFalharam + ' com falha' : '');
+  g.classList.add('clicavel');
+  const seta = document.createElement('span');
+  seta.className = 'rot-seta';
+  // marcacao fixa do proprio app (nunca dado do Windows): innerHTML aqui e' seguro
+  seta.innerHTML = ico(rotinasOutrasAbertas ? 'chevron-down' : 'chevron-right');
+  g.appendChild(seta);
+  g.title = rotinasOutrasAbertas ? 'Esconder as rotinas do sistema' : 'Mostrar as rotinas do sistema';
+  g.addEventListener('click', () => { rotinasOutrasAbertas = !rotinasOutrasAbertas; pintarRotinas(false); });
+  return g;
+}
+
+async function pintarRotinas(forcar) {
+  const box = $('#rotinas');
+  if (!box) return;
+  // a lista vem por IPC (PowerShell leva ~3s): pinta o que ja tem em cache e
+  // atualiza quando a resposta chegar
+  if (forcar || Date.now() - rotinasCache.quando > 20000) {
+    /* A geracao e' SO' de quem vai BUSCAR. Antes todo repaint tomava uma nova, e
+       o perdedor da corrida repintava dentro do proprio return -- isso derrubava
+       a chamada BOA que ainda estava em voo: ela voltava, via gen !== rotinasGen
+       e ia pro lixo (nem pintava, nem gravava no cache). Com o 'quando' ja'
+       atualizado, a tela ficava 20 s dizendo "Nenhuma rotina agendada nesta
+       maquina" numa maquina com 19 rotinas. Repintar nao invalida quem voa. */
+    const gen = ++rotinasGen;
+    rotinasCache.quando = Date.now();
+    /* O PowerShell leva 2,9-3,9 s e a view abria EM BRANCO. O "lendo..." e' o
+       que separa "lento" de "quebrado" -- a arvore ja' resolveu isso com o
+       .tree-carregando. So' quando ainda nao ha' lista nenhuma: por cima de uma
+       lista pronta isso seria pisca-pisca a cada atualizacao. */
+    if (!rotinasCache.itens.length && rotinasVisivel()) {
+      box.innerHTML = '';
+      const lendo = document.createElement('div');
+      lendo.className = 'rot-carregando';
+      lendo.textContent = 'Lendo as rotinas do Agendador do Windows…';
+      box.appendChild(lendo);
+    }
+    let chegou = null, erroDaChamada = '';
+    try { chegou = await window.api.rotinasListar(); }
+    catch (e) { erroDaChamada = String(e && e.message || e); }
+    /* Resposta atrasada de uma busca ultrapassada por OUTRA busca nao pode
+       sobrescrever a lista mais nova -- nem a tela, NEM o cache. Sai calada: o
+       repaint aqui e' que invalidava o vencedor. */
+    if (gen !== rotinasGen) return;
+    if (erroDaChamada) rotinasCache.erro = erroDaChamada;
+    else {
+      rotinasCache.itens = (chegou && Array.isArray(chegou.itens)) ? chegou.itens : [];
+      rotinasCache.erro = (chegou && chegou.error) || '';
+      rotinasCache.velha = !!(chegou && chegou.velho);
+    }
+    if (!rotinasVisivel()) return;
+  }
+  const porNome = (a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR');
+  /* 'dele' pode faltar numa lista guardada por uma versao antiga: na duvida a
+     rotina e' DELE, porque o erro de esconder e' pior que o de mostrar demais. */
+  const minhas = rotinasCache.itens.filter((t) => t.dele !== false);
+  const doSistema = rotinasCache.itens.filter((t) => t.dele === false).sort(porNome);
+  const falhas = minhas.filter((t) => t.falhou).sort(porNome);
+  const resto = minhas.filter((t) => !t.falhou).sort(porNome);
+  const falhasDoSistema = doSistema.filter((t) => t.falhou).length;
+  const total = rotinasCache.itens.length;
+
+  const resumo = document.createElement('div');
+  resumo.className = 'rot-resumo' + (falhas.length ? ' tem-falha' : '');
+  resumo.textContent = !total
+    ? (rotinasCache.erro ? 'Não consegui ler o Agendador do Windows.' : 'Nenhuma rotina agendada nesta máquina.')
+    : total + (total === 1 ? ' rotina' : ' rotinas') + ' · '
+      + (falhas.length
+        ? falhas.length + (falhas.length === 1 ? ' sua falhou na última vez' : ' suas falharam na última vez')
+        : (falhasDoSistema ? 'nenhuma das suas falhou' : 'todas rodaram sem erro'))
+      + (falhasDoSistema ? ' · ' + falhasDoSistema + ' do sistema também' : '')
+      + (rotinasCache.velha ? ' · lista antiga: não consegui atualizar' : '');
+
+  box.innerHTML = '';
+  box.appendChild(resumo);
+  if (rotinasCache.erro && total) {
+    const m = document.createElement('div');
+    m.className = 'rot-resumo';
+    m.textContent = rotinasCache.erro;
+    box.appendChild(m);
+  }
+  // o bloco vermelho vem primeiro e fechado numa caixa propria: e' o que a tela
+  // veio resolver, nao pode virar mais uma linha no meio de trinta
+  if (falhas.length) {
+    const cx = document.createElement('div');
+    cx.className = 'rot-caixa';
+    cx.appendChild(grupoDeRotinas('Parou de funcionar', falhas.length));
+    for (const t of falhas) cx.appendChild(linhaDaRotina(t));
+    box.appendChild(cx);
+  }
+  if (resto.length) {
+    box.appendChild(grupoDeRotinas(falhas.length ? 'As outras suas' : 'Em dia', resto.length));
+    for (const t of resto) box.appendChild(linhaDaRotina(t));
+  }
+  // as de fabricante ficam recolhidas: presentes, contadas, fora do destaque
+  if (doSistema.length) {
+    box.appendChild(cabecalhoDasOutras(doSistema.length, falhasDoSistema));
+    if (rotinasOutrasAbertas) for (const t of doSistema) box.appendChild(linhaDaRotina(t));
+  }
+}
+/* Sem a guarda do :hover o botao "disparar" some debaixo do mouse no meio do
+   clique, porque o repaint troca a linha inteira. */
+setInterval(() => { const b = $('#rotinas'); if (rotinasVisivel() && !(b && b.matches(':hover'))) pintarRotinas(false); }, 8000);
+
+/* ===================== ENTRADA SEM DIGITAR =====================
+   Outras portas alem do teclado: recorte de tela, foto pela webcam, texto
+   tirado de imagem (OCR do Windows), prompts salvos, caixa de entrada do
+   celular. O ditado e os comandos de voz moram em ligarDitado. */
+function normalizarFala(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+async function recortarTela(P) {
+  fecharMenus();
+  let r = null;
+  try { r = await window.api.recortarTela({ paneId: P.id }); } catch (e) { r = { error: String(e && e.message || e) }; }
+  if (r && r.error) note(P, 'Não consegui recortar: ' + r.error, true);
+}
+/* foto pela webcam (ou pelo celular, quando ele esta' como camera do Windows):
+   rascunho no papel, quadro fisico, o que estiver na sua frente */
+async function fotografar(P) {
+  fecharMenus();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { note(P, 'Este computador não deixa abrir a câmera por aqui.', true); return; }
+  const cx = abrirModalGlobal();
+  cx.className = 'modal-cx foto-cx';
+  cx.innerHTML = '<div class="mo-top"><span class="mo-tit">Fotografar</span><button class="mo-x">' + ico('x') + '</button></div>'
+    + '<div class="mo-sub">Enquadre e clique em Tirar. A foto entra como anexo do painel.</div>'
+    + '<video class="foto-video" autoplay playsinline muted></video>'
+    + '<div class="mo-form"><select id="fotoCam" class="menu-search"></select></div>'
+    + '<div class="mo-rodape"><button class="mo-btn destaque" id="fotoTirar">Tirar</button><button class="mo-btn" id="fotoCancela">Cancelar</button></div>';
+  const video = $('.foto-video', cx);
+  let trilha = null, fechado = false;
+  const parar = () => { try { trilha && trilha.getTracks().forEach((t) => t.stop()); } catch {} trilha = null; };
+  const fechar = () => { parar(); fecharModalGlobal(); };
+  // fechar pelo veu ou por Esc passa por aqui: a luz da camera nao fica acesa sem tela
+  aoFecharModalGlobal = () => { fechado = true; parar(); try { video.srcObject = null; } catch {} };
+  $('.mo-x', cx).onclick = fechar;
+  $('#fotoCancela', cx).onclick = fechar;
+  const abrir = async (deviceId) => {
+    parar();
+    try {
+      const nova = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      // a caixa fechou enquanto a camera acordava: a trilha atrasada morre aqui mesmo
+      if (fechado) { try { nova.getTracks().forEach((t) => t.stop()); } catch {} return; }
+      trilha = nova; video.srcObject = trilha;
+    } catch (err) {
+      if (fechado) return;
+      const nome = (err && err.name) || '';
+      // a camera lembrada sumiu (celular desconectado): esquece a preferencia e cai na padrao
+      if (deviceId && (nome === 'OverconstrainedError' || nome === 'NotFoundError' || nome === 'NotReadableError')) {
+        if (nome !== 'NotReadableError') { cfg.cameraPreferida = ''; window.api.setConfig(cfg); }   // "em uso" e' passageiro: a preferencia fica
+        return abrir(null);
+      }
+      fechar();
+      note(P, nome === 'NotAllowedError' ? 'O Windows não deixou usar a câmera. Libere em Privacidade > Câmera.'
+        : nome === 'NotFoundError' ? 'Nenhuma câmera encontrada.'
+        : nome === 'NotReadableError' ? 'A câmera está em uso por outro programa.'
+        : 'Não consegui abrir a câmera' + (nome ? ' (' + nome + ')' : '') + '.', true);
+    }
+  };
+  await abrir(cfg.cameraPreferida || null);
+  if (!trilha || fechado) return;
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    const sel = $('#fotoCam', cx);
+    sel.innerHTML = '';
+    for (const d of devs) { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Câmera'; if (d.deviceId === cfg.cameraPreferida) o.selected = true; sel.appendChild(o); }
+    sel.classList.toggle('hidden', devs.length < 2);
+    sel.addEventListener('change', () => { cfg.cameraPreferida = sel.value; window.api.setConfig(cfg); abrir(sel.value); });
+  } catch {}
+  $('#fotoTirar', cx).onclick = async () => {
+    if (!video.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    const dados = c.toDataURL('image/jpeg', 0.92);
+    fechar();
+    const r = await window.api.imagemSalvar({ dados, prefixo: 'foto' });
+    if (r && r.arquivo) { await anexar(P, [r.arquivo]); note(P, 'Foto anexada.'); }
+    else note(P, 'Não consegui guardar a foto: ' + ((r && r.error) || 'erro'), true);
+  };
+}
+/* OCR: o texto que esta' na imagem vai pro campo, editavel */
+async function extrairTexto(P, a, bt) {
+  if (a._ocr) return;   // ja esta lendo (a ficha pode ter sido repintada no meio)
+  a._ocr = true;
+  const antes = bt ? bt.textContent : '';
+  if (bt) { bt.textContent = 'lendo…'; bt.disabled = true; }
+  let r = null;
+  try { r = await window.api.ocrLer({ arquivo: a.path }); } catch (e) { r = { error: String(e && e.message || e) }; }
+  a._ocr = false;
+  if (bt && bt.isConnected) { bt.textContent = antes; bt.disabled = false; }
+  else if ((P.anexos || []).includes(a)) pintarAnexos(P);   // a barra foi repintada no meio: o botao novo estava "lendo…"
+  if (r && r.texto) { inserirNoInput(P, r.texto); note(P, 'Texto da imagem colocado no campo (confira antes de mandar).'); }
+  else note(P, 'Não achei texto nessa imagem' + (r && r.error ? ': ' + r.error : '.'), true);
+}
+/* prompts salvos: reaproveitar pedidos longos sem redigitar */
+async function salvarPromptDoCampo(P) {
+  const inp = $('.p-input', P.el);
+  const texto = (inp && inp.value.trim()) || '';
+  if (!texto) { note(P, 'Escreva o prompt no campo primeiro; depois salve por aqui.', true); return; }
+  const nome = await perguntarTexto('Salvar prompt', 'Um nome curto pra achar depois no menu /.', texto.replace(/\s+/g, ' ').slice(0, 40));
+  if (!nome || !nome.trim()) return;
+  const lista = (await window.api.promptsLer()) || [];
+  const limpo = nome.trim().slice(0, 60);
+  const semIgual = lista.filter((p) => p.nome !== limpo);
+  semIgual.unshift({ nome: limpo, texto, quando: Date.now() });
+  const r = await window.api.promptsSalvar(semIgual);
+  note(P, r && r.ok ? 'Prompt "' + limpo + '" salvo. Aparece no menu / em "Prompts salvos".' : 'Não consegui salvar: ' + ((r && r.error) || 'erro'), !(r && r.ok));
+}
+async function apagarPromptSalvo(P) {
+  const lista = (await window.api.promptsLer()) || [];
+  if (!lista.length) { note(P, 'Nenhum prompt salvo ainda.'); return; }
+  const m = novoMenu(P);
+  m.appendChild(tituloPopup('Apagar prompt salvo'));
+  m.appendChild(subPopup('Clique no que quer apagar.'));
+  for (const p of lista) m.appendChild(elItem({ ic: 'eraser', nome: p.nome, desc: String(p.texto || '').replace(/\s+/g, ' ').slice(0, 80) }, async () => {
+    const r = await window.api.promptsSalvar(lista.filter((x) => x !== p));
+    note(P, r && r.ok ? 'Prompt "' + p.nome + '" apagado.' : 'Não consegui apagar.', !(r && r.ok));
+  }));
+}
+/* caixa de entrada: audio transcrito/foto que chegou do celular (ou de um
+   script) vira tarja com "usar" - o texto vai pro campo do painel em foco, a
+   imagem vira anexo */
+function chegouNaInbox(m) {
+  if (!m || !m.arquivo) return;
+  const corta = (s) => '"' + String(s || '').replace(/\s+/g, ' ').slice(0, 80) + (String(s || '').length > 80 ? '…' : '') + '"';
+  const resumo = m.tipo === 'texto' ? corta(m.texto) : ((m.nome || 'imagem') + (m.legenda ? ' · ' + corta(m.legenda) : ''));
+  // o mesmo nome regravado: a tarja antiga apontava pro MESMO caminho, e o X dela apagava a mensagem nova
+  try { [...document.querySelectorAll('#avisos [data-aviso^="inbox-' + CSS.escape(m.nome) + '-"]')].forEach((t) => t.remove()); } catch {}
+  const idAviso = 'inbox-' + m.nome + '-' + Math.round((m.quando || Date.now()) / 1000);
+  mostrarAviso({
+    // id por arquivo E hora: o mesmo nome noutro dia nao herda o "fechado" do anterior
+    id: idAviso, tipo: 'info', fixo: true,
+    texto: (m.tipo === 'texto' ? '📱 Chegou do celular: ' : '📱 Imagem do celular: ') + resumo,
+    acao: 'usar',
+    aoClicar: () => usarDaInbox(m),
+    // o X descarta de verdade (apaga da caixa); antes so' escondia e o arquivo voltava a cada abertura
+    aoFechar: () => { try { window.api.inboxConsumir({ arquivo: m.arquivo, apagar: true }); } catch {} },
+  });
+  // o X aqui nao so' esconde: apaga da caixa. Dizer isso.
+  try { const x = document.querySelector('#avisos [data-aviso="' + CSS.escape(idAviso) + '"] .avi-x'); if (x) x.title = 'Descartar: apaga da caixa de entrada'; } catch {}
+}
+async function usarDaInbox(m) {
+  const P = focusPane || [...panes.values()][0];
+  if (!P) { mostrarAviso({ tipo: 'alerta', texto: 'Abra um painel primeiro; a mensagem continua na caixa de entrada.' }); return; }
+  let r = null;
+  try { r = await window.api.inboxConsumir({ arquivo: m.arquivo }); } catch {}
+  if (m.tipo === 'texto') { inserirNoInput(P, m.texto || ''); const c = $('.p-input', P.el); if (c) c.focus(); }
+  else if (r && r.arquivo) {
+    await anexar(P, [r.arquivo]);
+    if (m.legenda) inserirNoInput(P, m.legenda);   // a legenda da foto vai junto, no campo
+    note(P, 'Imagem do celular anexada.');
+  }
+  else note(P, 'Não consegui pegar a imagem da caixa de entrada' + (r && r.error ? ': ' + r.error : '.'), true);
+}
+
+/* ===================== QUADRO BRANCO (Excalidraw embutido) =====================
+   Desenhar arquitetura, fluxo ou tela e mandar como imagem - nenhum dos
+   concorrentes tem isso embutido. O bundle (vendor/quadro.js, 1,4 MB + fontes
+   locais) so' e' carregado na primeira abertura, pra nao pesar o boot. A cena
+   fica guardada por painel (P.quadroCena) e volta ao reabrir. */
+let quadro = null;            // { q, P } enquanto aberto
+let quadroCarregando = null;
+function carregarQuadro() {
+  if (window.Quadro) return Promise.resolve(true);
+  if (quadroCarregando) return quadroCarregando;
+  quadroCarregando = new Promise((res, rej) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = 'vendor/quadro.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = 'vendor/quadro.js';
+    s.onload = () => res(true);
+    s.onerror = () => { quadroCarregando = null; rej(new Error('não consegui carregar o quadro (vendor/quadro.js)')); };
+    document.head.appendChild(s);
+  });
+  return quadroCarregando;
+}
+async function abrirQuadro(P, cenaInicial) {
+  fecharMenus();
+  const cx = $('#quadro');
+  if (!cx || !P) return;
+  // desenho proprio do painel nao e' trocado pelo de um arquivo sem perguntar
+  if (cenaInicial && (P.quadroCena || P.quadroArquivo) && !confirm('Este painel já tem um desenho. Trocar pelo do arquivo? O atual se perde.')) return;
+  try { await carregarQuadro(); } catch (e) { note(P, String(e && e.message || e), true); return; }
+  if (quadro) fecharQuadro();
+  // cena guardada em arquivo (nao no config): le na hora de abrir. Nao passa pelo
+  // fs:read, que corta em 500 KB - um print colado ja passa disso
+  if (!cenaInicial && !P.quadroCena && P.quadroArquivo) {
+    let r = null;
+    try { r = await window.api.textoLer({ arquivo: P.quadroArquivo }); } catch (e) { r = { error: String(e && e.message || e) }; }
+    if (r && r.content) P.quadroCena = r.content;
+    else if (r && /ENOENT|no such file/i.test(String(r.error || ''))) {
+      // o arquivo sumiu de verdade: comeca do zero, mas avisando
+      P.quadroArquivo = null; savePanes();
+      note(P, 'O arquivo do desenho deste painel sumiu; o quadro abre vazio.', true);
+    } else {
+      // sem conseguir ler, abrir vazio e fechar apagaria o caminho: nao abre, nao apaga nada
+      note(P, 'Não consegui ler o desenho guardado (' + ((r && r.error) || 'erro') + '). Ele continua em ' + P.quadroArquivo + '.', true);
+      return;
+    }
+  }
+  cx.classList.remove('hidden');
+  const tema = (cfg.tema === 'claro' || cfg.tema === 'jornal') ? 'light' : 'dark';
+  let cena = cenaInicial || P.quadroCena || null;
+  let q;
+  try {
+    q = window.Quadro.montar($('#quadroArea'), { tema, langCode: 'pt-BR', cena: cena || undefined });
+  } catch (e) { cx.classList.add('hidden'); note(P, 'O quadro não abriu: ' + (e && e.message || e), true); return; }
+  quadro = { q, P };
+  $('#quadroTit').textContent = 'Quadro · ' + (P.titulo || nomeDoMotor(P.engine));
+  try { await q.pronto; } catch {}
+  focarQuadro();
+  if (cenaInicial && quadro && quadro.q === q) {
+    // cena vinda de arquivo (o agente escreveu): entra depois de pronto, ajustada na tela
+    try { await q.carregar(cenaInicial, { ajustar: true }); } catch (e) { note(P, 'Não consegui ler esse desenho: ' + (e && e.message || e), true); }
+  }
+}
+/* o foco tem que estar DENTRO do Excalidraw: com ele no campo de texto atras,
+   Esc interrompia o agente e as teclas de ferramenta iam parar no prompt */
+function focarQuadro() {
+  if (!quadro) return;
+  const alvo = $('#quadroArea .excalidraw-container') || $('#quadroArea .excalidraw');
+  if (!alvo) return;
+  if (!alvo.hasAttribute('tabindex')) alvo.setAttribute('tabindex', '-1');
+  try { alvo.focus({ preventScroll: true }); } catch {}
+  const at = document.activeElement;
+  if (at && at.closest && at.closest('.p-input')) at.blur();
+}
+/* feedback do quadro no proprio topo dele: note() e as tarjas ficam ATRAS do overlay */
+function avisarNoQuadro(msg, erro) {
+  const d = $('.quadro-dica'); if (!d) return;
+  if (!d.dataset.padrao) d.dataset.padrao = d.textContent;
+  d.textContent = msg; d.classList.toggle('erro', !!erro);
+  clearTimeout(d._t);
+  d._t = setTimeout(() => { d.textContent = d.dataset.padrao; d.classList.remove('erro'); }, 6000);
+}
+function fecharQuadro() {
+  const cx = $('#quadro');
+  if (!cx || cx.classList.contains('hidden') || !quadro) { if (cx) cx.classList.add('hidden'); quadro = null; return; }
+  const { q, P } = quadro;
+  try { P.quadroCena = q.vazio() ? null : q.cena(); } catch {}
+  try { q.destruir(); } catch {}
+  quadro = null;
+  cx.classList.add('hidden');
+  /* a cena vai pra um arquivo proprio do painel (userData/quadros); a ficha
+     guarda so' o caminho. Antes ia inteira no config a cada savePanes (ate' 200 KB
+     por painel, e um print colado passava disso e sumia calado). */
+  if (P.quadroCena) {
+    // reaproveita o arquivo que a ficha ja aponta (o id do painel muda a cada abertura do app)
+    const nomeQuadro = P.quadroArquivo ? String(P.quadroArquivo).split(/[\\/]/).pop().replace(/\.excalidraw$/, '') : 'quadro-' + P.id;
+    window.api.textoSalvar({ texto: P.quadroCena, prefixo: 'quadro', ext: 'excalidraw', nome: nomeQuadro }).then((r) => {
+      if (r && r.arquivo) { P.quadroArquivo = r.arquivo; savePanes(); }
+      else if (r && r.error) note(P, 'Não consegui guardar o desenho: ' + r.error + ' (ele fica só enquanto o app estiver aberto).', true);
+    }).catch(() => {});
+  } else { P.quadroArquivo = null; savePanes(); }
+  const c = $('.p-input', P.el);
+  if (c) c.focus();
+}
+async function anexarQuadro(comoArquivo) {
+  if (!quadro) return;
+  const { q, P } = quadro;
+  const avisa = (m, erro) => (quadro ? avisarNoQuadro(m, erro) : note(P, m, erro));
+  try {
+    if (q.vazio()) { avisa('O quadro está vazio: desenhe alguma coisa antes de anexar.', true); return; }
+    P.quadroCena = q.cena();
+    let arquivo = null;
+    if (comoArquivo) {
+      const r = await window.api.textoSalvar({ texto: P.quadroCena, prefixo: 'quadro', ext: 'excalidraw' });
+      if (!r || !r.arquivo) throw new Error((r && r.error) || 'não salvou');
+      arquivo = r.arquivo;
+    } else {
+      const blob = await q.exportarPng({ escala: 2, fundo: true, escuro: false });
+      if (!blob) { avisa('O quadro está vazio.', true); return; }
+      const dados = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('leitura do PNG')); fr.readAsDataURL(blob); });
+      const r = await window.api.imagemSalvar({ dados, prefixo: 'quadro' });
+      if (!r || !r.arquivo) throw new Error((r && r.error) || 'não salvou');
+      arquivo = r.arquivo;
+    }
+    fecharQuadro();
+    await anexar(P, [arquivo]);
+    note(P, comoArquivo ? 'Cena .excalidraw anexada: o agente pode abrir, editar e escrever de volta.' : 'Desenho anexado como imagem.');
+  } catch (e) { avisa('Não consegui anexar o quadro: ' + (e && e.message || e), true); }
+}
+(() => {
+  const liga = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); };
+  liga('quadroAnexar', () => anexarQuadro(false));
+  liga('quadroArquivo', () => anexarQuadro(true));
+  liga('quadroLimpar', () => {
+    if (!quadro) return;
+    let temCoisa = false; try { temCoisa = !quadro.q.vazio(); } catch {}
+    if (temCoisa && !confirm('Apagar tudo do quadro? Não dá pra desfazer.')) return;
+    quadro.q.limpar(); focarQuadro();
+  });
+  liga('quadroFechar', () => fecharQuadro());
+})();
+
+/* ===================== MOTOR DESATUALIZADO? =====================
+   Checa 1x por abertura (com cache de 20h no main) e avisa na faixa do topo.
+   Foi assim que se descobriu o Claude 13 versoes atras sem ninguem saber. */
+const versaoMaisNova = (a, b) => {
+  const pa = String(a || '').split('.').map(Number), pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if ((pb[i] || 0) > (pa[i] || 0)) return true; if ((pb[i] || 0) < (pa[i] || 0)) return false; }
+  return false;
+};
+async function checarVersoesDosMotores() {
+  let vs = null;
+  try { vs = await window.api.motoresVersoes(); } catch { return; }
+  if (!vs || typeof vs !== 'object') return;
+  const comandos = { claude: 'claude update', codex: 'npm i -g @openai/codex', gemini: 'npm i -g @google/gemini-cli' };
+  for (const eng of Object.keys(vs)) {
+    const v = vs[eng];
+    if (!v || !v.instalada || !v.ultima || !versaoMaisNova(v.instalada, v.ultima)) continue;
+    mostrarAviso({
+      id: 'update-' + eng,
+      tipo: 'info',
+      texto: nomeDoMotor(eng) + ' tem versão nova: ' + v.instalada + ' → ' + v.ultima + '. Atualize com "' + (comandos[eng] || '') + '" no terminal.',
+    });
+  }
+}
+
 async function novaConversa(engine) {
+  /* "Nova conversa" na coluna de um motor que nao esta na maquina abria um
+     painel que so' quebrava na primeira mensagem. A tela de abertura e o menu
+     de motores ja recusavam; aqui faltava. */
+  if (motorDisponivel[engine] === false) {
+    const recado = 'O ' + nomeDoMotor(engine) + ' não está instalado nesta máquina. ' + (COMO_INSTALAR[engine] || '');
+    const av = $('#bvAviso');
+    /* nada de alert(): ele TRAVA a janela inteira do Electron. O recado aparece
+       onde a pessoa estava olhando - a tela de abertura, o painel em foco, ou a
+       propria coluna onde ela clicou. */
+    if (av) { av.textContent = recado; av.classList.remove('hidden'); }
+    else if (focusPane) note(focusPane, recado, true);
+    else {
+      const box = caixaDoMotor('hist', engine);
+      if (box) {
+        box.innerHTML = '';
+        const d = document.createElement('div');
+        d.className = 'hist-load';
+        d.textContent = recado;
+        box.appendChild(d);
+      }
+    }
+    return;
+  }
   // a pasta tem que ser a da ABA: numa aba de servidor, cfg.defCwd e' um caminho
   // do Windows e o painel tentava entrar nele dentro do Linux
-  const P = totalDePaineis() < 12
+  const P = cabeMaisPainel()
     ? newPane({ engine, cwd: cwdPadraoDaAba(abaAtual()), abaId: cfg.abaAtiva })
     : focusPane;
   if (!P) return;
   await window.api.paneStop({ paneId: P.id, engine: P.engine });
   if (P.morto) return;
   destravarPainel(P);
+  if (P.engine !== engine) P.model = '';   // o modelo (ou o comando ACP) era do motor anterior
   P.engine = engine; P.resumeId = null; P.started = false; P.titulo = ''; P.hist = [];
+  P.mode = modoValido(engine, P.mode);   // "Auto" do Claude nao existe no ACP: o rotulo mentia e o agente rodava em manual
   // painel reaproveitado: sem isto ele voltava na conversa antiga ao reabrir o app
-  P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false;
+  P.sessaoId = null; P.sessaoFile = ''; P.sessaoRemota = false; P.resumeAnterior = null;
   P.tokens = 0; P.janela = 0; P.passarContexto = null; P.nomeManual = false;
   P.anexos = []; pintarAnexos(P); pintarTokens(P); esconderPermissao(P);
   P.chat.innerHTML = ''; P.blocks.clear(); P.tools.clear(); esquecerPassos(P); pintarNome(P);
-  fillModels(P); paintEngine(P); setDot(P, 'off'); setFocus(P);
+  limparPlano(P); limparAuditoria(P); zerarTurno(P); P.forkPendente = false; P.avisoModelo = null; P.acpInfo = null; P.acpModelos = null; P.worktree = (engine === 'claude' ? P.worktree : null);   // conversa nova na mesma arvore continua no worktree
+  fillModels(P); paintEngine(P); pintarModo(P); setDot(P, 'off'); setFocus(P);
   savePanes();
   $('.p-input', P.el).focus();
 }
@@ -5056,7 +7973,7 @@ document.querySelectorAll('[data-novo-grupo]').forEach(b =>
   b.addEventListener('click', () => abrirModalGrupo(null)));
 
 /* ============ interface geral ============ */
-$('#btnAddPane').addEventListener('click', () => { if (totalDePaineis() < 12) newPane(); });
+$('#btnAddPane').addEventListener('click', () => { if (cabeMaisPainel()) newPane(); });
 $('#btnPickFolder').addEventListener('click', async () => {
   if (!focusPane) return;
   $('.p-cwd', focusPane.el).click();
@@ -5074,10 +7991,9 @@ $$('.tema-bt').forEach(b => b.addEventListener('click', async () => {
 $('#chkRobos').addEventListener('change', async (e) => {
   cfg.verRobos = e.target.checked;
   await window.api.setConfig(cfg);
-  histCache.claude = null; histCache.codex = null;
+  for (const eng of MOTORES) histCache[eng] = null;
   const aberta = $$('.side-view').find(v => !v.classList.contains('hidden'));
-  if (aberta && aberta.dataset.view === 'hclaude') loadHist('claude', true);
-  if (aberta && aberta.dataset.view === 'hcodex') loadHist('codex', true);
+  for (const eng of MOTORES) if (aberta && aberta.dataset.view === 'h' + eng) loadHist(eng, true);
 });
 
 $('#btnFoto').addEventListener('click', async () => {
@@ -5103,10 +8019,19 @@ document.querySelectorAll('.act').forEach(b => b.addEventListener('click', () =>
   document.querySelectorAll('.act').forEach(x => x.classList.toggle('active', x === b));
   document.querySelectorAll('.side-view').forEach(x => x.classList.toggle('hidden', x.dataset.view !== v));
   $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden');
-  if (v === 'hclaude') { loadHist('claude'); carregarUsoSidebar('claude'); pintarAbasGrupo('claude'); pintarCartaoConta('claude'); }
-  if (v === 'hcodex') { loadHist('codex'); carregarUsoSidebar('codex'); pintarAbasGrupo('codex'); pintarCartaoConta('codex'); }
+  if (v === 'torre') pintarTorre(true);
+  if (v === 'rotinas') pintarRotinas(true);
+  barraDaEsquerdaApareceu();   // abriu na view de arquivos: a arvore adiada carrega aqui
+  for (const eng of MOTORES) {
+    if (v !== 'h' + eng) continue;
+    loadHist(eng); carregarUsoSidebar(eng); pintarAbasGrupo(eng); pintarCartaoConta(eng);
+  }
 }));
-function toggleSidebar() { $('#sidebar').classList.toggle('hidden'); $('#dragbar').classList.toggle('hidden'); }
+const btTorre = document.getElementById('btnTorreAtualizar');
+if (btTorre) { btTorre.innerHTML = ico('refresh-cw'); btTorre.addEventListener('click', () => pintarTorre(true)); }
+const btRotinas = document.getElementById('btnRotinasAtualizar');
+if (btRotinas) { btRotinas.innerHTML = ico('refresh-cw'); btRotinas.addEventListener('click', () => pintarRotinas(true)); }
+function toggleSidebar() { $('#sidebar').classList.toggle('hidden'); $('#dragbar').classList.toggle('hidden'); barraDaEsquerdaApareceu(); }
 
 (() => {
   let drag = false;
@@ -5139,7 +8064,7 @@ document.addEventListener('keydown', (e) => {
     if (noTerm) return;
     e.preventDefault(); buscarNoPainel(focusPane); return;
   }
-  // Ctrl+0 vai pro ultimo painel (cobre o 10, 11 e 12, que nao tem numero)
+  // Ctrl+0 vai pro ultimo painel (Ctrl+1..9 cobrem os nove primeiros)
   if (e.key === '0') {
     const arr = [...panes.values()];
     const P = arr[arr.length - 1];
@@ -5157,7 +8082,7 @@ function irParaPainel(passo) {
   if (alvo) { setFocus(alvo); $('.p-input', alvo.el).focus(); }
 }
 function abrirBuscaDeConversa() {
-  const eng = (focusPane && focusPane.engine === 'codex') ? 'codex' : 'claude';
+  const eng = (focusPane && MOTORES.includes(focusPane.engine)) ? focusPane.engine : 'claude';
   const bt = document.querySelector('.act[data-view="h' + eng + '"]');
   if (bt && !bt.classList.contains('active')) bt.click();
   else { $('#sidebar').classList.remove('hidden'); $('#dragbar').classList.remove('hidden'); }
@@ -5171,13 +8096,18 @@ window.api.onMenu((a) => {
   const noTerminal = document.activeElement && document.activeElement.closest
     && document.activeElement.closest('.term-wrap');
   if (noTerminal && ['clearPane', 'focarInput', 'novaConversa', 'buscarConversa', 'toggleSidebar'].includes(a)) return;
-  if (a === 'newPane') { if (totalDePaineis() < 12) newPane(); }
+  // quadro aberto: Ctrl+K e' "link" no Excalidraw, nao "limpar a conversa"; Ctrl+W fecharia o dono do desenho.
+  // So' "parar" (interromper o agente) passa: quem ve besteira acontecendo nao pode ter que fechar o quadro antes
+  if (quadro && a !== 'parar') return;
+  if (a === 'newPane') { if (cabeMaisPainel()) newPane(); }
   else if (a === 'closePane' && focusPane) closePane(focusPane.id);
   else if (a === 'pickFolder' && focusPane) $('.p-cwd', focusPane.el).click();
   else if (a === 'toggleSidebar') toggleSidebar();
   else if (a === 'novaConversa') novaConversa(focusPane ? focusPane.engine : (cfg.lastEngine || 'claude'));
   else if (a === 'buscarConversa') abrirBuscaDeConversa();
   else if (a === 'focarInput' && focusPane) $('.p-input', focusPane.el).focus();
+  else if (a === 'ditar' && focusPane) $('.p-mic', focusPane.el).click();   // Ctrl+Shift+Space, de qualquer lugar
+  else if (a === 'recortar' && focusPane) recortarTela(focusPane);            // Ctrl+Shift+R
   else if (a === 'painelProximo') irParaPainel(1);
   else if (a === 'painelAnterior') irParaPainel(-1);
   else if (a === 'parar') {
@@ -5199,6 +8129,7 @@ function devolverOCursor() {
     || document.activeElement === document.documentElement;
   if (!solto) return;                       // voce ja esta digitando em algum lugar: nao atrapalha
   if (!$('#modalGrupo').classList.contains('hidden')) return;   // tem caixa aberta: o foco e' dela
+  if (quadro) return;                                            // quadro aberto: o foco e' do desenho
   const P = focusPane || [...panes.values()][0];
   if (!P || !P.el || !P.el.isConnected) return;
   if (!$('.p-modal', P.el).classList.contains('hidden')) return;  // janelinha do painel aberta
@@ -5210,8 +8141,13 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) setT
 
 /* ============ boot ============ */
 (async function boot() {
-  $('#svgClaude').innerHTML = '<path d="' + LOGO.claude + '"/>';
-  $('#svgCodex').innerHTML = '<path d="' + LOGO.codex + '"/>';
+  /* o <svg> de cada icone da barra nasce VAZIO no HTML e e' preenchido aqui.
+     Com dois motores novos, escrever os dois a mao deixava o Gemini e o Grok
+     como dois botoes invisiveis ocupando espaco na barra. */
+  for (const eng of MOTORES) {
+    const el = document.getElementById('svg' + (CAIXA_MOTOR[eng] || ''));
+    if (el) el.innerHTML = '<path d="' + (LOGO[eng] || LOGO.claude) + '"/>';
+  }
   HOME = await window.api.home();
   cfg = await window.api.getConfig();
   cfg.defCwd = cfg.defCwd || HOME;
@@ -5223,46 +8159,156 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) setT
   }
   if (!cfg.abaAtiva || !abaPorId(cfg.abaAtiva)) cfg.abaAtiva = cfg.abas[0].id;
   pintarAbasLocal();
-  carregarUsoSidebar('claude'); carregarUsoSidebar('codex');
-  pintarCartaoConta('claude'); pintarCartaoConta('codex');
-  pintarAbasGrupo('claude'); pintarAbasGrupo('codex');
-  setInterval(() => { carregarUsoSidebar('claude'); carregarUsoSidebar('codex'); }, 5 * 60 * 1000);
+  for (const eng of MOTORES) { carregarUsoSidebar(eng); pintarCartaoConta(eng); pintarAbasGrupo(eng); }
+  setInterval(() => { for (const eng of MOTORES) carregarUsoSidebar(eng); }, 5 * 60 * 1000);
   $('#defCwd').textContent = cfg.defCwd;
   $('#chkRobos').checked = !!cfg.verRobos;
+  const chkSug = $('#chkSugestoes');
+  if (chkSug) {
+    chkSug.checked = cfg.sugestoes !== false;
+    chkSug.addEventListener('change', async (e) => {
+      cfg.sugestoes = !!e.target.checked;
+      await window.api.setConfig(cfg);
+      if (!cfg.sugestoes) for (const Q of panes.values()) limparSugestoes(Q);
+    });
+  }
+  const selVoz = $('#selMotorVoz');
+  if (selVoz) {
+    selVoz.value = cfg.motorVoz === 'parakeet' ? 'parakeet' : 'whisper';
+    const pintarInfoVoz = async () => {
+      const el = $('#motorVozInfo');
+      if (!el) return;
+      if (selVoz.value !== 'parakeet') { el.textContent = 'Whisper base (legenda) + small (texto final), 100% local.'; return; }
+      el.textContent = 'Conferindo o modelo do Parakeet…';
+      try {
+        const i = await window.api.audioMotorInfo();
+        if (i && i.error) el.textContent = i.error;
+        else if (i && i.baixado) el.textContent = 'Parakeet v3 pronto (modelo de 640 MB já baixado). Um processo faz legenda e texto final.';
+        else el.textContent = 'Modelo do Parakeet ainda não baixado. Rode uma vez no terminal: ' + ((i && i.comando) || 'ouvinte-parakeet.py --baixar') + ' e escolha o Parakeet de novo.';
+      } catch { el.textContent = 'Não consegui conferir o Parakeet.'; }
+    };
+    // o main pode recusar o motor salvo (modelo sumiu, venv quebrado): o seletor acompanha o que esta' valendo
+    window.api.audioMotor({ motor: selVoz.value }).then((r) => {
+      if (r && r.error) { selVoz.value = (r.motor === 'parakeet') ? 'parakeet' : 'whisper'; cfg.motorVoz = selVoz.value; window.api.setConfig(cfg); const el = $('#motorVozInfo'); if (el) el.textContent = r.error; return; }
+      pintarInfoVoz();
+    }).catch(() => pintarInfoVoz());
+    selVoz.addEventListener('change', async () => {
+      let r = null;
+      try { r = await window.api.audioMotor({ motor: selVoz.value }); } catch (e) { r = { error: String(e && e.message || e) }; }
+      if (r && r.error) {
+        // o main recusou (ex: modelo do Parakeet nao baixado): o seletor volta e a nota explica
+        selVoz.value = (r.motor === 'parakeet') ? 'parakeet' : 'whisper';
+        const el = $('#motorVozInfo'); if (el) el.textContent = r.error;
+        cfg.motorVoz = selVoz.value; await window.api.setConfig(cfg);
+        return;
+      }
+      cfg.motorVoz = selVoz.value;
+      await window.api.setConfig(cfg);
+      pintarInfoVoz();
+    });
+  }
+  const chkAtalhos = $('#chkAtalhosGlobais');
+  if (chkAtalhos) {
+    chkAtalhos.checked = !!cfg.atalhosGlobais;
+    chkAtalhos.addEventListener('change', async (e) => {
+      cfg.atalhosGlobais = !!e.target.checked;
+      await window.api.setConfig(cfg);
+      try {
+        const r = await window.api.atalhosLigar({ ligado: cfg.atalhosGlobais });
+        const av = $('#atalhosAviso');
+        if (av) { av.textContent = (r && r.falhos && r.falhos.length) ? 'Atalho já usado por outro programa: ' + r.falhos.join(', ') + '. Aqui vale só pelo menu.' : ''; av.classList.toggle('hidden', !av.textContent); }
+      } catch {}
+    });
+  }
+  const chkVoz = $('#chkVozManda');
+  if (chkVoz) {
+    chkVoz.checked = !!cfg.vozManda;
+    chkVoz.addEventListener('change', async (e) => { cfg.vozManda = !!e.target.checked; await window.api.setConfig(cfg); });
+  }
+  // caixa de entrada (celular/bots) e atalhos globais que nao pegaram
+  try {
+    const pasta = await window.api.inboxPasta();
+    const el = $('#inboxPasta'); if (el) el.textContent = pasta || '—';
+    const bt = $('#btnInboxAbrir'); if (bt) bt.addEventListener('click', () => window.api.openPath(pasta));
+    const est = await window.api.atalhosEstado();
+    const av = $('#atalhosAviso');
+    if (av && est && est.falhos && est.falhos.length) { av.textContent = 'Atalho já usado por outro programa: ' + est.falhos.join(', ') + '. Aqui vale só pelo menu.'; av.classList.remove('hidden'); }
+  } catch {}
+  window.api.onInbox((m) => chegouNaInbox(m));
+  if (window.api.inboxOuvindo) window.api.inboxOuvindo().catch(() => {});   // so' agora o main pode anunciar
+  // o Parakeet nao subiu (modelo nao baixado etc.): o main ja voltou pro Whisper; a tela acompanha
+  if (window.api.onVozMotorCaiu) window.api.onVozMotorCaiu((m) => {
+    cfg.motorVoz = 'whisper'; window.api.setConfig(cfg);
+    const sel = $('#selMotorVoz'); if (sel) { sel.value = 'whisper'; sel.dispatchEvent(new Event('change')); }
+    mostrarAviso({ id: 'voz-caiu', tipo: 'alerta', texto: 'O Parakeet não subiu (' + String((m && m.motivo) || 'sem motivo').slice(0, 140) + '). Voltei o ditado pro Whisper.' });
+  });
+  // motor desatualizado? checa com calma, depois que a tela ja assentou
+  setTimeout(checarVersoesDosMotores, 12000);
   aplicarTema(cfg.tema);
   if (EH_WIN) $$('[title]').forEach(el => { if (el.title.includes('⌘')) el.title = el.title.replace(/⌘/g, 'Ctrl+'); });
   $('#verLine').textContent = 'Cockpit 1.0 · até 12 painéis lado a lado';
   repintarAvatares();
+  verMotoresDisponiveis();
   window.api.codexModels().then(ms => { if (ms && ms.length) { MODELOS_CODEX = ms; for (const P of panes.values()) if (P.engine === 'codex') fillModels(P); } });
   // tela de abertura: escolher com quem vai trabalhar
-  $('#bvClaude').innerHTML = svgMotor('claude');
-  $('#bvCodex').innerHTML = svgMotor('codex');
+  for (const eng of MOTORES) { const el = caixaDoMotor('bv', eng); if (el) el.innerHTML = svgMotor(eng); }
   $('#bvDoisA').innerHTML = svgMotor('claude');
   $('#bvDoisB').innerHTML = svgMotor('codex');
   // barra de icones aparece, a lateral comeca fechada, e a area de paineis fica fora do caminho
   $('#sidebar').classList.add('hidden'); $('#dragbar').classList.add('hidden');
   $('#panes').style.display = 'none';
   // tinha conversa aberta da ultima vez? volta tudo como estava, sem passar pela abertura
-  const salvos = ((abaAtual() && abaAtual().paineis) || []).filter(p => p && (p.sessaoId || p.contexto || p.rascunho));
+  const salvos = ((abaAtual() && abaAtual().paineis) || []).filter(fichaVale);
   if (salvos.length) {
     if (!MODELOS_CODEX && salvos.some(p => p.engine === 'codex')) {
       try { const ms = await window.api.codexModels(); if (ms && ms.length) MODELOS_CODEX = ms; } catch {}
     }
-    await restaurarPaineis(salvos, cfg.abaAtiva);
+    /* mesma trava da troca de aba: restaurar uma aba SSH leva dezenas de
+       segundos (uma conexao por conversa) e o clique impaciente numa outra aba
+       atropelava a restauracao. Agora o clique fica guardado pro fim. */
+    trocandoAba = true; abaIndoPara = cfg.abaAtiva;
+    const gen = ++abaGen;
+    try { await restaurarPaineis(salvos, cfg.abaAtiva, gen); }
+    finally {
+      trocandoAba = false; abaIndoPara = null;
+      const proxima = abaPendente; abaPendente = null;
+      if (proxima && proxima !== cfg.abaAtiva) trocarAbaLocal(proxima);
+    }
     return;
   }
   const comecar = (quais) => {
+    /* motor que nao esta na maquina nao pode abrir painel: antes ele abria e
+       so quebrava depois que voce mandasse a primeira mensagem. */
+    const fora = quais.filter((m) => motorDisponivel[m] === false);
+    if (fora.length) {
+      const av = $('#bvAviso');
+      if (av) {
+        av.textContent = 'O ' + fora.map(nomeDoMotor).join(' e o ') + ' não está instalado nesta máquina. '
+          + (COMO_INSTALAR[fora[0]] || '');
+        av.classList.remove('hidden');
+      }
+      return;
+    }
     sairDaAbertura();
-    for (const m of quais) newPane({ engine: m, cwd: cfg.defCwd || HOME, abaId: cfg.abaAtiva });
-    setFocus([...panes.values()][0]);
+    // lote tambem aqui: dois motores de uma vez sao dois paineis, e numa aba
+    // remota isso eram duas conexoes SSH pra mesma pasta
+    comMontagemAdiada(() => {
+      /* a pasta e' a da ABA (mesma correcao do trocarMotor): numa aba de
+         servidor, cfg.defCwd e' um caminho do Windows, e o painel nascia com
+         P.cwd = C:\Users\... -- a arvore e o "@" mandavam cd 'C:\Users\...'
+         pro Ubuntu e o servidor respondia "nao consegui abrir a pasta". */
+      for (const m of quais) newPane({ engine: m, cwd: cwdPadraoDaAba(abaAtual()), abaId: cfg.abaAtiva });
+      setFocus([...panes.values()][0]);
+    });
     setTimeout(() => { const P = [...panes.values()][0]; if (P) $('.p-input', P.el).focus(); }, 120);
   };
   $$('.bv-bt[data-motor]').forEach(b => b.addEventListener('click', () => comecar([b.dataset.motor])));
   $('.bv-dois').addEventListener('click', () => comecar(['claude', 'codex']));
   document.addEventListener('keydown', function abertura(e) {
     if (!$('#boasvindas')) { document.removeEventListener('keydown', abertura); return; }
-    if (e.key === '1') comecar(['claude']);
-    if (e.key === '2') comecar(['codex']);
+    // 1 a 5: a ordem e a mesma da lista de motores
+    const escolhido = /^[1-9]$/.test(e.key) ? MOTORES[Number(e.key) - 1] : null;
+    if (escolhido) comecar([escolhido]);
     if (e.key === 'Enter') comecar(['claude', 'codex']);
   });
 })();

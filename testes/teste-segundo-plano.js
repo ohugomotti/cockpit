@@ -32,6 +32,7 @@ function montar() {
     effort: 'medium', sessaoFile: '', sessaoRemota: false, passarContexto: null, el: {},
   });
   const ctx = {
+  ...require('./raiz').globaisFalsos(),
     console, cfg,
     panes: new Map(), panesFundo: new Map(),
     window: { api: { setConfig: () => {} } },

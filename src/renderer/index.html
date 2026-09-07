@@ -31,6 +31,21 @@
     <button class="act ic-codex" data-view="hcodex" title="Conversas do Codex">
       <svg viewBox="0 0 24 24" class="logo-motor" id="svgCodex"></svg>
     </button>
+    <button class="act ic-gemini" data-view="hgemini" title="Conversas do Gemini">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgGemini"></svg>
+    </button>
+    <button class="act ic-grok" data-view="hgrok" title="Conversas do Grok">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgGrok"></svg>
+    </button>
+    <button class="act ic-acp" data-view="hacp" title="Conversas do ACP (agentes genéricos)">
+      <svg viewBox="0 0 24 24" class="logo-motor" id="svgAcp"></svg>
+    </button>
+    <button class="act" data-view="torre" title="Torre de controle: todas as sessões, aqui e fora do Cockpit">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+    </button>
+    <button class="act" data-view="rotinas" title="Rotinas: as tarefas agendadas que rodam sozinhas nesta máquina">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+    </button>
     <button class="act" data-view="settings" title="Ajustes">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
     </button>
@@ -65,6 +80,50 @@
       </div>
       <div class="hist" id="histCodex"></div>
     </div>
+    <div class="side-view hidden" data-view="hgemini">
+      <div class="side-head"><span>Conversas do Gemini</span><button class="mini" data-reload="gemini"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="conta-cartao" id="contaGemini"></div>
+      <div class="uso-side" id="usoGemini"></div>
+      <div class="abas-grupo" id="abasGemini"></div>
+      <input class="side-busca" data-busca="gemini" placeholder="Buscar conversa…">
+      <div class="chats-btns">
+        <button class="new-chat" data-new="gemini"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+        <button class="new-grupo" data-novo-grupo title="Criar grupo"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></button>
+      </div>
+      <div class="hist" id="histGemini"></div>
+    </div>
+    <div class="side-view hidden" data-view="hgrok">
+      <div class="side-head"><span>Conversas do Grok</span><button class="mini" data-reload="grok"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="conta-cartao" id="contaGrok"></div>
+      <div class="uso-side" id="usoGrok"></div>
+      <div class="abas-grupo" id="abasGrok"></div>
+      <input class="side-busca" data-busca="grok" placeholder="Buscar conversa…">
+      <div class="chats-btns">
+        <button class="new-chat" data-new="grok"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+        <button class="new-grupo" data-novo-grupo title="Criar grupo"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></button>
+      </div>
+      <div class="hist" id="histGrok"></div>
+    </div>
+    <div class="side-view hidden" data-view="hacp">
+      <div class="side-head"><span>Conversas do ACP</span><button class="mini" data-reload="acp"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></svg></button></div>
+      <div class="conta-cartao" id="contaAcp"></div>
+      <div class="uso-side" id="usoAcp"></div>
+      <div class="abas-grupo" id="abasAcp"></div>
+      <input class="side-busca" data-busca="acp" placeholder="Buscar conversa…">
+      <div class="chats-btns">
+        <button class="new-chat" data-new="acp"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg> Nova conversa</button>
+        <button class="new-grupo" data-novo-grupo title="Criar grupo"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></button>
+      </div>
+      <div class="hist" id="histAcp"></div>
+    </div>
+    <div class="side-view hidden" data-view="torre">
+      <div class="side-head"><span>Torre de controle</span><button class="mini" id="btnTorreAtualizar" title="Atualizar agora"></button></div>
+      <div class="torre" id="torre"></div>
+    </div>
+    <div class="side-view hidden" data-view="rotinas">
+      <div class="side-head"><span>Rotinas do Windows</span><button class="mini" id="btnRotinasAtualizar" title="Atualizar agora"></button></div>
+      <div class="rot" id="rotinas"></div>
+    </div>
     <div class="side-view hidden" data-view="settings">
       <div class="side-head"><span>Ajustes</span></div>
       <div class="settings">
@@ -91,9 +150,32 @@
         <label class="chave"><input type="checkbox" id="chkRobos"><span>Mostrar também as conversas dos robôs</span></label>
         <p class="hint">Desligado, a lista traz só o que você conversou aqui ou no VSCode. Ligado, entram também as do robô do WhatsApp e dos agendados.</p>
 
+        <label>Sugestões</label>
+        <label class="chave"><input type="checkbox" id="chkSugestoes"><span>Sugerir a próxima mensagem depois de cada turno</span></label>
+        <p class="hint">Só no Claude. O chip preenche o campo — nunca envia sozinho. Vale a partir da próxima conversa (ou quando o painel religar).</p>
+
+        <label>Motor de voz</label>
+        <select id="selMotorVoz" class="menu-search">
+          <option value="whisper">Whisper (base + small — o de sempre)</option>
+          <option value="parakeet">Parakeet v3 (um processo, 4× mais rápido, não trava em silêncio)</option>
+        </select>
+        <p class="hint" id="motorVozInfo"></p>
+
+        <label>Voz e outras entradas</label>
+        <label class="chave"><input type="checkbox" id="chkVozManda"><span>Falar e mandar: ao parar de ditar com 3+ palavras, envia sozinho (Shift+clique no microfone para parar sem enviar)</span></label>
+        <label class="chave"><input type="checkbox" id="chkAtalhosGlobais"><span>Atalhos globais (valem com o Cockpit atrás): <span class="mono">Ctrl+Alt+Space</span> dita no painel em foco · <span class="mono">Ctrl+Alt+R</span> recorta a tela</span></label>
+        <p class="hint">Desligados por padrão: um atalho global toma a combinação de todos os outros programas enquanto o Cockpit estiver aberto (e Ctrl+Alt é o AltGr de alguns teclados). Comandos de voz durante o ditado: "manda", "cancela", "apaga isso", "próximo painel".</p>
+        <p class="hint hidden" id="atalhosAviso"></p>
+        <p class="hint">Caixa de entrada do celular/bots: arquivo <span class="mono">.txt</span> (áudio já transcrito) ou imagem que cair nesta pasta vira aviso com "usar":</p>
+        <div class="path-box" id="inboxPasta">—</div>
+        <button class="btn-wide" id="btnInboxAbrir">Abrir a pasta</button>
+
+        <label>Motor ACP</label>
+        <p class="hint">O quinto motor fala o <span class="mono">Agent Client Protocol</span>: qualquer agente compatível entra por um comando (o Gemini com <span class="mono">--acp</span> já foi provado nesta máquina; Claude Code e Codex têm adaptadores). Escolha o agente no botão de modelo do painel.</p>
+
         <div class="sep"></div>
         <p class="hint"><b>Acesso total ligado.</b> Os painéis enxergam o computador inteiro, não só a pasta escolhida. A pasta serve só como ponto de partida.</p>
-        <p class="hint">Codex usa a sua conta e config do <span class="mono">~/.codex</span>. Claude usa o Claude Code que já está instalado, com suas skills e memória.</p>
+        <p class="hint">Cada motor usa a conta e a configuração que já estão na máquina: o Claude Code com suas skills e memória, o Codex com o <span class="mono">~/.codex</span>, o Gemini com o <span class="mono">~/.gemini</span> e o Grok com o <span class="mono">~/.grok</span>.</p>
         <div class="sep"></div>
         <p class="hint mono" id="verLine"></p>
       </div>
@@ -113,7 +195,20 @@
           <span class="bv-ico" id="bvCodex"></span>
           <span class="bv-n">Codex</span>
         </button>
+        <button class="bv-bt" data-motor="gemini">
+          <span class="bv-ico" id="bvGemini"></span>
+          <span class="bv-n">Gemini</span>
+        </button>
+        <button class="bv-bt" data-motor="grok">
+          <span class="bv-ico" id="bvGrok"></span>
+          <span class="bv-n">Grok</span>
+        </button>
+        <button class="bv-bt" data-motor="acp">
+          <span class="bv-ico" id="bvAcp"></span>
+          <span class="bv-n">ACP</span>
+        </button>
       </div>
+      <p class="bv-aviso hidden" id="bvAviso"></p>
       <button class="bv-bt bv-dois">
         <span class="bv-ico peq" id="bvDoisA"></span>
         <span class="bv-mais">+</span>
@@ -127,6 +222,20 @@
 </div>
 
 <div class="modal global hidden" id="modalGrupo"><div class="modal-cx"></div></div>
+
+<!-- quadro branco (Excalidraw embutido): o script e o css sao carregados na primeira abertura -->
+<div id="quadro" class="hidden">
+  <div class="quadro-top">
+    <span class="quadro-tit" id="quadroTit">Quadro</span>
+    <span class="quadro-dica">Desenhe, escreva, cole print. Toque e caneta funcionam.</span>
+    <span class="quadro-espaco"></span>
+    <button class="mo-btn destaque" id="quadroAnexar" title="Exporta o desenho como PNG e anexa no painel">Anexar como imagem</button>
+    <button class="mo-btn" id="quadroArquivo" title="Salva a cena como .excalidraw e anexa: o agente pode editar e devolver">Anexar .excalidraw</button>
+    <button class="mo-btn" id="quadroLimpar" title="Apaga tudo do quadro">Limpar</button>
+    <button class="mo-btn" id="quadroFechar" title="Fecha e guarda o desenho neste painel">Fechar</button>
+  </div>
+  <div id="quadroArea"></div>
+</div>
 <div class="pop-global hidden" id="popGrupo"></div>
 
 <template id="tplPane">
@@ -158,6 +267,7 @@
         <div class="pe-txt">Escreva embaixo pra começar</div>
       </div>
     </div>
+    <div class="pane-perg hidden"></div>
     <div class="pane-perm hidden">
       <div class="pp-txt"></div>
       <div class="pp-btns"><button class="pp-yes">Permitir</button><button class="pp-sempre hidden">Sempre permitir</button><button class="pp-no">Negar</button></div>
