@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Motti IA · favicon. No quadrado cheio a lógica inverte (MARCA.md):
+       fundo índigo, trilho branco, ponto em azul profundo. -->
+  <rect width="128" height="128" fill="#2F55FF"/>
+  <g transform="translate(9.5,17) scale(0.955)">
+    <path d="M10 92 L10 28 A16 16 0 0 1 42 28 L42 70 A16 16 0 0 0 74 70 L74 28 A16 16 0 0 1 106 28 L106 92"
+          stroke="#FFFFFF" stroke-width="12" fill="none" stroke-linecap="butt"/>
+    <circle cx="58" cy="50" r="7" fill="#07182F"/>
+  </g>
+</svg>

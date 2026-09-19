@@ -82,7 +82,7 @@ function avaliar(wsUrl, expressao) {
   const relatorio = await avaliar(alvo.webSocketDebuggerUrl, `(async () => {
     const r = {};
     r.motoresNaTabela = (typeof MOTS !== 'undefined' ? MOTS : []).map(m => m.id + (m.instalado ? '' : ' (fora)'));
-    r.botoesDaChave = [...document.querySelectorAll('.pane .p-chave .ch-lado')].map(b => b.dataset.motor);
+    r.botoesDaChave = [...document.querySelectorAll('.pane .p-motor .pm-nome')].map(b => b.textContent.trim());
     r.paineis = document.querySelectorAll('.pane').length;
     r.tituloBarra = (document.querySelector('#tbTitle') || {}).textContent || '';
     r.erros = (window.__errosDeTela || []);

@@ -111,9 +111,14 @@ const SAIDA_BOA = JSON.stringify([
     porNome['OneDrive Per-Machine Standalone Update Task'].motivo);
   checa('estado do Windows vira palavra em portugues',
     porNome.BackupVPSHostinger.estado === 'pronta' && porNome.UserModeWorker.estado === 'rodando' && porNome.SoftLandingCreativeManagementTask.estado === 'desativada');
+  /* leva 41 (A4): quatro campos novos, todos texto -- descricao (o que ela faz,
+     escrito no Agendador), repete (de quanto em quanto roda), pasta (o "abrir a
+     pasta") e programa (o script que ela roda). Os gatilhos/argumentos crus do
+     PowerShell continuam presos aqui dentro. */
   checa('nada de objeto cru: so os campos previstos, com o tipo forcado',
-    JSON.stringify(Object.keys(porNome.RadarSkillsMCP).sort()) === '["caminho","dele","estado","falhou","motivo","nome","proxima","resultado","ultima"]'
-    && typeof porNome.RadarSkillsMCP.nome === 'string' && typeof porNome.RadarSkillsMCP.resultado === 'number' && typeof porNome.RadarSkillsMCP.falhou === 'boolean',
+    JSON.stringify(Object.keys(porNome.RadarSkillsMCP).sort()) === '["caminho","dele","descricao","estado","falhou","motivo","nome","pasta","programa","proxima","repete","resultado","ultima"]'
+    && typeof porNome.RadarSkillsMCP.nome === 'string' && typeof porNome.RadarSkillsMCP.resultado === 'number' && typeof porNome.RadarSkillsMCP.falhou === 'boolean'
+    && ['descricao', 'repete', 'pasta', 'programa'].every((k) => typeof porNome.RadarSkillsMCP[k] === 'string'),
     JSON.stringify(Object.keys(porNome.RadarSkillsMCP)));
 
   /* resultado ausente nao pode virar 0 ("deu certo"): Number(null) e Number('')
@@ -166,6 +171,40 @@ const SAIDA_BOA = JSON.stringify([
   const dele = (rDono.itens || []).filter((t) => t.dele && t.falhou).map((t) => t.nome).sort();
   checa('(7) so as DUAS falhas dele ficam pro bloco vermelho (as outras 2 sao ruido do sistema)',
     dele.join(',') === 'RadarSkillsMCP,SkillReviewMensal', dele.join(','));
+  /* ---- ACHADO da leva 38: rotina SEM programa ----
+     Nem toda tarefa roda um .exe: acao COM handler e acao de e-mail deixam o
+     Execute VAZIO. O rotinaEhDele respondia "nao e' dele" duro nesse caso, e a
+     rotina caia no grupo recolhido "Do sistema e de programas" -- exatamente
+     onde o destaque de falha nao chega. A tela ja' diz o contrario quando falta
+     o campo (t.dele !== false, "na duvida a rotina e' DELE"), e agora o main
+     segue a MESMA politica. Sem encher o grupo dele de ruido: quem assinou
+     ganha na hora, e o beneficio da duvida so' vale na raiz "\", que e' onde as
+     dele moram -- as quatro SoftLanding* desta maquina (COM handler, sem autor,
+     sem programa, dentro de \SoftLanding\S-1-5-21-...\) continuam de fora. */
+  relogio += 60000;
+  respostaDoRodar = { err: null, errout: '', out: JSON.stringify([
+    { nome: 'AvisoPorEmailSemExecute', caminho: '\\', estado: 'Ready', ultima: '2026-09-07T09:00:00-03:00', resultado: 2147946720, proxima: '', autor: '', programa: '' },
+    { nome: 'GatilhoCOMdele', caminho: '\\', estado: 'Ready', ultima: '2026-09-07T09:00:00-03:00', resultado: 3221225786, proxima: '', autor: 'HUGOMOTTI\\hugom', programa: '' },
+    { nome: 'SoftLandingCreativeManagementTask', caminho: '\\SoftLanding\\S-1-5-21-1111111111-2222222222-3333333333-1001\\', estado: 'Ready', ultima: '', resultado: 3221225786, proxima: '', autor: '', programa: '' },
+    { nome: 'SoftLandingDeferralTask-{b20409cd}', caminho: '\\SoftLanding\\S-1-5-21-1111111111-2222222222-3333333333-1001\\', estado: 'Ready', ultima: '', resultado: 3221225786, proxima: '', autor: '', programa: '' },
+    { nome: 'SensorMon', caminho: '\\Samsung\\', estado: 'Ready', ultima: '', resultado: 3221225786, proxima: '', autor: 'Samsung Sensor Monitor', programa: '' },
+  ]) };
+  const rSemExe = await listar();
+  const px = {};
+  for (const t of (rSemExe.itens || [])) px[t.nome] = t;
+  checa('(38) rotina SEM programa (acao COM/e-mail) na raiz conta como DELE, como a tela ja dizia',
+    px.AvisoPorEmailSemExecute.dele === true, JSON.stringify(px.AvisoPorEmailSemExecute));
+  checa('(38) e quando ele mesmo assinou, entao nem duvida existe',
+    px.GatilhoCOMdele.dele === true, JSON.stringify(px.GatilhoCOMdele));
+  checa('(38) mas a duvida NAO enche o grupo dele: SoftLanding (COM handler em pasta de fabricante) fica de fora',
+    px.SoftLandingCreativeManagementTask.dele === false && px['SoftLandingDeferralTask-{b20409cd}'].dele === false,
+    JSON.stringify(px.SoftLandingCreativeManagementTask));
+  checa('(38) nem autor de fabricante entra so por nao ter programa',
+    px.SensorMon.dele === false, JSON.stringify(px.SensorMon));
+  const vermelhoSemExe = (rSemExe.itens || []).filter((t) => t.dele && t.falhou).map((t) => t.nome).sort();
+  checa('(38) as duas dele com acao COM/e-mail chegam ao bloco vermelho, e so elas',
+    vermelhoSemExe.join(',') === 'AvisoPorEmailSemExecute,GatilhoCOMdele', vermelhoSemExe.join(','));
+
   // devolve o cache ao estado bom, que os testes de falha logo abaixo conferem
   relogio += 60000;
   respostaDoRodar = { err: null, out: SAIDA_BOA, errout: '' };
@@ -264,8 +303,12 @@ const SAIDA_BOA = JSON.stringify([
         add: (...c) => c.forEach((x) => eu.classes.add(x)),
         remove: (...c) => c.forEach((x) => eu.classes.delete(x)),
         contains: (c) => eu.classes.has(c) || String(eu.className).split(/\s+/).includes(c),
+        // leva 41: a linha abre/fecha com toggle (andaime, nao contrato)
+        toggle: (c, f) => { const on = f === undefined ? !eu.classes.has(c) : !!f; if (on) eu.classes.add(c); else eu.classes.delete(c); return on; },
       };
     }
+    setAttribute(k, v) { (this.attrs = this.attrs || {})[k] = String(v); }
+    getAttribute(k) { return (this.attrs || {})[k]; }
     get innerHTML() { return this._html; }
     set innerHTML(v) { this._html = String(v); this.filhos = []; }
     get textContent() { return this.texto; }
@@ -276,10 +319,24 @@ const SAIDA_BOA = JSON.stringify([
     async disparar(n, ev) { for (const f of (this.eventos[n] || [])) await f(ev || { stopPropagation: () => {} }); }
     matches() { return false; }        // nunca esta sob o mouse nos testes
     buscar(sel) {
+      /* leva 41: o detalhe da linha (.ri-det) e' filho DE VERDADE: acha na
+         arvore primeiro; o esqueleto do innerHTML continua no faz de conta */
+      const cls = sel.startsWith('.') ? sel.slice(1) : '';
+      const achado = cls && acharNaArvore(this, (f) => String(f.className).split(/\s+/).includes(cls));
+      if (achado) return achado;
       if (!this._achados.has(sel)) this._achados.set(sel, new El('span'));
       return this._achados.get(sel);
     }
   }
+  function acharNaArvore(raiz, cond) {
+    for (const f of raiz.filhos || []) {
+      if (cond(f)) return f;
+      const dentro = acharNaArvore(f, cond);
+      if (dentro) return dentro;
+    }
+    return null;
+  }
+  const botaoDaLinha = (linha, rotulo) => acharNaArvore(linha, (f) => f.className === 'ri-acao' && f.textContent === rotulo);
   const caixaRot = new El('div');
   const viewRot = new El('div');
   const sidebar = new El('div');
@@ -297,12 +354,16 @@ const SAIDA_BOA = JSON.stringify([
     document: { createElement: (t) => new El(t) },
     $: (sel, raiz) => (raiz && raiz.buscar ? raiz.buscar(sel) : (porSeletor[sel] || null)),
     ico: (n) => '<svg data-ico="' + n + '"></svg>',   // a seta do grupo recolhivel
-    confirm: (txt) => { perguntou++; avisos.push({ confirm: txt }); return respostaDoConfirm; },
+    /* leva 41: a pergunta passou do confirm() do navegador (que trava a janela)
+       pro modal do proprio app, que devolve uma promessa */
+    confirmarNoApp: (titulo) => { perguntou++; avisos.push({ confirm: titulo }); return Promise.resolve(respostaDoConfirm); },
+    abrirPastaDaSessao: () => {},
     mostrarAviso: (o) => avisos.push(o),
     window: {
       api: {
         rotinasListar: () => Promise.resolve(respostaListar),
         rotinasDisparar: (o) => { disparosPedidos.push(o); return seguraODisparo || Promise.resolve(respostaDisparar); },
+        rotinasLigar: () => Promise.resolve({ ok: true }),
       },
     },
   };
@@ -317,8 +378,12 @@ const SAIDA_BOA = JSON.stringify([
   const linha = ctxApp.linhaDaRotina({ nome: veneno, caminho: '\\', estado: 'pronta', ultima: '', proxima: '', resultado: 0, motivo: 'deu certo', falhou: false });
   checa('(h) o nome vindo do Windows entra por textContent',
     linha.buscar('.ri-tit').textContent === veneno && linha.innerHTML.indexOf('<img') < 0, JSON.stringify(linha.innerHTML).slice(0, 160));
+  /* leva 41: o pontinho (.ri-pt) virou a marca com selinho (MARCA_ROTINA), no
+     desenho da Torre. O contrato continua o mesmo: esqueleto fixo, e a marca e'
+     uma constante literal do app, sem dado nenhum dentro. */
   checa('(h) o innerHTML da linha e so o esqueleto fixo, sem concatenar dado',
-    /d\.innerHTML = '<span class="ri-pt"><\/span><span class="ri-txt"><span class="ri-tit"><\/span><span class="ri-est"><\/span><span class="ri-quando"><\/span><\/span>';/.test(app));
+    /d\.innerHTML = MARCA_ROTINA \+ '<span class="ri-txt"><span class="ri-tit"><\/span><span class="ri-est"><\/span><span class="ri-quando"><\/span><\/span>';/.test(app)
+    && /const MARCA_ROTINA = '<span class="ri-marca"><svg [^'+]*<\/svg><\/span>';/.test(app));
 
   /* ---- estado -> classe (reusando os modificadores da torre) ---- */
   const base = { caminho: '\\', ultima: '2026-09-01T09:55:27-03:00', proxima: '', resultado: 0, motivo: 'deu certo', falhou: false };
@@ -344,11 +409,15 @@ const SAIDA_BOA = JSON.stringify([
   checa('(6) a rotina parada que falhou de verdade continua vermelha',
     cls({ estado: 'pronta', falhou: true }).includes('espera'));
 
-  /* ---- (g) confirmacao antes de disparar ---- */
+  /* ---- (g) confirmacao antes de disparar ----
+     leva 41: o botao virou "rodar agora" (sem jargao) e mora no detalhe da
+     linha; a linha da SUA que falhou ja' nasce aberta, com ele a mao. */
+  const assentar = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
   respostaDoConfirm = false;
-  const bt = linhaFalha.filhos.find((f) => f.className === 'ri-acao');
-  checa('a linha tem o botao "disparar"', !!bt && bt.textContent === 'disparar');
+  const bt = botaoDaLinha(linhaFalha, 'rodar agora');
+  checa('a linha que falhou ja nasce com o botao "rodar agora"', !!bt);
   await bt.disparar('click');
+  await assentar();
   checa('(g) sem confirmar, nada e disparado', perguntou === 1 && disparosPedidos.length === 0);
 
   /* ---- (g) trava de duplo clique ---- */
@@ -363,11 +432,13 @@ const SAIDA_BOA = JSON.stringify([
   await emVoo;
   seguraODisparo = null;
   checa('depois que o agendador responde, a rotina destrava',
-    avisos.some((a) => a && a.tipo === 'info' && /foi disparada agora/.test(String(a.texto || ''))), JSON.stringify(avisos.slice(-2)));
+    avisos.some((a) => a && a.tipo === 'info' && /começou a rodar/.test(String(a.texto || ''))), JSON.stringify(avisos.slice(-2)));
   // e um repaint no meio do disparo nao devolve o botao habilitado
+  // (a pergunta agora e' uma promessa: o disparo trava a rotina um tique depois)
   const emVoo2 = (() => { seguraODisparo = new Promise((res) => { soltar = res; }); return ctxApp.dispararRotina({ nome: 'X', caminho: '\\' }, new El('button')); })();
-  const durante = ctxApp.linhaDaRotina({ nome: 'X', ...base, estado: 'pronta' }).filhos.find((f) => f.className === 'ri-acao');
-  checa('(g) repaint durante o disparo mantem o botao travado', durante.disabled === true && durante.textContent === 'disparando…');
+  await assentar();
+  const durante = botaoDaLinha(ctxApp.linhaDaRotina({ nome: 'X', ...base, estado: 'pronta', falhou: true }), 'iniciando…');
+  checa('(g) repaint durante o disparo mantem o botao travado', !!durante && durante.disabled === true);
   soltar({ ok: true }); await emVoo2; seguraODisparo = null;
 
   // erro do agendador vira aviso vermelho
@@ -380,7 +451,6 @@ const SAIDA_BOA = JSON.stringify([
   /* dispararRotina termina com um pintarRotinas(true) solto (nao esperado, como
      o resto do app faz). Antes de medir a pintura, deixa esses repaints em voo
      assentarem -- senao e' o teste que se atropela, nao o codigo. */
-  const assentar = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
   await assentar();
 
   /* ---- pintura: a falha vem PRIMEIRO, numa caixa propria ---- */
@@ -393,27 +463,33 @@ const SAIDA_BOA = JSON.stringify([
     ],
   };
   await ctxApp.pintarRotinas(true);
+  /* leva 41: o topo virou duas linhas -- o estado (.rot-resumo) e as contas
+     (.rot-sub, "4 suas · conferido às..."); a caixa vermelha vem logo depois */
   const primeiro = caixaRot.filhos[0];
-  const caixaFalha = caixaRot.filhos[1];
+  const iCaixa = caixaRot.filhos.findIndex((f) => f.className === 'rot-caixa');
+  const caixaFalha = caixaRot.filhos[iCaixa];
   checa('o resumo abre a tela e conta as falhas',
-    /2 suas falharam na última vez/.test(primeiro.textContent) && primeiro.className.includes('tem-falha'), primeiro.textContent);
-  checa('a caixa vermelha vem antes de tudo, com as 2 quebradas dentro',
-    caixaFalha && caixaFalha.className === 'rot-caixa' && caixaFalha.filhos.length === 3
+    /^2 das suas falharam na última vez$/.test(primeiro.textContent) && primeiro.className.includes('tem-falha'), primeiro.textContent);
+  checa('a caixa vermelha vem antes de tudo (logo depois do resumo), com as 2 quebradas dentro',
+    iCaixa === 2 && caixaRot.filhos[1].className === 'rot-sub' && caixaFalha.filhos.length === 3
     && caixaFalha.filhos.slice(1).map((f) => f.buscar('.ri-tit').textContent).join(',') === 'RadarSkillsMCP,SkillReviewMensal',
     caixaFalha && caixaFalha.filhos.slice(1).map((f) => f.buscar('.ri-tit').textContent).join(','));
   checa('as que estao em dia vem depois, fora da caixa vermelha',
-    caixaRot.filhos.slice(2).filter((f) => f.className && f.className.startsWith('rot-item')).length === 2);
+    caixaRot.filhos.slice(iCaixa + 1).filter((f) => f.className && f.className.startsWith('rot-item')).length === 2);
 
-  // lista velha (o main devolveu cache) e' dita na cara
+  // lista velha (o main devolveu cache) e' dita na cara -- e com a hora dela
   respostaListar = { itens: respostaListar.itens, velho: true, error: 'saiu com código 1' };
   await ctxApp.pintarRotinas(true);
-  checa('lista antiga avisa que nao conseguiu atualizar', /lista antiga/.test(caixaRot.filhos[0].textContent), caixaRot.filhos[0].textContent);
+  const notaVelha = caixaRot.filhos.find((f) => String(f.className).includes('rot-nota'));
+  checa('lista antiga avisa que nao conseguiu atualizar e de quando e a lista',
+    !!notaVelha && /^Não consegui atualizar: saiu com código 1\. Esta é a lista das \d\d:\d\d\.$/.test(notaVelha.textContent)
+    && !/conferido/.test(caixaRot.filhos[1].textContent), notaVelha && notaVelha.textContent);
 
   // nenhuma falha: sem caixa vermelha
   respostaListar = { itens: [{ nome: 'A', caminho: '\\', estado: 'pronta', ultima: '', proxima: '', resultado: 0, motivo: 'deu certo', falhou: false }] };
   await ctxApp.pintarRotinas(true);
-  checa('sem falha, a tela diz que todas rodaram sem erro e nao monta caixa vermelha',
-    /todas rodaram sem erro/.test(caixaRot.filhos[0].textContent) && !caixaRot.filhos.some((f) => f.className === 'rot-caixa'));
+  checa('sem falha, a tela diz que nenhuma falhou e nao monta caixa vermelha',
+    /^Nenhuma das suas falhou na última vez$/.test(caixaRot.filhos[0].textContent) && !caixaRot.filhos.some((f) => f.className === 'rot-caixa'));
 
   /* ---- ACHADO 7 na tela: o bloco vermelho vinha com 50% de ruido ----
      "35 rotinas · 4 falharam": duas dele (RadarSkillsMCP, SkillReviewMensal) e
@@ -435,9 +511,13 @@ const SAIDA_BOA = JSON.stringify([
   const nomesDaCaixa = cxV ? cxV.filhos.filter((f) => String(f.className).startsWith('rot-item')).map((f) => f.buscar('.ri-tit').textContent) : [];
   checa('(7) o bloco vermelho fica SO com as falhas dele',
     nomesDaCaixa.join(',') === 'RadarSkillsMCP,SkillReviewMensal', nomesDaCaixa.join(','));
+  /* leva 41: "7 rotinas · nenhuma das suas falhou · 1 do sistema também" (a
+     frase da maquina de verdade) dizia o contrario do que queria; agora o
+     estado e' so' das suas, e as do sistema vao nas contas, com a falha delas */
   checa('(7) o resumo conta as dele em destaque e as do sistema a parte',
-    /7 rotinas · 2 suas falharam na última vez · 2 do sistema também/.test(caixaRot.filhos[0].textContent),
-    caixaRot.filhos[0].textContent);
+    /^2 das suas falharam na última vez$/.test(caixaRot.filhos[0].textContent)
+    && /^4 suas · 3 do sistema \(2 com falha\)/.test(caixaRot.filhos[1].textContent),
+    caixaRot.filhos[0].textContent + ' | ' + caixaRot.filhos[1].textContent);
   const cabecalhos = caixaRot.filhos.filter((f) => String(f.className).startsWith('rot-grupo')).map((f) => f.buscar('.rot-nome').textContent);
   checa('(7) as do sistema ganham grupo proprio, com nome que diz o que sao',
     cabecalhos.includes('Do sistema e de programas'), cabecalhos.join(' | '));
@@ -445,8 +525,9 @@ const SAIDA_BOA = JSON.stringify([
   checa('(7) o grupo do sistema nasce RECOLHIDO (nenhuma linha delas na tela)',
     !caixaRot.filhos.some((f) => String(f.className).startsWith('rot-item') && /OneDrive|Rtk|Zoom/.test(f.buscar('.ri-tit').textContent))
     && caixaRot.filhos.filter((f) => String(f.className).startsWith('rot-item')).length === 2);
+  // leva 41: a conta do cabecalho e' so' o numero, como a da Torre
   checa('(7) mas ele diz quantas sao e quantas falharam (nada some calado)',
-    /3 rotinas · 2 com falha/.test(cabSis.buscar('.rot-conta').textContent), cabSis.buscar('.rot-conta').textContent);
+    /^3 · 2 com falha$/.test(cabSis.buscar('.rot-conta').textContent), cabSis.buscar('.rot-conta').textContent);
   await cabSis.disparar('click');
   checa('(7) e um clique abre a lista das outras',
     caixaRot.filhos.some((f) => String(f.className).startsWith('rot-item') && f.buscar('.ri-tit').textContent === 'RtkAudUService64_BG'));
@@ -467,8 +548,11 @@ const SAIDA_BOA = JSON.stringify([
      repaint tomava geracao nova -- isso derrubava o vencedor que ainda estava em
      voo. Agora a geracao e' so' de quem vai BUSCAR, e o perdedor sai calado. */
   checa('(3) so quem vai buscar toma geracao (o ++rotinasGen mora dentro do if da busca)',
-    app.indexOf('if (forcar || Date.now() - rotinasCache.quando > 20000) {') < app.indexOf('const gen = ++rotinasGen;')
-    && app.indexOf('const gen = ++rotinasGen;') < app.indexOf('chegou = await window.api.rotinasListar()')
+    /* leva 41: o prazo de releitura virou constante (60 s em vez de 20 s). E o
+       teste passa a exigir que a linha EXISTA: indexOf -1 tambem e' "menor". */
+    app.indexOf('if (forcar || Date.now() - rotinasCache.quando > ROTINAS_RELER_MS) {') > 0
+    && app.indexOf('if (forcar || Date.now() - rotinasCache.quando > ROTINAS_RELER_MS) {') < app.indexOf('const gen = ++rotinasGen;')
+    && app.indexOf('const gen = ++rotinasGen;') < app.indexOf('chegou = await window.api.rotinasListar(')
     && !/if \(gen !== rotinasGen\) \{ if \(rotinasVisivel\(\)\) pintarRotinas\(false\); return; \}/.test(app));
   let soltarLista;
   respostaListar = { itens: [] };
@@ -506,8 +590,8 @@ const SAIDA_BOA = JSON.stringify([
   const nomes3 = caixaRot.filhos.filter((f) => f.className && f.className.startsWith('rot-item')).map((f) => f.buscar('.ri-tit').textContent);
   checa('(3) a resposta mais NOVA pinta, mesmo tendo chegado depois do perdedor',
     nomes3.join(',') === 'NOVA,NOVA2', nomes3.join(','));
-  checa('(3) e a tela nao diz "Nenhuma rotina agendada" com rotina na maquina',
-    !/Nenhuma rotina agendada/.test(caixaRot.filhos[0].textContent), caixaRot.filhos[0].textContent);
+  checa('(3) e a tela nao diz "Nenhuma automação agendada" com rotina na maquina',
+    !/Nenhuma automação agendada/.test(caixaRot.filhos[0].textContent), caixaRot.filhos[0].textContent);
   checa('(3) o cache tambem ficou com a lista nova (senao os 20 s seguintes mentem)',
     vm.runInContext('rotinasCache.itens.map((t) => t.nome).join(",")', ctxApp) === 'NOVA,NOVA2',
     vm.runInContext('rotinasCache.itens.map((t) => t.nome).join(",")', ctxApp));
@@ -520,7 +604,7 @@ const SAIDA_BOA = JSON.stringify([
   ctxApp.window.api.rotinasListar = () => new Promise((r) => { soltarLenta = r; });
   const pLenta = ctxApp.pintarRotinas(true);
   checa('(6) enquanto o Agendador nao responde, a view diz que esta lendo',
-    caixaRot.filhos.some((f) => f.className === 'rot-carregando' && /Lendo as rotinas/.test(f.textContent)),
+    caixaRot.filhos.some((f) => f.className === 'rot-carregando' && /Lendo as automações/.test(f.textContent)),
     caixaRot.filhos.map((f) => f.className).join(','));
   soltarLenta({ itens: [rot('A')] });
   await pLenta;
@@ -581,17 +665,23 @@ const SAIDA_BOA = JSON.stringify([
   /* =====================================================================
      3) Contratos de fonte: hover, temas, os tres arquivos, activitybar
      ===================================================================== */
+  /* leva 41: o tique tambem para com a janela escondida e com o foco do teclado
+     dentro da lista (repintar jogava o foco fora) -- a guarda do mouse segue */
   checa('(f) o repaint periodico so pinta se o mouse NAO estiver em cima',
-    /setInterval\(\(\) => \{ const b = \$\('#rotinas'\); if \(rotinasVisivel\(\) && !\(b && b\.matches\(':hover'\)\)\) pintarRotinas\(false\); \}/.test(app));
+    /if \(document\.hidden \|\| !rotinasVisivel\(\)\) return;\s*const b = \$\('#rotinas'\);\s*if \(b && \(b\.matches\(':hover'\) \|\| \(document\.activeElement && b\.contains\(document\.activeElement\)\)\)\) return;\s*pintarRotinas\(false\);/.test(app));
+  // leva 41: a pergunta e' o modal do app (confirmarNoApp), nao o confirm() que trava a janela
   checa('(g) a confirmacao esta no fonte, antes de qualquer disparo',
-    /if \(!confirm\('Rodar "' \+ t\.nome \+ '" agora\?/.test(app) && app.indexOf("if (!confirm('Rodar") < app.indexOf('rotinasDisparando.add(chave)'));
+    /if \(!\(await confirmarNoApp\('Rodar "' \+ nome \+ '" agora\?'/.test(app) && app.indexOf("if (!(await confirmarNoApp('Rodar") < app.indexOf('rotinasDisparando.add(chave)'));
   checa('(g) a trava de duplo clique e a primeira coisa do disparo',
     /if \(rotinasDisparando\.has\(chave\)\) return;/.test(app) && /rotinasDisparando\.delete\(chave\);/.test(app));
 
   checa('(k) o canal existe nos TRES arquivos (main, preload, tela)',
     /ipcMain\.handle\('rotinas:listar'/.test(main) && /ipcMain\.handle\('rotinas:disparar'/.test(main)
-    && /rotinasListar: \(\) => ipcRenderer\.invoke\('rotinas:listar'\)/.test(preload) && /rotinasDisparar: \(o\) => ipcRenderer\.invoke\('rotinas:disparar', o\)/.test(preload)
-    && /window\.api\.rotinasListar\(\)/.test(app) && /window\.api\.rotinasDisparar\(/.test(app));
+    // leva 41: listar leva { forcar } (o botao de atualizar fura o cache de 15 s do main)
+    && /rotinasListar: \(o\) => ipcRenderer\.invoke\('rotinas:listar', o\)/.test(preload) && /rotinasDisparar: \(o\) => ipcRenderer\.invoke\('rotinas:disparar', o\)/.test(preload)
+    && /window\.api\.rotinasListar\(furarCache \? \{ forcar: true \} : undefined\)/.test(app) && /window\.api\.rotinasDisparar\(/.test(app)
+    // leva 41: ligar/desligar tambem nos tres
+    && /ipcMain\.handle\('rotinas:ligar'/.test(main) && /rotinasLigar: \(o\) => ipcRenderer\.invoke\('rotinas:ligar', o\)/.test(preload) && /window\.api\.rotinasLigar\(/.test(app));
   checa('(k) o botao e o painel da view existem no HTML',
     /<button class="act" data-view="rotinas"/.test(html) && /<div class="side-view hidden" data-view="rotinas">/.test(html)
     && /<div class="rot" id="rotinas"><\/div>/.test(html) && /id="btnRotinasAtualizar"/.test(html));
@@ -605,7 +695,8 @@ const SAIDA_BOA = JSON.stringify([
     return !/--rot-falha:/.test(bloco) || !/--rot-falha-borda:/.test(bloco);
   });
   checa('(k) --rot-falha esta nos tres temas (escuro, claro, jornal)', semCor.length === 0, 'faltou em: ' + semCor.join(', '));
-  checa('(k) as classes .rot-* existem no css', /\.rot\{/.test(css) && /\.rot-item\.espera \.ri-pt\{/.test(css) && /\.rot-caixa\{/.test(css));
+  // leva 41: o pontinho virou o selinho no canto da marca (a lingua da Torre)
+  checa('(k) as classes .rot-* existem no css', /\.rot\{/.test(css) && /\.rot-item\.espera \.ri-marca::after\{/.test(css) && /\.rot-caixa\{/.test(css));
 
   // nono botao: a barra precisa rolar em vez de espremer os icones
   const nBotoes = (html.match(/<button class="act[^"]*" data-view=/g) || []).length;

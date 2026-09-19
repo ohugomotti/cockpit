@@ -20,7 +20,7 @@ const eletronFalso = {
     whenReady: () => new Promise(() => {}),      // nunca resolve: nao abre janela
     on() {}, setName() {}, quit() {}, disableHardwareAcceleration() {},
     requestSingleInstanceLock: () => true, setAppUserModelId() {},
-    commandLine: { appendSwitch() {} },
+    commandLine: { appendSwitch() {}, getSwitchValue: () => '' },
     isPackaged: false, getVersion: () => '1.0.0',
   },
   BrowserWindow: class { constructor() {} static getAllWindows() { return []; } on() {} loadFile() {} webContents = { on() {}, send() {}, session: { setPermissionRequestHandler() {}, webRequest: { onHeadersReceived() {} } } }; },

@@ -45,6 +45,9 @@ function montar() {
     function abaPorId(id){ return abasLocais().find(a => a.id === id); }
     function abaAtual(){ return abaPorId(cfg.abaAtiva) || abasLocais()[0]; }
   `, ctx);
+  // A ficha guarda os IDs de cada motor: carregar o helper real mantem essa
+  // mutacao no teste, em vez de substituir a persistencia por um no-op.
+  vm.runInContext(pegar(appTxt, 'function guardarEstadoDoMotor(', 'guardarEstadoDoMotor'), ctx);
   vm.runInContext(pegar(appTxt, 'function fichaDoPainel(', 'fichaDoPainel'), ctx);
   vm.runInContext(pegar(appTxt, 'function savePanes(', 'savePanes'), ctx);
   return { ctx, cfg, painel };

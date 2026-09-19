@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, globalShortcut, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, globalShortcut, desktopCapturer, screen, crashReporter } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -14,8 +14,27 @@ const { EH_WIN, acharBin, spawnBin, abrirPty, matarProcesso, temBin } = platafor
    porque e' a parte que MUDA quando o Codex muda - e a unica que da' pra
    testar sem subir o Electron (test/codex-protocol.test.js). */
 const proto = require('./codex-protocol');
+const { criarObservabilidade, resultadoFerramenta, listarRuntimeCodex } = require('./cockpit-observability');
+const cockpitWorktrees = require('./cockpit-worktrees');
+// leva 41 (B6): nome de 3 palavras da conversa nova + regra dos nomes (seu > automatico)
+const tituloAuto = require('./titulo-auto');
 
 const HOME = os.homedir();
+// Perfil explícito para prévias/testes: o mesmo ASAR pode ser conferido sem
+// abrir ou gravar o config.json da instalação em uso. Sem a opção, nada muda.
+const explicitUserData = app.commandLine?.getSwitchValue('user-data-dir');
+if (explicitUserData) {
+  if (!path.isAbsolute(explicitUserData)) throw new Error('A pasta de dados precisa ser absoluta.');
+  fs.mkdirSync(explicitUserData, { recursive: true });
+  app.setPath('userData', explicitUserData);
+}
+/* Leva 41 (B2): folga de memoria pra tela. O padrao do V8 corta o heap da tela
+   bem antes da RAM da maquina acabar; com 20 paineis e conversas longas isso
+   vira queda da tela, e a tela que cai leva todos os motores junto. Tem que vir
+   antes do 'ready'. O Hugo autorizou gastar RAM (pedido de 14/09). */
+try { app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096'); } catch {}
+// se a tela (ou outro processo do app) cair, fica o dump local pra investigar; nada sobe pra rede
+try { if (crashReporter && crashReporter.start) crashReporter.start({ uploadToServer: false }); } catch {}
 // no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura.
 // FUNCAO, nao const: congelado no boot, o caminho ficava preso no binario
 // velho se o instalador do Claude trocasse de pasta com o app aberto - e o
@@ -69,9 +88,23 @@ function saveConfig(cfg) { gravarSeguro(CONFIG_PATH(), JSON.stringify(cfg, null,
 // app GUI nao herda o PATH do shell: monta um PATH completo (ver plataforma.js)
 const buildEnv = plataforma.buildEnv;
 
+/* Leva 41 (B2): quem esta no meio de um turno, que tipo de queda foi, o
+   registro em userData/logs/motores.log e o retomar.json (quedas.js). */
+const quedas = require('./quedas');
+const registrarQueda = quedas.criarRegistro(() => app.getPath('userData'));
+const vigiaTurno = quedas.criarVigiaDeTurno({ registrar: registrarQueda });
+const retomada = quedas.criarRetomada(() => app.getPath('userData'));
+
+const debateListeners = new Map();
 function emit(paneId, kind, data) {
+  // fim de turno desliga o "em turno"; 'engine-down' sai dizendo se estava em turno e que tipo de queda foi
+  data = vigiaTurno.passar(paneId, kind, data);
+  const debateListener = debateListeners.get(paneId);
+  if (debateListener) { debateListener({ paneId, kind, ...data, ...(kind === 'busy' ? { turnId: codex.paneTurn.get(paneId) } : {}) }); return; }
   if (win && !win.isDestroyed()) win.webContents.send('pane:event', { paneId, kind, ...data });
 }
+
+const observabilidade = criarObservabilidade((paneId, kind, data) => emit(paneId, kind, data));
 
 /* ======================= motor CODEX ======================= */
 /* um unico `codex app-server` atende todos os paineis, cada painel = uma thread */
@@ -85,6 +118,7 @@ const codex = {
   paneToThread: new Map(),   // paneId -> threadId
   paneTurn: new Map(),       // paneId -> turnId em andamento
   paneMsgId: new Map(),      // paneId -> id da fala que esta chegando letra a letra
+  derrubando: null,          // processo que o proprio app esta derrubando (troca de conta, fechar)
 };
 
 /* o app-server ja usou nomes diferentes pro id do item (itemId, item_id, id).
@@ -118,8 +152,11 @@ function codexStart() {
         codexIncoming(m);
       }
     });
-    p.stderr.on('data', () => {});   // logs do rust, ruido
-    p.on('close', () => {
+    /* logs do rust: ruido na tela, mas o rabo vai pro registro de quedas
+       (userData/logs/motores.log) quando o servidor cair - antes ia pro lixo */
+    let cauda = '';
+    p.stderr.on('data', (d) => { cauda = (cauda + d.toString('utf8')).slice(-2000); });
+    p.on('close', (codigo, sinal) => {
       // pendencia deste processo morre com ele, seja ele o atual ou nao: senao
       // quem chamou ficava esperando ate o prazo de 30s sem motivo
       for (const [k, pend] of [...codex.pend]) {
@@ -129,6 +166,7 @@ function codexStart() {
       }
       // o close de um processo ja substituido nao pode zerar o estado do atual
       if (codex.proc && codex.proc !== p) return;
+      observabilidade.encerrarMotor('codex', 'O processo Codex foi encerrado; acompanhamento interrompido.');
       codex.proc = null; codex.ready = null; codex.pronto = false;
       codex.paneTurn.clear(); codex.paneMsgId.clear();
       // so' as do Codex: as do ACP tambem tem rpcId (o id JSON-RPC do agente) e
@@ -137,10 +175,17 @@ function codexStart() {
       // pergunta nativa tambem morre com o processo: o rpcId nao existe mais,
       // entao so' tira o cartao da tela (responder aqui seria escrever no vazio)
       for (const [id, q] of [...perguntasCodex]) { perguntasCodex.delete(id); emit(q.paneId, 'pergunta-cancelada', { id }); }
-      for (const paneId of codex.paneToThread.keys()) emit(paneId, 'engine-down', {});
+      /* derrubado DE PROPOSITO (troca de conta pelo codex:reiniciar): a tela
+         nao pode ler isso como queda e religar os paineis que trabalhavam */
+      const deProposito = codex.derrubando === p;
+      if (deProposito) codex.derrubando = null;
+      for (const paneId of codex.paneToThread.keys()) emit(paneId, 'engine-down', { engine: 'codex', codigo, sinal, cauda, deProposito });
       codex.paneToThread.clear(); codex.threadToPane.clear();
     });
-    p.on('error', (e) => { codex.ready = null; reject(e); });
+    p.on('error', (e) => {
+      if (codex.proc === p) observabilidade.encerrarMotor('codex', 'O processo Codex falhou.');
+      codex.ready = null; reject(e);
+    });
 
     codexReq('initialize', { clientInfo: { name: 'cockpit', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true } })
       .then(() => { codexNote('initialized', {}); codex.pronto = true; resolve(true); })
@@ -345,13 +390,23 @@ function codexServerRequest(m) {
   if (meth === 'currentTime/read') { codexReply(m.id, { currentTimeAt: Math.floor(Date.now() / 1000) }); return; }
   /* pedidos que EXIGEM campos na resposta: um {} vazio nao desserializa do
      outro lado e o turno para. Aqui a resposta e' "nao", mas valida. */
-  if (meth === 'mcpServer/elicitation/request') { codexReply(m.id, { action: 'decline' }); return; }
-  if (meth === 'item/tool/call') { codexReply(m.id, { success: false, contentItems: [] }); return; }
+  if (meth === 'mcpServer/elicitation/request') {
+    if (pane !== undefined) emit(pane, 'note', { text: 'O MCP pediu um formulário ou autenticação que o Cockpit ainda não apresenta. O pedido foi recusado; nenhuma informação foi enviada.', error: true });
+    codexReply(m.id, { action: 'decline' }); return;
+  }
+  if (meth === 'item/tool/call') {
+    const text = 'O Cockpit não implementa esta ferramenta dinâmica do host: ' + String(m.params?.tool || 'desconhecida');
+    if (pane !== undefined) emit(pane, 'note', { text, error: true });
+    codexReply(m.id, { success: false, contentItems: [{ type: 'inputText', text }] }); return;
+  }
   // qualquer outro pedido: diz que nao atende, em vez de fingir uma resposta
   codexErro(m.id, 'o Cockpit não atende "' + String(meth).slice(0, 60) + '"');
 }
 
 function codexNotification(method, params) {
+  // Também observa threads filhas conhecidas, sem misturar suas falas no chat
+  // do pai. A Torre recebe dados próprios e não ganha controles inventados.
+  observabilidade.observarCodex(method, params, paneOf(params));
   if (method === 'thread/started') {
     return; // o paneamento e feito no thread/start
   }
@@ -359,6 +414,20 @@ function codexNotification(method, params) {
   if (pane === undefined) return;
 
   switch (method) {
+    case 'serverRequest/resolved': {
+      // Já resolvido pelo servidor: retire só o cartão deste painel, sem novo RPC.
+      for (const [key, request] of pendingApprovals) {
+        if (request.paneId !== pane || request.rpcId !== params.requestId || request.kind === 'acp' || request.kind === 'claude') continue;
+        pendingApprovals.delete(key);
+        emit(pane, 'permissao-cancelada', { key });
+      }
+      for (const [id, request] of perguntasCodex) {
+        if (request.paneId !== pane || request.rpcId !== params.requestId) continue;
+        perguntasCodex.delete(id);
+        emit(pane, 'pergunta-cancelada', { id });
+      }
+      break;
+    }
     case 'turn/started':
       codex.paneTurn.set(pane, params.turnId || (params.turn && params.turn.id));
       emit(pane, 'busy', {});
@@ -388,18 +457,22 @@ function codexNotification(method, params) {
 
     case 'item/commandExecution/outputDelta':
     case 'command/exec/outputDelta': {
-      const txt = decodeChunk(params.chunk ?? params.delta ?? params.data);
-      if (txt) emit(pane, 'tool-output', { id: params.itemId || params.callId, text: txt });
+      const output = proto.normalizeCommandOutput(method, params);
+      if (output.text) emit(pane, 'tool-output', output);
       break;
     }
+
+    case 'item/mcpToolCall/progress':
+      if (typeof params.message === 'string') emit(pane, 'tool-output', { id: params.itemId, text: params.message + '\n' });
+      break;
 
     case 'item/completed': {
       const it = params.item || {};
       if (it.type === 'agentMessage') {
-        // o id do streaming manda: e' com ele que o painel ja desenhou a fala
-        const idFim = codex.paneMsgId.get(pane) || idDoItem(it) || 'msg';
-        codex.paneMsgId.delete(pane);
-        emit(pane, 'text-final', { id: idFim, text: it.text || '', phase: it.phase || '' });
+        // Mensagens assíncronas podem intercalar: o id real identifica a fala.
+        const idFim = idDoItem(it) || codex.paneMsgId.get(pane) || 'msg';
+        if (codex.paneMsgId.get(pane) === idFim) codex.paneMsgId.delete(pane);
+        emit(pane, 'text-final', { id: idFim, ...proto.normalizeAgentMessage(it) });
       } else if (it.type === 'commandExecution') {
         emit(pane, 'tool-end', {
           id: it.id,
@@ -409,7 +482,8 @@ function codexNotification(method, params) {
       } else if (it.type === 'fileChange') {
         emit(pane, 'tool-end', { id: it.id, output: fileChangeSummary(it), error: it.status === 'failed' });
       } else if (it.type === 'mcpToolCall') {
-        emit(pane, 'tool-end', { id: it.id, output: shortJson(it.result ?? it.output), error: it.status === 'failed' });
+        emit(pane, 'tool-end', { id: it.id, ...resultadoFerramenta(it.error ? [it.result ?? it.output, it.error] : it.result ?? it.output),
+          error: it.status === 'failed' || !!it.error || !!it.result?.isError });
       } else if (it.type === 'webSearch') {
         emit(pane, 'tool-end', { id: it.id, output: it.query || '', error: false });
       } else if (it.type === 'error') {
@@ -421,7 +495,8 @@ function codexNotification(method, params) {
     case 'turn/completed': {
       descartarPermissoes(pane);
       codex.paneTurn.delete(pane);
-      emit(pane, 'turn-end', {});
+      emit(pane, 'turn-end', { status: params.turn?.status || 'unknown',
+        error: params.turn?.status === 'failed' || !!params.turn?.error });
       break;
     }
 
@@ -432,7 +507,7 @@ function codexNotification(method, params) {
       descartarPermissoes(pane);
       codex.paneTurn.delete(pane);
       emit(pane, 'note', { text: params.message || params.error || 'erro no Codex', error: true });
-      emit(pane, 'turn-end', {});
+      emit(pane, 'turn-end', { status: 'failed', error: true });
       break;
 
     case 'thread/tokenUsage/updated': {
@@ -478,12 +553,6 @@ function codexNotification(method, params) {
   }
 }
 
-function decodeChunk(c) {
-  if (!c) return '';
-  if (typeof c === 'string') { try { return Buffer.from(c, 'base64').toString('utf8'); } catch { return c; } }
-  if (Array.isArray(c)) { try { return Buffer.from(c).toString('utf8'); } catch { return ''; } }
-  return '';
-}
 function mcpName(it) { return (it.server ? it.server + ' · ' : '') + (it.tool || 'MCP'); }
 function shortJson(v) { if (v == null) return ''; try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }
 function fileChangeArg(it) {
@@ -522,29 +591,32 @@ function instrucoesCasa() {
 const CODEX_MODE = proto.CODEX_MODE;
 const CLAUDE_MODE = { manual: 'manual', 'auto-edit': 'acceptEdits', plan: 'plan', auto: 'auto', bypass: 'bypassPermissions' };
 
-/* O settings.json do usuario tem defaultMode: bypassPermissions, que atropela qualquer
-   --permission-mode. Para Manual e Auto funcionarem, escrevemos uma copia sem essa linha
-   e carregamos ela por --settings, tirando o global do --setting-sources.            */
-function claudeSettingsSemBypass(paneId) {
+/* Modo de permissao pedido pelo painel. Ate a leva 40 o painel Manual/Auto/Plano
+   subia com --setting-sources project,local para escapar de um defaultMode no
+   settings.json do usuario -- e isso apagava as skills, agentes e comandos
+   pessoais de ~/.claude. Provado em 11/09/2026 (CLI 2.1.268): --permission-mode
+   vence o defaultMode de qualquer settings. Este arquivo so' trava o defaultMode
+   tambem pelo lado das settings (settings de flag > usuario), por garantia.
+   Efeito de ter a fonte do usuario de volta: permissions.additionalDirectories
+   do usuario volta a valer nesses modos (hoje e' uma pasta inofensiva). */
+const MODO_NAS_SETTINGS = { manual: 'default', 'auto-edit': 'acceptEdits', plan: 'plan', auto: 'auto' };
+function claudeTravaDoModo(paneId, modo) {
+  const dm = MODO_NAS_SETTINGS[modo];
+  if (!dm) return null;
   try {
-    const src = path.join(HOME, '.claude/settings.json');
-    const d = JSON.parse(fs.readFileSync(src, 'utf8'));
-    delete d.defaultMode;                       // existe tambem na raiz
-    if (d.permissions) {
-      delete d.permissions.defaultMode;
-      delete d.permissions.additionalDirectories;  // isso liberava a home inteira sem perguntar
-    }
-    // a copia nao precisa de segredo: o processo filho ja herda o env por buildEnv()
-    delete d.env; delete d.apiKeyHelper; delete d.awsAuthRefresh; delete d.awsCredentialExport;
-    // um arquivo por painel: dois paineis subindo ao mesmo tempo liam o arquivo
-    // pela metade (writeFileSync trunca antes de escrever)
+    // um arquivo por painel: dois paineis subindo juntos nao leem o do outro pela metade
     const marca = String(paneId || 'geral').replace(/[^\w-]/g, '_');
-    const out = path.join(app.getPath('userData'), 'claude-settings-sem-bypass-' + marca + '.json');
+    const out = path.join(app.getPath('userData'), 'claude-modo-' + marca + '.json');
     const tmp = out + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(d), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify({ permissions: { defaultMode: dm } }), { mode: 0o600 });
     fs.renameSync(tmp, out);
     return out;
   } catch { return null; }
+}
+/* O init do stream-json diz o modo que o CLI REALMENTE subiu (o Haiku, por
+   exemplo, nao tem modo Auto e cai em default calado). */
+function modoDoCockpitPeloInit(pm) {
+  return ({ default: 'manual', manual: 'manual', acceptEdits: 'auto-edit', plan: 'plan', auto: 'auto', bypassPermissions: 'bypass' })[pm] || '';
 }
 
 /* ======================= motor CLAUDE ======================= */
@@ -655,12 +727,20 @@ function marcaSub(m) {
    - PushNotification: o CLI responde "not sent" no modo sem terminal, e o
      modelo achava que o aviso se perdeu. O Cockpit intercepta a chamada e
      entrega de verdade (tela + sistema). */
+/* exemplo minimo do bloco ```excalidraw (conferido por test/quadro-fluxo.test.js
+   com o mesmo validador que a tela usa antes de desenhar) */
+const EXEMPLO_EXCALIDRAW = '[{"type":"rectangle","id":"a","x":0,"y":0,"width":200,"height":70,"label":{"text":"Ler o pedido"}},'
+  + '{"type":"diamond","id":"b","x":0,"y":140,"width":200,"height":110,"label":{"text":"Está claro?"}},'
+  + '{"type":"arrow","x":100,"y":70,"start":{"id":"a"},"end":{"id":"b"},"label":{"text":"depois"}}]';
 const INSTRUCOES_COCKPIT = [
   'Você está rodando dentro do Cockpit, um painel gráfico sem terminal.',
   'Em qualquer trabalho com mais de 3 passos, chame a ferramenta mcp__cockpit__plano logo no início com todos os passos e de novo a cada mudança de estado: é a única forma de o usuário acompanhar o andamento.',
   'Quando uma decisão mudar o resultado, use mcp__cockpit__perguntar em vez de encerrar o turno com a dúvida no texto.',
   'A ferramenta PushNotification funciona aqui: o Cockpit entrega o aviso na tela e no sistema mesmo que o resultado dela diga not sent. Use-a só quando o usuário provavelmente não está olhando e há algo que ele queira saber agora.',
   'Turno com mais de 8 passos ou mais de 5 minutos termina com um bloco final cujo título é exatamente "## Recibo" (só essa palavra, sem nada depois) e três linhas curtas: o que fiz · o que mudou (arquivos) · como testar.',
+  // leva 41 (B5): o Cockpit desenha bloco ```excalidraw na conversa (esqueleto do convertToExcalidrawElements)
+  'Para explicar um fluxo (passos, decisões, arquitetura) você pode incluir um bloco de código com a linguagem excalidraw: o Cockpit mostra como desenho. Dentro, uma lista JSON no formato esqueleto (caixa = rectangle, decisão = diamond, seta com start/end apontando pro id), por exemplo:',
+  EXEMPLO_EXCALIDRAW,
 ].join(' ');
 
 /* "claude.ai Make" vira "claude_ai_Make" no nome da ferramenta (conferido no
@@ -697,8 +777,8 @@ function claudeStart(paneId, opts) {
   } else {
     // canal para ele perguntar antes de agir
     args.push('--permission-prompt-tool', 'stdio');
-    const sf = claudeSettingsSemBypass(paneId);
-    if (sf) { args.push('--setting-sources', 'project,local'); args.push('--settings', sf); }
+    const sf = claudeTravaDoModo(paneId, modo);
+    if (sf) args.push('--settings', sf);
   }
   /* A caixa de perguntas so' vale pro painel daqui: no remoto o servidor MCP
      rodaria la, e o arquivo de troca ficaria no servidor, longe desta tela.
@@ -727,6 +807,13 @@ function claudeStart(paneId, opts) {
   let sessaoDefinida = '';
   if (opts.resumeId && opts.fork) {
     args.push('--resume', opts.resumeId, '--fork-session');
+    /* leva 41 (B3): no PC o endereco do RAMO tambem e' nosso (--session-id junto
+       do --fork-session: medido no CLI 2.1.270, a sessao nova sai com o id
+       pedido). Sem isto o painel ficava sem endereco ate' o 'system init', e uma
+       queda nessa janela religava na conversa de ORIGEM. No servidor fica sem:
+       a versao do CLI de la' nao foi medida com os dois juntos; o id chega pelo
+       init, e a tela so' esquece o fork quando ele chegar. */
+    if (!remoto) { sessaoDefinida = crypto.randomUUID(); args.push('--session-id', sessaoDefinida); }
   } else if (opts.resumeId && (remoto || sessaoLocalExiste(opts.resumeId, opts.cwd))) {
     args.push('--resume', opts.resumeId);
   } else {
@@ -786,6 +873,9 @@ function claudeStart(paneId, opts) {
       id: sessaoDefinida,
       file: remoto ? '' : path.join(CLAUDE_PROJ, encodeCwd(claudeCwd.get(paneId) || opts.cwd || HOME), sessaoDefinida + '.jsonl'),
       remoto: !!remoto,
+      /* auditoria 1: no RAMO o endereco ainda e' so' promessa -- o Claude nem
+         abriu a origem. A tela so' da' o ramo por nascido no 'system init'. */
+      provisorio: !!(opts.resumeId && opts.fork) || undefined,
     });
   }
 
@@ -806,24 +896,32 @@ function claudeStart(paneId, opts) {
      que o ssh/claude reclamava ia pro lixo - qualquer causa virava a mesma
      frase generica na tela, e nao dava pra saber o que tinha acontecido. */
   proc.stderr.on('data', (d) => {
-    st.erro = ((st.erro || '') + d.toString('utf8')).slice(-1200);
+    // 4 mil: a tela recebe as 3 ultimas linhas; o registro de quedas guarda o rabo inteiro
+    st.erro = ((st.erro || '') + d.toString('utf8')).slice(-4000);
   });
   // handshake que liga o canal de permissao (e devolve a lista de skills)
   try { proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'init-' + paneId, request: { subtype: 'initialize', hooks: {} } }) + '\n'); } catch {}
   proc.on('close', (codigo) => {
     // usa o "st" deste processo, nao o que estiver no mapa agora: se o
     // usuario trocou de processo rapido, o mapa ja pode apontar para o novo
-    if (claudePanes.get(paneId) === st) claudePanes.delete(paneId);
-    if (st.parandoDeProposito) return;
+    const atual = claudePanes.get(paneId) === st;
+    if (atual) {
+      observabilidade.encerrarPainel(paneId, 'claude', 'O processo Claude foi encerrado; acompanhamento interrompido.');
+      claudePanes.delete(paneId);
+    }
+    if (st.parandoDeProposito || !atual) return;
     // manda junto o que o processo reclamou antes de morrer
     const motivo = String(st.erro || '').split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !/^Warning: Permanently added/i.test(l))
       .slice(-3).join(' · ').slice(0, 300);
-    emit(paneId, 'engine-down', { motivo, codigo, remoto: !!remoto });
+    // o emit acrescenta emTurno/tipo (quedas.js) e grava a queda no motores.log
+    emit(paneId, 'engine-down', { motivo, engine: 'claude', codigo, sinal: proc.signalCode || null, cauda: st.erro || '', remoto: !!remoto });
   });
   proc.on('error', (e) => {
-    if (claudePanes.get(paneId) === st) claudePanes.delete(paneId);
+    if (claudePanes.get(paneId) !== st) return;
+    observabilidade.encerrarPainel(paneId, 'claude', 'O processo Claude falhou.');
+    claudePanes.delete(paneId);
     if (!st.parandoDeProposito) emit(paneId, 'note', { text: 'Erro: ' + e.message, error: true });
   });
   return true;
@@ -845,6 +943,8 @@ function descartarPermissoes(paneId) {
 }
 
 function claudeStop(paneId) {
+  vigiaTurno.desligar(paneId);   // parada de proposito: nada de "estava em turno" depois disto
+  observabilidade.encerrarPainel(paneId, 'claude', 'A sessão Claude foi desligada deste painel.');
   limparSeq(paneId);
   limparPerguntasDoPainel(paneId);   // pergunta orfa nao volta na proxima abertura
   claudeRemoto.delete(paneId);
@@ -930,7 +1030,7 @@ function caminhoDoSocket(remoto) {
       ...e mesmo assim NAO sabe multiplexar. Uma chamada de verdade com
       ControlMaster=auto, contra a VPS, sai assim:
           getsockname failed: Not a socket
-          Read from remote host a.b.c.d: Unknown error    (saiu != 0, ZERO saida)
+          Read from remote host 203.0.113.10: Unknown error    (saiu != 0, ZERO saida)
       Ou seja: com o -G como prova, o muxEstado=true era falso positivo, o ganho
       da Fase A era ZERO e ainda se gastava uma conexao a mais por chamada ate'
       a degradacao pegar.
@@ -957,6 +1057,13 @@ function caminhoDoSocket(remoto) {
 const SSH_SEM_MUX = /getsockname failed|not a socket/i;
 // vestigio de multiplexing quebrado numa chamada de verdade: desiste na hora
 const SSH_MUX_TORTO = /mm_send_fd|mux_client|control master|controlsocket|disabling multiplexing|getsockname/i;
+/* Erro que o servidor (ou o ssh, sobre o servidor) ja' respondeu de forma
+   fechada: host que nao existe, chave recusada, porta fechada, identidade
+   trocada. Repetir isso sem multiplexing so' gasta outra conexao e o dobro do
+   tempo pra receber exatamente o mesmo "nao". Sao as mesmas frases que o
+   motivoDoSsh sabe nomear -- menos a linha generica dele, que pega qualquer
+   coisa e nao serve de prova. */
+const SSH_ERRO_FECHADO = /Permission denied|denied \(publickey|no such identity|Load key|Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|Connection refused|Could not resolve hostname|Name or service not known|No route to host|Connection timed out|Operation timed out|ssh_exchange_identification/i;
 
 /* Candidatos a ssh das chamadas de arquivo. O primeiro e' sempre o ssh de
    sempre; os outros so' entram se o de sempre for descartado. */
@@ -1047,6 +1154,26 @@ function fecharMestresSsh() {
 
 const sshDeuCerto = (r) => !!r && !r.falhou && !r.estourou && r.code === 0;
 
+/* Esta falha pode ter sido o proprio multiplexing? E' o filtro que decide se
+   vale gastar UMA segunda ida ao servidor sem ele. Em ordem:
+     - vestigio explicito no texto (mm_send_fd, mux_client, "disabling
+       multiplexing"): e' ele, sem duvida;
+     - o comando RODOU la' e voltou com codigo proprio -- pasta inexistente,
+       grep sem resultado, script que saiu 1. O tunel funcionou, entao o mux nao
+       tem culpa nenhuma. O ssh reserva o 255 pros erros DELE, entao qualquer
+       outro codigo veio de dentro do servidor;
+     - erro fechado de host, chave ou rede: resposta do outro lado, nao do mux;
+     - o resto e' ambiguo e vale a tentativa. Inclusive o "nem chamei o ssh":
+       com multiplexing o binario pode ser outro (o do Git), e o de sempre ainda
+       pode estar de pe. */
+function podeSerCulpaDoMux(r) {
+  if (!r) return false;
+  const e = String(r.errout || '');
+  if (SSH_MUX_TORTO.test(e)) return true;
+  if (!r.falhou && !r.estourou && Number.isFinite(r.code) && r.code !== 0 && r.code !== 255) return false;
+  return !SSH_ERRO_FECHADO.test(e);
+}
+
 /* Uma ida ao servidor. NUNCA rejeita: devolve {code,out,errout} quando rodou,
    {falhou} quando nem chegou a chamar o ssh, {estourou} quando passou do tempo. */
 function sshUmaVez(remoto, script, timeout, comMux) {
@@ -1123,18 +1250,24 @@ async function execRemoto(remoto, script, timeout) {
   /* ESTA e' a prova de que o multiplexing funciona -- uma ida de verdade ao
      servidor que voltou certa. A sonda local nunca afirma isso. */
   if (podeMux && sshDeuCerto(r)) { muxEstado = true; muxProvado = true; return { out: r.out }; }
-  /* Falhou COM multiplexing e ele ainda nao tinha sido provado: pode ser este
-     ssh que aceita a opcao mas nao sabe multiplexar de verdade. Tenta uma vez do
-     jeito de hoje -- se ai funcionar, o multiplexing sai de cena pelo resto da
-     sessao e nada quebra. Falha ambigua (pode ter sido a rede) so' derruba o
-     multiplexing no terceiro susto; falha COM cara de multiplexing quebrado
-     (mm_send_fd, mux_client, "disabling multiplexing") derruba na hora, porque
-     ai nao ha' duvida nenhuma. */
-  if (podeMux && !muxProvado) {
+  /* Falhou COM multiplexing: tenta UMA vez do jeito simples. Se ai funcionar, o
+     multiplexing sai de cena pelo resto da sessao e nada quebra.
+     Esta volta vale SEMPRE, inclusive depois de ele ja' ter sido provado -- era
+     esse o buraco: prova velha nao segura mestre morto nem socket vencido no
+     meio da sessao, e arvore, "@" e visor ficavam quebrados ate' reiniciar o
+     app. Prova de que funcionou uma vez nao e' promessa de que funciona agora.
+     Sem laco: e' uma tentativa so', ja' sem mux, e o que ela devolver e' a
+     palavra final. E sem gastar conexao a toa -- erro fechado (host errado,
+     chave recusada, pasta inexistente) nao volta, porque a resposta seria a
+     mesma.
+     Se a segunda tambem falhar: cara de multiplexing quebrado derruba o mux na
+     hora; falha ambigua so' conta susto enquanto ele nao se provou -- depois
+     disso a culpa e' da rede, e nao se aposenta o que ja' funcionou. */
+  if (podeMux && podeSerCulpaDoMux(r)) {
     const culpaDoMux = SSH_MUX_TORTO.test(String((r && r.errout) || ''));
     const r2 = await sshUmaVez(alvo, script, timeout, false);
     if (sshDeuCerto(r2)) { desistirDoMux(); return { out: r2.out }; }
-    if (culpaDoMux || ++muxSustos >= 3) desistirDoMux();
+    if (culpaDoMux || (!muxProvado && ++muxSustos >= 3)) desistirDoMux();
     r = r2;
   }
   if (sshDeuCerto(r)) return { out: r.out };
@@ -1145,19 +1278,10 @@ async function execRemoto(remoto, script, timeout) {
    {type:'image', source:{type:'base64', media_type, data}}). Teto por imagem e
    por resultado: e' pra ver o print, nao pra guardar um filme na tela. */
 const LIM_IMG_PASSO = 3 * 1024 * 1024;   // em base64 (~2,2 MB de png)
-function imagensDoResultado(content) {
-  if (!Array.isArray(content)) return [];
-  const out = [];
-  for (const x of content) {
-    if (!x || x.type !== 'image' || !x.source || x.source.type !== 'base64' || !x.source.data) continue;
-    if (String(x.source.data).length > LIM_IMG_PASSO) continue;
-    out.push({ mime: x.source.media_type || 'image/png', dados: x.source.data });
-    if (out.length >= 4) break;
-  }
-  return out;
-}
+function imagensDoResultado(content) { return resultadoFerramenta(content).imagens; }
 
 function claudeMessage(paneId, m) {
+  observabilidade.observarClaude(paneId, m);
   if (m.type === 'control_response') return;
   /* sugestao de proxima mensagem (--prompt-suggestions). O campo exato pode
      variar entre versoes do CLI: le os nomes conhecidos e descarta o resto. */
@@ -1241,8 +1365,13 @@ function claudeMessage(paneId, m) {
     const partes = Array.isArray(m.message.content) ? m.message.content
       : (typeof m.message.content === 'string' && m.message.content) ? [{ type: 'text', text: m.message.content }]
       : [];
+    /* conferencia final: fala que o PROPRIO CLI escreveu como erro de API (o
+       limite de uso chega assim: is_api_error_message no 2.1.270, modelo
+       "<synthetic>" nos dois). So' ela pode dizer ao vigia "bateu no limite";
+       o texto do modelo citando a frase nunca (quedas.js). */
+    const erroDoCli = m.is_api_error_message === true || m.message.model === '<synthetic>';
     partes.forEach((c, i) => {
-      if (c.type === 'text') emit(paneId, 'text-final', { id: 'm' + seqDoPane(paneId, marca) + marca + 'b' + i, text: c.text || '' });
+      if (c.type === 'text') emit(paneId, 'text-final', { id: 'm' + seqDoPane(paneId, marca) + marca + 'b' + i, text: c.text || '', ...(erroDoCli ? { erroDoCli: true } : {}) });
       else if (c.type === 'tool_use' && c.name === 'TodoWrite' && !marca && c.input && Array.isArray(c.input.todos)) {
         /* a lista de tarefas do proprio agente ja chegava aqui e era jogada
            fora - agora vira a checklist ao vivo do painel. So' a do agente
@@ -1280,14 +1409,27 @@ function claudeMessage(paneId, m) {
   if (m.type === 'user' && m.message && Array.isArray(m.message.content)) {
     for (const c of m.message.content) {
       if (c.type === 'tool_result') {
-        let txt = '';
-        if (typeof c.content === 'string') txt = c.content;
-        else if (Array.isArray(c.content)) txt = c.content.map(x => x && x.type === 'text' ? x.text : '').join('\n');
-        // print que o agente tirou (85 em 30 dias, todos jogados fora ate aqui)
-        const imagens = imagensDoResultado(c.content);
-        emit(paneId, 'tool-end', { id: c.tool_use_id, output: txt, error: !!c.is_error, ...(imagens.length ? { imagens } : {}) });
+        emit(paneId, 'tool-end', { id: c.tool_use_id, ...resultadoFerramenta(c.content), error: !!c.is_error });
       }
     }
+    return;
+  }
+  /* Robo em segundo plano: trabalho que continua DEPOIS que o turno acaba.
+     O painel fica "parado" e ele segue rodando - sem sinal, voce olha a tela
+     e acha que nao tem nada acontecendo.
+
+     O claude manda a LISTA INTEIRA a cada mudanca (e [] quando acabam), entao
+     a tela so' espelha o que veio em vez de contar comeco e fim por conta -
+     assim nao ha como dessincronizar. Medido antes de escrever: a
+     <task-notification> que fecha a tarefa NAO sai no stdout (so' vai pro
+     historico gravado), entao ela nao serve pra isto; este evento serve. */
+  if (m.type === 'system' && m.subtype === 'background_tasks_changed') {
+    const tarefas = (Array.isArray(m.tasks) ? m.tasks : []).map((x) => ({
+      id: String((x && x.task_id) || ''),
+      tipo: (x && x.task_type) === 'local_bash' ? 'comando' : 'agente',
+      desc: String((x && x.description) || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    })).filter((x) => x.id);
+    emit(paneId, 'robos', { tarefas });
     return;
   }
   if (m.type === 'system' && m.subtype === 'init' && m.session_id) {
@@ -1299,6 +1441,9 @@ function claudeMessage(paneId, m) {
       file: remotoDaqui ? '' : path.join(CLAUDE_PROJ, encodeCwd(m.cwd || claudeCwd.get(paneId) || HOME), m.session_id + '.jsonl'),
       remoto: !!remotoDaqui,
     });
+    if (!remotoDaqui && typeof m.permissionMode === 'string') {
+      emit(paneId, 'modo-real', { modo: modoDoCockpitPeloInit(m.permissionMode) });
+    }
     // quais conectores esta sessao conhece (locais, plugins e os do claude.ai):
     // e' desta lista que o editor de abas monta os perfis
     if (!remotoDaqui && Array.isArray(m.mcp_servers)) {
@@ -1477,14 +1622,24 @@ const NOMES_PATH = () => path.join(app.getPath('userData'), 'nomes.json');
 function lerNomes() { try { return JSON.parse(fs.readFileSync(NOMES_PATH(), 'utf8')); } catch { return {}; } }
 function salvarNomes(o) { gravarSeguro(NOMES_PATH(), JSON.stringify(o)); }
 
-ipcMain.handle('sessao:renomear', async (_e, { engine, id, nome }) => {
+ipcMain.handle('sessao:renomear', async (_e, { engine, id, nome, auto }) => {
   const todos = lerNomes();
+  /* leva 41 (B6): o nome de 3 palavras do Cockpit mora em "_auto", separado do
+     seu. Nao mexe no nome que voce deu nem no do Codex (la' seria "seu"). */
+  if (auto) { if (id) { tituloAuto.gravarNomeAuto(todos, id, nome); salvarNomes(todos); } return true; }
   if (nome && nome.trim()) todos[id] = nome.trim(); else delete todos[id];
   salvarNomes(todos);
   if (engine === 'codex' && id) {
     try { await codexStart(); await codexReq('thread/name/set', { threadId: id, name: nome || null }); } catch {}
   }
   return true;
+});
+
+/* leva 41 (B6): 'titulo:gerar' -- o Haiku resume a 1a mensagem em 3 palavras.
+   Roda aqui no PC mesmo pra painel da VPS (so' texto); falhou = titulo vazio. */
+tituloAuto.registrar(ipcMain, {
+  spawnBin, claudeBin, buildEnv: () => buildEnv(), matarProcesso,
+  pastaDados: () => app.getPath('userData'),
 });
 
 /* ===== ramificar (fork) de verdade =====
@@ -1541,9 +1696,53 @@ function forkGemini(id, doFim) {
   return { id: novo };
 }
 
-ipcMain.handle('sessao:fork', async (_e, { engine, id, doFim }) => {
+/* leva 41 (B3): "voltar para cá" no Claude do PC = ramo cortado de verdade.
+   O .jsonl da origem e' copiado ate' ANTES da mensagem escolhida, com sessionId
+   novo (a regra do corte e o formato medido estao no ramo-claude.js), ao lado
+   do original -- na mesma pasta de projeto, onde o --resume acha. A origem nao
+   e' tocada. O painel novo sobe com --resume <novo>, sem --fork-session. */
+const ramoClaude = require('./ramo-claude');
+function arquivoSessaoClaude(id, cwd) {
+  const alvo = String(id) + '.jsonl';
+  const direto = path.join(CLAUDE_PROJ, encodeCwd(cwd || HOME), alvo);
+  try { if (fs.existsSync(direto)) return direto; } catch {}
+  // conversa aberta pela lateral pode morar na pasta de OUTRO projeto
+  let pastas = [];
+  try { pastas = fs.readdirSync(CLAUDE_PROJ); } catch { return ''; }
+  for (const p of pastas) {
+    const f = path.join(CLAUDE_PROJ, p, alvo);
+    try { if (fs.existsSync(f)) return f; } catch {}
+  }
+  return '';
+}
+function forkClaudeCortado({ id, doFim, alvo, repetidasDepois, cwd }) {
+  // o id vira nome de arquivo: so' uuid, nunca caminho
+  if (!/^[0-9a-f-]{36}$/i.test(String(id || ''))) return { error: 'conversa sem identificação válida' };
+  if (!(Number(doFim) >= 1) && !String(alvo || '').trim()) return { error: 'O Claude ramifica a conversa inteira ao ligar o painel novo.' };
+  const src = arquivoSessaoClaude(id, cwd);
+  if (!src) return { error: 'Não achei o arquivo desta conversa do Claude.' };
+  let bruto = '';
+  try {
+    /* o corte le e interpreta o arquivo inteiro aqui no main: acima de 150 MB
+       (conversa cheia de print) o pico de memoria passa de meio giga numa
+       maquina com pouca folga. Ai' a tela leva o resumo, com recado. */
+    if (fs.statSync(src).size > 150 * 1024 * 1024) return { error: 'a conversa é grande demais para cortar aqui' };
+    bruto = fs.readFileSync(src, 'utf8');
+  } catch (e) { return { error: 'Não consegui ler a conversa: ' + e.message }; }
+  const novo = crypto.randomUUID();
+  const r = ramoClaude.cortarConversa(bruto, { idVelho: id, idNovo: novo, doFim, alvo, repetidasDepois, ehTecnico, semContexto });
+  if (r.erro) return { error: r.erro };
+  if (r.vazio) return { vazio: true };
+  const destino = path.join(path.dirname(src), novo + '.jsonl');
+  try { fs.writeFileSync(destino, r.texto, { encoding: 'utf8', flag: 'wx' }); }
+  catch (e) { return { error: 'Não consegui gravar o ramo: ' + e.message }; }
+  return { id: novo, file: destino };
+}
+
+ipcMain.handle('sessao:fork', async (_e, { engine, id, doFim, alvo, repetidasDepois, cwd }) => {
   try {
     if (!id) return { error: 'conversa sem identificação' };
+    if (engine === 'claude') return forkClaudeCortado({ id, doFim, alvo, repetidasDepois, cwd });
     if (engine === 'codex') {
       await codexStart();
       let corte = {};
@@ -1774,14 +1973,14 @@ function claudeSessionsRemoto(remoto) {
         if (entrada && !ENTRADAS_DE_GENTE.includes(entrada)) continue;
         const nomeArq = pathRel.split('/').pop() || pathRel;
         const id = nomeArq.replace(/\.jsonl$/, '');
-        const title = nomesMeus[id] || tituloBruto;
-        if (!title) continue;
+        if (!tituloAuto.nomeDaConversa(nomesMeus, id).nome && !tituloBruto) continue;
         const mtimeMs = Math.round((parseFloat(mtimeStr) || 0) * 1000);
         /* a pasta VERDADEIRA da conversa, nao a da aba. O arquivo diz onde ela
            rodou; carimbar a pasta da aba em todas fazia voce abrir uma conversa
            de outro projeto achando que era deste. */
-        out2.push({ engine: 'claude', id, title, cwd: cwdReal || remoto.caminhoRemoto || '~', when: mtimeMs,
-          file: '', entrada, remoto: true });
+        // seu nome > o de 3 palavras do Cockpit > o do arquivo (aiTitle / 1a fala)
+        out2.push(tituloAuto.aplicarNome({ engine: 'claude', id, title: tituloBruto, cwd: cwdReal || remoto.caminhoRemoto || '~', when: mtimeMs,
+          file: '', entrada, remoto: true }, nomesMeus));
       }
       out2.sort((a, b) => b.when - a.when);
       resolve(out2);
@@ -1808,9 +2007,9 @@ function claudeSessions(limit, incluirRobos) {
     const fi = fichaConversa(it);
     lidos++;
     if (!incluirRobos && fi.entrada && !ENTRADAS_DE_GENTE.includes(fi.entrada)) continue;
-    let title = nomesMeus[it.id] || fi.title;
-    if (!title) continue;
-    out.push({ engine: 'claude', id: it.id, title, cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada });
+    if (!tituloAuto.nomeDaConversa(nomesMeus, it.id).nome && !fi.title) continue;
+    // seu nome > o de 3 palavras do Cockpit > o do arquivo (aiTitle / 1a fala)
+    out.push(tituloAuto.aplicarNome({ engine: 'claude', id: it.id, title: fi.title, cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada }, nomesMeus));
   }
   if (lidos) gravarIndice();
   return out;
@@ -1857,8 +2056,10 @@ function mensagensDoJsonl(data, maxMsgs) {
       const c = Array.isArray(d.message.content) ? d.message.content
         : (typeof d.message.content === 'string' && d.message.content) ? [{ type: 'text', text: d.message.content }]
         : [];
+      // o modelo que respondeu vai junto: a conversa reaberta volta nele (leva 41)
+      const modelo = typeof d.message.model === 'string' ? d.message.model : '';
       for (const x of c) {
-        if (x.type === 'text' && x.text && x.text.trim()) msgs.push({ role: 'bot', text: x.text });
+        if (x.type === 'text' && x.text && x.text.trim()) msgs.push(modelo ? { role: 'bot', text: x.text, model: modelo } : { role: 'bot', text: x.text });
         else if (x.type === 'tool_use') msgs.push({ role: 'tool', name: x.name, arg: claudeToolArg(x.name, x.input) });
       }
     }
@@ -1968,9 +2169,14 @@ function codexSessions(incluirRobos, nomesDoApp) {
     lidos++;
     if (!incluirRobos && fi.entrada && !ORIGENS_DE_GENTE.includes(fi.entrada)) continue;
     const id = fi.sid || it.id;
-    const title = meus[id] || (nomesDoApp && nomesDoApp[id]) || fi.title;
+    /* seu nome (aqui ou no app do Codex) > o de 3 palavras do Cockpit > o do arquivo.
+       O nome do app do Codex conta como SEU: foi alguem que deu, a mao. */
+    const n = tituloAuto.nomeDaConversa(meus, id);
+    const doApp = nomesDoApp && nomesDoApp[id];
+    const title = (n.manual && n.nome) || doApp || n.nome || fi.title;
     if (!title) continue;
-    out.push({ engine: 'codex', id, title: title.slice(0, 120), cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada });
+    const marca = (n.manual || doApp) ? { nome: title } : (n.auto ? { tituloAuto: true } : {});
+    out.push({ engine: 'codex', id, title: title.slice(0, 120), cwd: fi.cwd || HOME, when: it.mtime, file: it.f, entrada: fi.entrada, ...marca });
   }
   if (lidos) gravarIndice();
   return out;
@@ -1991,6 +2197,10 @@ ipcMain.handle('sessions:codex', async (_e, incluirRobos) => {
 ipcMain.handle('sessions:titulo', (_e, { engine, file, id }) => {
   try {
     if (engine !== 'claude') return '';
+    /* leva 41 (B6): a releitura do aiTitle nao passa por cima do nome que voce
+       deu nem do de 3 palavras do Cockpit: se houver, e' ele que volta. */
+    const meu = tituloAuto.nomeDaConversa(lerNomes(), id);
+    if (meu.nome) return meu.nome;
     let f = file;
     if ((!f || !fs.existsSync(f)) && id) {
       const achados = [];
@@ -2300,25 +2510,29 @@ function alvoDoTransporte(t) {
   return t.type || '';
 }
 
-ipcMain.handle('mcp:list', async (_e, engine) => {
+async function listarMcpConfigurados(engine) {
   // sem isto, um painel Gemini listava os conectores do CLAUDE dizendo que eram dele
   if (engine === 'acp') return { error: 'Os conectores do agente ACP se configuram no próprio agente, pelo terminal (ex.: "gemini mcp").' };
   if (ehCli(engine)) return { error: 'Os conectores do ' + CLIS[engine].nome + ' se configuram pelo terminal: "' + CLIS[engine].bin + ' mcp".' };
   if (engine === 'codex') {
     const r = await rodar('codex', ['mcp', 'list', '--json'], 45000);
+    if (r.err) return { error: 'O CLI Codex não confirmou a lista de conectores.' };
     try {
       const arr = JSON.parse(r.out);
       return arr.map(m => ({
         nome: m.name,
         alvo: alvoDoTransporte(m.transport),
         ligado: m.enabled !== false,
+        auth: m.auth_status || 'unknown',
         precisaEntrar: m.auth_status === 'not_logged_in' && (m.transport || {}).type !== 'stdio',
-        status: m.auth_status === 'logged_in' ? 'conectado'
-          : m.auth_status === 'not_logged_in' ? 'precisa entrar' : (m.disabled_reason || 'ok'),
+        // Login salvo/configuração não comprova conexão nesta conversa.
+        status: m.enabled === false ? 'desativado' : m.auth_status === 'not_logged_in'
+          && (m.transport || {}).type !== 'stdio' ? 'precisa entrar' : 'configurado',
       }));
     } catch (e) { return { error: 'não consegui ler a lista do Codex: ' + String(e.message).slice(0, 160) }; }
   }
   const r = await rodar(claudeBin(), ['mcp', 'list'], 90000);
+  if (r.err) return { error: 'O CLI Claude não confirmou a lista de conectores.' };
   const linhas = (r.out + '\n' + r.errout).split('\n').map(l => l.trim()).filter(Boolean);
   const out = [];
   for (const l of linhas) {
@@ -2329,10 +2543,52 @@ ipcMain.handle('mcp:list', async (_e, engine) => {
       nome: m[1], alvo: m[2],
       ligado: true,
       precisaEntrar: /authentication|auth/i.test(st),
-      status: /Connected/i.test(st) ? 'conectado' : /authentication/i.test(st) ? 'precisa entrar' : st.replace(/[✔✗!⏸]/g, '').trim(),
+      auth: /authentication|auth/i.test(st) ? 'notLoggedIn' : 'unknown',
+      status: /Connected/i.test(st) ? 'conectado na verificação do CLI' : /authentication/i.test(st) ? 'precisa entrar' : st.replace(/[✔✗!⏸]/g, '').trim(),
     });
   }
   return out;
+}
+ipcMain.handle('mcp:list', (_e, engine) => listarMcpConfigurados(engine));
+
+ipcMain.handle('agentes:sessao', (_e, o) => observabilidade.agentesSessao(o || {}));
+
+async function diagnosticarMcp({ engine, paneId } = {}) {
+  if (!['codex', 'claude'].includes(engine)) return { error: 'Diagnóstico disponível para Codex e Claude.' };
+  if (engine === 'claude' && claudeRemoto.has(paneId)) return { engine, itens: [], avisos: ['Esta sessão roda em outro computador; os conectores locais não representam seu estado.'] };
+  const avisos = [];
+  let configurados = [], runtime = [];
+  try {
+    const r = await listarMcpConfigurados(engine);
+    if (Array.isArray(r)) configurados = r;
+    else avisos.push(r?.error || 'Não foi possível ler a configuração dos conectores.');
+  } catch { avisos.push('Não foi possível consultar a configuração dos conectores.'); }
+  if (engine === 'codex') {
+    const threadId = codex.paneToThread.get(paneId);
+    if (codex.pronto && threadId) {
+      try {
+        const r = await listarRuntimeCodex(codexReq, threadId);
+        runtime = r.itens;
+        if (r.parcial) avisos.push('Inventário parcial: limite de 500 conectores atingido.');
+      } catch { avisos.push('Não foi possível consultar os conectores carregados nesta conversa.'); }
+    } else avisos.push('Sem conversa Codex conectada neste painel; o estado carregado é desconhecido.');
+  } else avisos.push('Claude: carregamento observado na abertura da sessão. A verificação do CLI ocorre em outro processo.');
+  const resultado = observabilidade.diagnostico(engine, paneId, configurados, runtime);
+  resultado.avisos = avisos;
+  return resultado;
+}
+ipcMain.handle('mcp:diagnostico', (_e, o) => diagnosticarMcp(o));
+
+ipcMain.handle('mcp:recarregar', async (_e, { engine, paneId } = {}) => {
+  if (engine !== 'codex') return { error: 'O Claude aplica a configuração na próxima abertura da sessão. Esta ação não reinicia sua conversa.' };
+  if (!codex.pronto) return { error: 'O Codex não está conectado.' };
+  if (codex.paneTurn.size) return { error: 'Aguarde todos os turnos Codex terminarem: o servidor de conectores é compartilhado.' };
+  try {
+    await codexReq('config/mcpServer/reload', null, 30000);
+    const diagnostico = await diagnosticarMcp({ engine, paneId });
+    return { ok: true, recarregado: true, diagnostico,
+      aviso: 'O Codex aceitou a recarga. Consulte o estado carregado; isso ainda não comprova uma chamada de ferramenta.' };
+  } catch { return { error: 'O Codex não confirmou a recarga dos conectores.' }; }
 });
 
 ipcMain.handle('mcp:acao', async (_e, { engine, acao, nome, url, comando }) => {
@@ -2969,9 +3225,119 @@ function credencialValida(texto) {
   catch { return false; }
 }
 
-ipcMain.handle('contas:disponivel', (_e, engine) => ({ ok: engine !== 'acp' && trocaDeContaDisponivel(engine) }));
+/* ---------- conta do Claude NO SERVIDOR (aba de SSH) ----------
+   O painel remoto roda o claude do servidor, com a credencial do servidor. Ate'
+   a leva 41 estes canais so' conheciam o PC: /login numa aba da VPS logava o PC,
+   /logout deslogava o PC, "Trocar de conta" trocava o arquivo do PC e a VPS
+   seguia na conta antiga. Agora todo canal de conta aceita { engine, remoto }.
+   So' a PRESENCA do objeto 'remoto' decide: se ele vier torto, o pedido vira
+   erro -- nunca uma volta calada pro disco daqui. Os comandos em si moram no
+   cockpit-contas-remoto.js (testavel sem Electron). */
+const contasRemoto = require('./cockpit-contas-remoto');
+const motorDoPedido = (o) => (o && typeof o === 'object') ? o.engine : o;
+const remotoDaConta = (o) => (o && typeof o === 'object' && o.remoto && typeof o.remoto === 'object') ? o.remoto : null;
+// por enquanto so' o Claude roda no servidor (o Codex e os outros sao sempre daqui)
+const MOTOR_COM_CONTA_REMOTA = { claude: true };
+const SO_CLAUDE_NO_SERVIDOR = 'Numa aba de servidor só a conta do Claude mora lá. As dos outros motores são deste computador.';
+const SERVIDOR_TORTO = 'Servidor desta aba está incompleto ou com endereço inválido. Edite a aba.';
+const lugarDoServidor = (alvo) => alvo.usuario + '@' + alvo.host;
 
-ipcMain.handle('contas:listar', (_e, engine) => {
+/* A conta do servidor custa uma ida ao servidor + um "claude auth status" la'.
+   A tela pede de novo a cada troca de aba e a cada 5 min: guarda por host um
+   pouco menos que isso, pra o relogio de 5 min sempre trazer dado novo. Pedido
+   em voo e' reaproveitado (cartao e medidor pedem ao mesmo tempo). */
+const PRAZO_CONTA_REMOTA = 290 * 1000;
+const cacheContaRemota = new Map();   // usuario@host -> { t, valor }
+const contaRemotaEmVoo = new Map();   // usuario@host -> Promise
+/* a conta mudou (troca, login, logout): o que estava guardado sai, e uma leitura
+   que ainda estava em voo -- comecou ANTES da mudanca -- nao pode voltar a
+   guardar a conta velha quando chegar */
+const versaoContaRemota = new Map();  // usuario@host -> numero
+function esquecerContaRemota(alvo) {
+  if (!alvo) return;
+  const lugar = lugarDoServidor(alvo);
+  cacheContaRemota.delete(lugar); contaRemotaEmVoo.delete(lugar);
+  versaoContaRemota.set(lugar, (versaoContaRemota.get(lugar) || 0) + 1);
+}
+
+async function contaRemotaLer(remoto, fresco) {
+  const alvo = normalizarRemoto(remoto);
+  if (!alvo) return { entrou: false, erro: true, motivo: SERVIDOR_TORTO };
+  const lugar = lugarDoServidor(alvo);
+  const guardado = cacheContaRemota.get(lugar);
+  if (!fresco && guardado && Date.now() - guardado.t < PRAZO_CONTA_REMOTA) return guardado.valor;
+  if (!fresco && contaRemotaEmVoo.has(lugar)) return contaRemotaEmVoo.get(lugar);
+  const versao = versaoContaRemota.get(lugar) || 0;
+  const pedido = (async () => {
+    const r = await execRemoto(alvo, contasRemoto.scriptConta(), 45000);
+    // falha de conexao NAO e' "nao esta logado": a tela mostra o motivo
+    if (r.error) return { entrou: false, erro: true, motivo: r.error, lugar };
+    const lido = contasRemoto.lerConta(r.out);
+    // o token so' serve pra perguntar o limite; nunca entra no que vai pra tela
+    const u = lido.token ? await usoComToken(lido.token) : null;
+    const valor = { ...contaDoClaude(lido.status || {}, u), remoto: true, lugar };
+    if (!lido.status) valor.motivo = lido.motivo;
+    if ((versaoContaRemota.get(lugar) || 0) === versao) cacheContaRemota.set(lugar, { t: Date.now(), valor });
+    return valor;
+  })();
+  contaRemotaEmVoo.set(lugar, pedido);
+  try { return await pedido; } finally { if (contaRemotaEmVoo.get(lugar) === pedido) contaRemotaEmVoo.delete(lugar); }
+}
+
+async function contasRemotas(acao, o) {
+  const engine = motorDoPedido(o);
+  if (!MOTOR_COM_CONTA_REMOTA[engine]) return acao === 'listar' ? [] : { error: SO_CLAUDE_NO_SERVIDOR };
+  const alvo = normalizarRemoto(remotoDaConta(o));
+  if (!alvo) return { error: SERVIDOR_TORTO };
+  if (acao === 'listar') {
+    const r = await execRemoto(alvo, contasRemoto.scriptListar(), 20000);
+    return r.error ? { error: r.error } : contasRemoto.lerLista(r.out);
+  }
+  if (acao === 'disponivel') {
+    const r = await execRemoto(alvo, contasRemoto.scriptDisponivel(), 20000);
+    if (r.error) return { ok: false, error: r.error };
+    return { ok: /\bCOCKPIT_SIM\b/.test(r.out) };
+  }
+  const apelido = contasRemoto.apelidoValido(o && o.apelido);
+  if (!apelido) return { error: acao === 'salvar' ? 'Dê um apelido para esta conta.' : 'Essa conta não está mais guardada.' };
+  if (acao === 'salvar') {
+    const r = await execRemoto(alvo, contasRemoto.scriptSalvar(apelido), 20000);
+    if (r.error) return { error: r.error };
+    return contasRemoto.lerResposta(r.out, {
+      COCKPIT_SEM_CONTA: 'Não achei uma conta logada no servidor para guardar.',
+      COCKPIT_ERRO_PASTA: 'Não consegui criar a pasta das contas no servidor.',
+      COCKPIT_ERRO_COPIA: 'Não consegui guardar a cópia no servidor.',
+    });
+  }
+  if (acao === 'trocar') {
+    const r = await execRemoto(alvo, contasRemoto.scriptTrocar(apelido), 20000);
+    if (r.error) return { error: r.error };
+    const res = contasRemoto.lerResposta(r.out, {
+      COCKPIT_SEM_CONTA: 'Essa conta não está mais guardada no servidor.',
+      COCKPIT_CORROMPIDA: 'O arquivo desta conta no servidor está corrompido — não vou trocar.',
+      COCKPIT_ERRO_PASTA: 'Não consegui abrir a pasta da credencial no servidor.',
+      COCKPIT_ERRO_TROCA: 'Não consegui trocar a credencial no servidor agora. Tente de novo.',
+    });
+    if (res.ok) esquecerContaRemota(alvo);
+    return res;
+  }
+  if (acao === 'esquecer') {
+    const r = await execRemoto(alvo, contasRemoto.scriptEsquecer(apelido), 20000);
+    if (r.error) return { error: r.error };
+    return contasRemoto.lerResposta(r.out, { COCKPIT_ERRO: 'Não consegui apagar a cópia guardada no servidor.' });
+  }
+  return { error: 'ação desconhecida' };
+}
+
+ipcMain.handle('contas:disponivel', (_e, o) => {
+  if (remotoDaConta(o)) return contasRemotas('disponivel', o);
+  const engine = motorDoPedido(o);
+  return { ok: engine !== 'acp' && trocaDeContaDisponivel(engine) };
+});
+
+ipcMain.handle('contas:listar', (_e, o) => {
+  if (remotoDaConta(o)) return contasRemotas('listar', o);
+  const engine = motorDoPedido(o);
   if (engine === 'acp') return [];
   const dir = PASTA_CONTAS();
   const out = [];
@@ -2993,6 +3359,7 @@ ipcMain.handle('contas:listar', (_e, engine) => {
    Sem derrubar esse processo, trocar de conta nao muda nada.
    So' mata: quem limpa o estado e' o 'close' la de cima, que ja faz isso certo. */
 ipcMain.handle('codex:reiniciar', async () => {
+  observabilidade.encerrarMotor('codex', 'O servidor Codex está sendo reiniciado.');
   const p = codex.proc;
   if (!p) { codex.ready = null; return { ok: true }; }
   const caiu = new Promise((r) => {
@@ -3002,6 +3369,9 @@ ipcMain.handle('codex:reiniciar', async () => {
     // se o prazo vencer, o ouvinte tem que sair junto, senao vaza
     setTimeout(() => p.removeListener('close', fim), 4000);
   });
+  // de proposito: o 'close' avisa a tela sem "estava em turno", e nada religa sozinho
+  codex.derrubando = p;
+  for (const paneId of codex.paneToThread.keys()) vigiaTurno.desligar(paneId);
   matarProcesso(p);
   await caiu;
   if (codex.proc === p) codex.proc = null;
@@ -3013,7 +3383,9 @@ ipcMain.handle('codex:reiniciar', async () => {
   return { ok: true };
 });
 
-ipcMain.handle('contas:salvar', (_e, { engine, apelido }) => {
+ipcMain.handle('contas:salvar', (_e, o) => {
+  if (remotoDaConta(o)) return contasRemotas('salvar', o);
+  const { engine, apelido } = o || {};
   const txt = lerCredencial(engine);
   if (!txt || !credencialValida(txt)) return { error: 'Não achei uma conta logada para guardar.' };
   const nome = String(apelido || '').trim().slice(0, 40);
@@ -3026,7 +3398,9 @@ ipcMain.handle('contas:salvar', (_e, { engine, apelido }) => {
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
 
-ipcMain.handle('contas:trocar', (_e, { engine, apelido }) => {
+ipcMain.handle('contas:trocar', (_e, o) => {
+  if (remotoDaConta(o)) return contasRemotas('trocar', o);
+  const { engine, apelido } = o || {};
   const alvo = path.join(PASTA_CONTAS(), engine + '__' + encodeURIComponent(String(apelido || '')) + '.json');
   try {
     if (!fs.existsSync(alvo)) return { error: 'Essa conta não está mais guardada.' };
@@ -3061,7 +3435,9 @@ ipcMain.handle('contas:trocar', (_e, { engine, apelido }) => {
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
 
-ipcMain.handle('contas:esquecer', (_e, { engine, apelido }) => {
+ipcMain.handle('contas:esquecer', (_e, o) => {
+  if (remotoDaConta(o)) return contasRemotas('esquecer', o);
+  const { engine, apelido } = o || {};
   try {
     fs.unlinkSync(path.join(PASTA_CONTAS(), engine + '__' + encodeURIComponent(String(apelido || '')) + '.json'));
     return { ok: true };
@@ -3072,19 +3448,77 @@ ipcMain.handle('contas:esquecer', (_e, { engine, apelido }) => {
 // Mac: Chaveiro. Windows: arquivo de credenciais. Detalhe em plataforma.js
 const tokenDoClaude = plataforma.tokenClaude;
 
-async function usoDoClaude() {
-  const t = tokenDoClaude();
-  if (!t) return null;
+/* O limite de uso vem da API com o token da conta. O do PC sai do arquivo (ou
+   do Chaveiro) daqui; o do servidor o contaRemotaLer traz de la'. Em nenhum dos
+   dois o token volta pra tela.
+   A API de uso tem limite de chamadas: medido em 14/09, o token do PC levou
+   429 com Retry-After de ~16 min e o medidor sumiu. Cartao e medidor pedem
+   juntos, e agora a troca de aba tambem repinta: a resposta boa fica 60s
+   guardada POR TOKEN (conta nova = token novo = leitura nova, sem precisar
+   invalidar), e um 429 segura novas tentativas pelo tempo que a API pediu. */
+const cacheUso = new Map();   // token -> { t, u }
+/* Pela rede do Chromium (net.fetch), nao pelo fetch do Node: nesta maquina, em
+   14/09, o fetch do Node falhou as vezes com "self-signed certificate in
+   certificate chain" (o antivirus inspeciona HTTPS com certificado proprio) e o
+   medidor sumia calado. O Chromium confia nos certificados do Windows, como o
+   navegador. Sem Electron pronto (teste), cai no fetch de sempre. */
+function buscarNaRede(url, opcoes) {
   try {
-    const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
+    const { net } = require('electron');
+    if (net && typeof net.fetch === 'function' && app.isReady && app.isReady()) return net.fetch(url, opcoes);
+  } catch {}
+  return fetch(url, opcoes);
+}
+async function usoComToken(t) {
+  if (!t) return null;
+  const guardado = cacheUso.get(t);
+  // a API mandou esperar (429 + Retry-After): insistir so' estica o castigo
+  if (guardado && guardado.ate && Date.now() < guardado.ate) return null;
+  if (guardado && !guardado.ate && Date.now() - guardado.t < 60000) return guardado.u;
+  try {
+    const r = await buscarNaRede('https://api.anthropic.com/api/oauth/usage', {
       headers: { Authorization: 'Bearer ' + t, 'anthropic-beta': 'oauth-2025-04-20' },
     });
+    if (r.status === 429) {
+      const s = Number(r.headers && r.headers.get && r.headers.get('retry-after')) || 60;
+      cacheUso.set(t, { t: Date.now(), u: null, ate: Date.now() + Math.min(Math.max(s, 30), 1800) * 1000 });
+      return null;
+    }
     if (!r.ok) return null;
-    return await r.json();
+    const u = await r.json();
+    if (cacheUso.size > 20) cacheUso.clear();
+    cacheUso.set(t, { t: Date.now(), u });
+    return u;
   } catch { return null; }
 }
+function usoDoClaude() { return usoComToken(tokenDoClaude()); }
 
-ipcMain.handle('conta:ler', async (_e, engine) => {
+// o "claude auth status" + o uso, no formato que a tela desenha (PC e servidor)
+function contaDoClaude(conta, u) {
+  const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
+  return {
+    entrou: !!conta.loggedIn,
+    email: conta.email || '',
+    nome: (conta.orgName || '').replace(/'s Organization$/, '') || conta.email || '',
+    plano: conta.subscriptionType || '',
+    via: conta.authMethod || '',
+    sessao: u ? janela(u.five_hour) : null,
+    semana: u ? janela(u.seven_day) : null,
+    extra: u && u.extra_usage ? {
+      ligado: !!u.extra_usage.is_enabled,
+      usado: u.extra_usage.used_credits || 0,
+      teto: u.extra_usage.monthly_limit || 0,
+      moeda: u.extra_usage.currency || '',
+    } : null,
+  };
+}
+
+ipcMain.handle('conta:ler', async (_e, o) => {
+  if (remotoDaConta(o)) {
+    if (!MOTOR_COM_CONTA_REMOTA[motorDoPedido(o)]) return { entrou: false, erro: true, motivo: SO_CLAUDE_NO_SERVIDOR };
+    return contaRemotaLer(remotoDaConta(o), !!o.fresco);
+  }
+  const engine = motorDoPedido(o);
   if (engine === 'acp') {
     // nao da' pra conferir daqui: a conta e' do programa que o painel escolher
     return { entrou: null, nome: 'Agente ACP', motivo: 'A conta é a do próprio agente ACP, configurada no terminal dele; o Cockpit não confere daqui. Se ele pedir login, aparece no painel.' };
@@ -3102,23 +3536,7 @@ ipcMain.handle('conta:ler', async (_e, engine) => {
   if (engine === 'claude') {
     let conta = {};
     try { conta = JSON.parse((await rodar(claudeBin(), ['auth', 'status'], 25000)).out || '{}'); } catch {}
-    const u = await usoDoClaude();
-    const janela = (x) => x ? { pct: Math.round(x.utilization || 0), reseta: x.resets_at ? Date.parse(x.resets_at) : 0 } : null;
-    return {
-      entrou: !!conta.loggedIn,
-      email: conta.email || '',
-      nome: (conta.orgName || '').replace(/'s Organization$/, '') || conta.email || '',
-      plano: conta.subscriptionType || '',
-      via: conta.authMethod || '',
-      sessao: u ? janela(u.five_hour) : null,
-      semana: u ? janela(u.seven_day) : null,
-      extra: u && u.extra_usage ? {
-        ligado: !!u.extra_usage.is_enabled,
-        usado: u.extra_usage.used_credits || 0,
-        teto: u.extra_usage.monthly_limit || 0,
-        moeda: u.extra_usage.currency || '',
-      } : null,
-    };
+    return contaDoClaude(conta, await usoDoClaude());
   }
 
   await codexStart();
@@ -3148,7 +3566,33 @@ ipcMain.handle('conta:ler', async (_e, engine) => {
   };
 });
 
-ipcMain.handle('auth:acao', async (_e, { engine, acao }) => {
+/* Entrar/sair da conta NO SERVIDOR. Antes, o /login numa aba da VPS logava o
+   PC (a VPS seguia na conta antiga) e o /logout deslogava o PC. Agora o
+   terminal embutido abre um "ssh -t" que roda o "claude auth login" LA'; o link
+   de login continua abrindo no navegador daqui (o terminal mostra o botao). */
+async function authNoServidor(o) {
+  const { engine, acao } = o || {};
+  if (!MOTOR_COM_CONTA_REMOTA[engine]) return { error: SO_CLAUDE_NO_SERVIDOR };
+  if (!['login', 'logout', 'status'].includes(acao)) return { error: 'ação desconhecida' };
+  const alvo = normalizarRemoto(remotoDaConta(o));
+  if (!alvo) return { error: SERVIDOR_TORTO };
+  const lugar = lugarDoServidor(alvo);
+  if (acao === 'status') {
+    const r = await execRemoto(alvo, contasRemoto.scriptStatus(), 45000);
+    if (r.error) return { error: r.error };
+    return { texto: String(r.out || '').trim().slice(0, 800) };
+  }
+  const linha = contasRemoto.linhaTerminal(alvo, acao, EH_WIN);
+  if (!linha) return { error: 'Um dos campos desta aba (usuário, host ou chave) tem caractere que não pode entrar num comando — normalmente aspas ou %. Confira em Editar aba.' };
+  // a conta do servidor vai mudar: o que estava guardado dela nao vale mais
+  esquecerContaRemota(alvo);
+  return { terminal: linha, remoto: true,
+           titulo: (acao === 'login' ? 'Entrar na conta do Claude no servidor ' : 'Sair da conta do Claude no servidor ') + lugar };
+}
+
+ipcMain.handle('auth:acao', async (_e, o) => {
+  if (remotoDaConta(o)) return authNoServidor(o);
+  const { engine, acao } = o || {};
   /* o codigo antigo caia em "codex" pra tudo que nao fosse claude: entrar ou
      SAIR da conta num painel Gemini rodava "codex login"/"codex logout" */
   if (engine === 'acp') return { error: 'A conta do agente ACP se resolve no terminal: rode o comando dele e entre por lá.' };
@@ -3181,7 +3625,9 @@ ipcMain.handle('user:pickPhoto', async () => {
     const ext = path.extname(f).slice(1).toLowerCase();
     const mime = ext === 'jpg' ? 'jpeg' : ext;
     const b = fs.readFileSync(f);
-    if (b.length > 3 * 1024 * 1024) return { error: 'Imagem muito pesada. Use uma menor que 3 MB.' };
+    // a tela reduz pra 256 px antes de gravar (leva 41): o teto aqui so' evita
+    // mandar um arquivo absurdo pela ponte
+    if (b.length > 25 * 1024 * 1024) return { error: 'Imagem muito pesada (mais de 25 MB). Use uma menor.' };
     return { dataUrl: 'data:image/' + mime + ';base64,' + b.toString('base64') };
   } catch (e) { return { error: e.message }; }
 });
@@ -3279,7 +3725,17 @@ async function verArquivoRemoto(remoto, file) {
   }
   const b64 = quebra >= 0 ? bruto.slice(quebra + 1).trim() : '';
   const base = { path: alvo, nome, ext, bytes };
-  if (!b64) { base.tipo = 'outro'; return base; }
+  /* Arquivo de ZERO byte nao imprime nada no "base64 -w0": o pacote vem vazio
+     porque o arquivo e' vazio, nao porque o tipo e' desconhecido. Antes isso
+     virava 'outro' e a tela dizia "Este tipo nao abre aqui dentro" para um .txt
+     em branco -- enquanto o ramo local mostra um <pre> vazio. Agora empatam.
+     A distincao que sustenta isso: quem manda e' o TAMANHO que o servidor disse.
+       - pacote vazio com tamanho 0  -> conteudo vazio (texto vazio, como local);
+       - pacote vazio com tamanho > 0 -> nao coube no teto, nao e' arquivo comum
+         ou o base64 nao rodou: continua 'outro', que nada afirma;
+       - resposta sem tamanho nenhum (stat falhou, ssh mudo) ja' virou ERRO la'
+         em cima, e continua sendo. Falha nunca vira "arquivo vazio". */
+  if (teto === 0 || bytes > teto || (!b64 && bytes > 0)) { base.tipo = 'outro'; return base; }
   if (ehImg) {
     base.tipo = 'imagem';
     base.dados = 'data:image/' + mimeDaImagem(ext) + ';base64,' + b64;
@@ -3319,6 +3775,23 @@ ipcMain.handle('clipboard:anexos', () => {
   return { arquivos: [] };
 });
 
+/* texto da area de transferencia pro terminal embutido (colar o codigo do
+   login / copiar o que foi marcado). Pelo main: o navigator.clipboard do
+   renderer depende da janela estar em foco. */
+/* teto de 1 MB: um texto gigante copiado sem querer travaria o terminal (e o
+   pty) colando por minutos. Acima disso recusa e a tela avisa. */
+function lerTextoCopiado(ler) {
+  let t = '';
+  try { t = ler() || ''; } catch { t = ''; }
+  if (t.length > 1024 * 1024) return { texto: '', erro: 'grande' };
+  return { texto: t };
+}
+ipcMain.handle('clipboard:texto', () => lerTextoCopiado(() => clipboard.readText()));
+ipcMain.handle('clipboard:copiar', (_e, t) => {
+  if (typeof t !== 'string' || !t) return false;
+  try { clipboard.writeText(t.slice(0, 1000000)); return true; } catch { return false; }
+});
+
 ipcMain.handle('anexo:ler', (_e, file) => {
   try {
     const st = fs.statSync(file);
@@ -3342,10 +3815,17 @@ ipcMain.handle('dialog:pickFiles', async (_e, kind) => {
 });
 
 /* ======================= janela ======================= */
+/* fundo de cada tema (o --bg do style.css / motti-brand.css): a janela nasce na
+   cor do tema salvo, em vez de sempre escura -- quem usa Claro/Jornal via piscar */
+const FUNDO_DO_TEMA = { escuro: '#1e1e1e', claro: '#ffffff', jornal: '#fdf6e3', motti: '#07182f' };
+function temaSalvo() {
+  const t = (loadConfig() || {}).tema;
+  return FUNDO_DO_TEMA[t] ? t : 'escuro';
+}
 function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 900, minWidth: 900, minHeight: 560,
-    backgroundColor: '#1e1e1e',
+    backgroundColor: FUNDO_DO_TEMA[temaSalvo()],
     /* so' no Mac: 'hiddenInset' e a posicao dos botoes sao coisas de la'. No
        Windows o Electron 33 ignora, mas uma versao futura pode passar a tratar
        como 'hidden' - e a janela perderia minimizar/fechar. */
@@ -3361,6 +3841,19 @@ function createWindow() {
     // derrubava todos os paineis de uma vez.
     if (isMainFrame && !isInPlace) shutdown();
   });
+  /* Leva 41 (B2): a tela caiu (falta de memoria, erro do Chromium). Antes nada
+     tratava isso: a janela ficava branca e os motores seguiam sem ninguem
+     ouvindo. Agora fica registrado e a tela volta sozinha; o shutdown anota
+     quem estava em turno e a tela nova religa esses paineis. */
+  win.webContents.on('render-process-gone', (_e, d) => {
+    const motivo = (d && d.reason) || '?';
+    registrarQueda({ motor: 'tela', tipo: 'tela-caiu', motivo, codigo: d && d.exitCode != null ? d.exitCode : null });
+    if (motivo === 'clean-exit') return;
+    shutdown();
+    setTimeout(() => { try { if (win && !win.isDestroyed()) win.webContents.reload(); } catch {} }, 800);
+  });
+  win.on('unresponsive', () => registrarQueda({ motor: 'tela', tipo: 'tela-travou' }));
+  win.on('responsive', () => registrarQueda({ motor: 'tela', tipo: 'tela-voltou' }));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -3378,6 +3871,12 @@ function createWindow() {
 }
 
 function shutdown() {
+  /* Leva 41 (B2): antes de matar, anota quem estava NO MEIO de um turno. Na
+     proxima tela (recarga, tela que caiu ou app reaberto em ate' 2 h) esses
+     paineis religam e pedem pra continuar. Chamado varias vezes seguidas
+     (closed + window-all-closed + before-quit), nao duplica: depois do primeiro
+     os motores ja foram parados de proposito e a lista sai vazia. */
+  try { retomada.juntarEGravar(vigiaTurno.emTurnoAgora()); } catch {}
   // os DOIS ouvintes (o rapido e o caprichado). Matando so' um, o outro ficava
   // vivo a cada recarga da tela segurando memoria, e outro subia por cima.
   for (const ou of ouvintes.values()) {
@@ -3391,16 +3890,34 @@ function shutdown() {
   // quem nao morreu com o SIGTERM vai no grito: sem isso ficava processo orfao
   for (const p of [...zumbis]) { try { p.kill('SIGKILL'); } catch {} }
   zumbis.clear();
-  if (codex.proc) { matarProcesso(codex.proc); codex.proc = null; codex.ready = null; }
+  // debate em andamento para junto (Ver > Recarregar tambem passa aqui). O
+  // try cobre a subida: 'debates' e' criado mais abaixo neste arquivo.
+  try { debates.stopAll(); } catch {}
+  if (codex.proc) {
+    // fechar/recarregar e' de proposito: sem soltar os paineis antes, o 'close'
+    // do servidor registrava uma "queda" por painel a cada Ctrl+R
+    codex.derrubando = codex.proc;
+    for (const paneId of codex.paneToThread.keys()) vigiaTurno.desligar(paneId);
+    codex.paneToThread.clear(); codex.threadToPane.clear(); codex.paneTurn.clear();
+    matarProcesso(codex.proc); codex.proc = null; codex.ready = null;
+  }
 }
 
 /* ======================= IPC ======================= */
 ipcMain.handle('config:get', () => loadConfig());
 ipcMain.handle('config:set', (_e, c) => { saveConfig(c); return true; });
+// sincrono de proposito: o preload pega o tema ANTES do app.js pintar a tela
+ipcMain.on('config:tema', (e) => { try { e.returnValue = temaSalvo(); } catch { e.returnValue = 'escuro'; } });
 ipcMain.handle('sys:home', () => HOME);
+ipcMain.handle('sys:versao', () => app.getVersion());
 
-ipcMain.handle('dialog:pickFolder', async (_e, start) => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: start || HOME, title: 'Pasta de trabalho deste painel' });
+/* Aceita a string de sempre (pasta de partida) ou { start, titulo }: o mesmo
+   dialogo serve pro painel e pra pasta padrao, e o titulo "deste painel"
+   aparecia tambem quando voce escolhia a pasta dos paineis NOVOS. */
+ipcMain.handle('dialog:pickFolder', async (_e, pedido) => {
+  const o = (pedido && typeof pedido === 'object') ? pedido : { start: pedido };
+  const titulo = (typeof o.titulo === 'string' && o.titulo.trim()) ? o.titulo.slice(0, 80) : 'Pasta de trabalho deste painel';
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: (typeof o.start === 'string' && o.start) || HOME, title: titulo });
   return r.canceled ? null : r.filePaths[0];
 });
 /* Aceita as duas formas: a string de sempre (o preload e' superficie publica) e
@@ -3528,6 +4045,18 @@ ipcMain.handle('fs:buscarArquivos', async (_e, d) => {
   return rem ? { itens: achados } : achados;
 });
 
+// Gestao Git comum ao Codex e Claude; nao remove, integra nem limpa arquivos.
+for (const [action, operation] of Object.entries({
+  list: (request) => cockpitWorktrees.list(request),
+  open: (request) => cockpitWorktrees.open(request),
+  create: (request) => cockpitWorktrees.create(request, { baseDir: path.join(HOME, 'Projetos-Codex', 'cockpit-worktrees') }),
+})) {
+  ipcMain.handle('git:worktrees:' + action, async (_event, request) => {
+    try { return await operation(request || {}); }
+    catch (error) { return { error: String(error.message || error).slice(0, 1200) }; }
+  });
+}
+
 /* branch e arquivos mexidos da pasta do painel */
 ipcMain.handle('git:status', async (_e, { cwd }) => {
   if (!cwd) return null;
@@ -3586,7 +4115,7 @@ ipcMain.handle('sessao:apagar', async (_e, { id, file }) => {
     if (!f || !fs.existsSync(f)) return { error: 'Não achei o arquivo desta conversa.' };
     await shell.trashItem(f);
     const ind = lerIndice(); delete ind[f]; gravarIndice();
-    const nomes = lerNomes(); delete nomes[id]; salvarNomes(nomes);
+    const nomes = lerNomes(); tituloAuto.esquecerNome(nomes, id); salvarNomes(nomes);   // o seu e o automatico
     return { ok: true };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
@@ -3981,14 +4510,17 @@ function cliHistory(file, maxMsgs) {
 
 ipcMain.handle('sessions:cli', (_e, engine) => {
   // as conversas do ACP sao as que o proprio Cockpit anotou (acp.js)
-  if (engine === 'acp') { try { return acp.sessoes(); } catch (e) { return { error: String(e && e.message || e) }; } }
+  /* leva 41 (B6): Gemini e ACP tambem mostram o nome que voce deu e o de 3
+     palavras do Cockpit (antes a lista deles ignorava o nomes.json). */
+  const comNomes = (lista) => { if (!Array.isArray(lista)) return lista; const nomes = lerNomes(); return lista.map((s) => tituloAuto.aplicarNome(s, nomes)); };
+  if (engine === 'acp') { try { return comNomes(acp.sessoes()); } catch (e) { return { error: String(e && e.message || e) }; } }
   const cli = CLIS[engine];
   if (!cli) return [];
   /* devolver [] aqui faria a tela escrever "Nenhuma conversa ainda", que e
      uma afirmacao. Sem um arquivo de verdade pra conferir o formato, o certo
      e dizer que a lista nao foi ligada. */
   if (!cli.conversas) return { aviso: 'A lista de conversas do ' + cli.nome + ' ainda não foi ligada aqui: o formato do arquivo dele não foi conferido nesta máquina.' };
-  try { return cliSessions(engine); }
+  try { return comNomes(cliSessions(engine)); }
   catch (e) { return { error: e.message }; }
 });
 
@@ -4245,23 +4777,57 @@ ipcMain.handle('motores:versoes', async () => {
 
 /* Sessoes do Claude vivas nesta maquina, dentro OU fora do Cockpit (VS Code,
    terminal, Telegram): 'claude agents --json'. Cache curto porque a Torre
-   repinta a cada poucos segundos e o comando leva ~1s. */
+   repinta a cada poucos segundos e o comando leva ~1s.
+   Leva 41: a resposta so' diz ok quando leu uma LISTA de verdade (antes, JSON
+   torto ou vazio virava "nenhuma" calado); UMA busca em voo por vez (dois
+   cliques em "Atualizar" subiam dois processos); 'forcar' fura o cache mas
+   pega carona na busca que ja' esta' voando. */
 let cacheAgentes = { quando: 0, itens: [] };
-ipcMain.handle('agentes:claude', async () => {
-  if (Date.now() - cacheAgentes.quando < 15000) return { itens: cacheAgentes.itens };
+let buscaAgentes = null;
+/* De onde a sessao veio. O 'kind' do 'claude agents' e' sempre 'interactive';
+   quem sabe a porta de entrada e' o registro ~/.claude/sessions/<pid>.json
+   ("cockpit", "cli", "claude-vscode"...). Sem o arquivo, fica vazio -- a tela
+   diz "sessão do Claude" em vez de chutar. */
+function origemDaSessao(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return '';
   try {
-    const r = await rodar(claudeBin(), ['agents', '--json'], 20000);
-    // rodar() nao rejeita: falha e timeout chegam como {err} com saida vazia, e isso
-    // nao pode virar "nenhuma sessao" nem apagar a lista boa de antes
-    if (r.err && !String(r.out || '').trim()) throw (r.err instanceof Error ? r.err : new Error(String(r.err)));
-    const arr = JSON.parse(String(r.out || '').trim() || '[]');
-    const itens = (Array.isArray(arr) ? arr : []).map((a) => ({
-      pid: a.pid, cwd: String(a.cwd || ''), kind: String(a.kind || ''), startedAt: Number(a.startedAt) || 0,
-      sessionId: String(a.sessionId || ''), name: String(a.name || ''),
+    const reg = JSON.parse(fs.readFileSync(path.join(HOME, '.claude', 'sessions', n + '.json'), 'utf8'));
+    // numero de processo reaproveitado pelo Windows nao pode emprestar a origem de outro
+    if (!reg || Number(reg.pid) !== n) return '';
+    return String(reg.entrypoint || '').slice(0, 40);
+  } catch { return ''; }
+}
+function buscarAgentesClaude() {
+  return rodar(claudeBin(), ['agents', '--json'], 20000).then((r) => {
+    // rodar() nao rejeita: falha e timeout chegam como {err} com saida vazia
+    const txt = String((r && r.out) || '').trim();
+    if (r && r.err && !txt) return { ok: false, erro: String((r.err && r.err.message) || r.err).slice(0, 100) };
+    let arr = null;
+    try { arr = JSON.parse(txt); } catch { return { ok: false, erro: 'a resposta do claude agents veio ilegível' }; }
+    if (!Array.isArray(arr)) return { ok: false, erro: 'a resposta do claude agents não é uma lista' };
+    const itens = arr.filter((a) => a && typeof a === 'object').map((a) => ({
+      pid: Number(a.pid) || 0, cwd: String(a.cwd || ''), kind: String(a.kind || ''), startedAt: Number(a.startedAt) || 0,
+      sessionId: String(a.sessionId || ''), name: String(a.name || ''), status: String(a.status || ''),
+      origem: origemDaSessao(a.pid),
     }));
     cacheAgentes = { quando: Date.now(), itens };
-    return { itens };
-  } catch (e) { return { itens: cacheAgentes.itens, velho: cacheAgentes.itens.length > 0, error: String(e && e.message || e).slice(0, 200) }; }
+    return { ok: true };
+  }, (e) => ({ ok: false, erro: String((e && e.message) || e).slice(0, 100) }));
+}
+ipcMain.handle('agentes:claude', async (_e, o) => {
+  const forcar = !!(o && o.forcar);
+  let r = { ok: true };
+  if (buscaAgentes || forcar || !cacheAgentes.quando || Date.now() - cacheAgentes.quando >= 15000) {
+    if (!buscaAgentes) buscaAgentes = buscarAgentesClaude().finally(() => { buscaAgentes = null; });
+    r = await buscaAgentes;
+  }
+  if (!r.ok) return { ok: false, erro: r.erro || 'sem resposta' };
+  /* "daqui" = processo que ESTE Cockpit abriu (o pid bate com um painel dele).
+     Conferido na hora de responder, nao na hora de ler: o cache dura 15 s e
+     paineis nascem e morrem nesse meio tempo. */
+  const meus = new Set([...claudePanes.values()].map((s) => s && s.proc && s.proc.pid).filter(Boolean));
+  return { ok: true, quando: cacheAgentes.quando, itens: cacheAgentes.itens.map((a) => ({ ...a, daqui: meus.has(a.pid) })) };
 });
 
 /* ===================== ROTINAS: as tarefas agendadas do Windows =====================
@@ -4288,6 +4854,8 @@ const ROTINAS_PS = [
   "  if ($t.TaskPath -like '\\Microsoft\\*' -or $t.TaskPath -like '\\Windows\\*') { continue }",
   '  $i = $null',
   '  try { $i = Get-ScheduledTaskInfo -InputObject $t } catch {}',
+  // a primeira acao que roda um programa (acao COM ou de e-mail nao tem Execute)
+  '  $acao = @($t.Actions | Where-Object { $_.Execute }) | Select-Object -First 1',
   '  $out += [pscustomobject]@{',
   '    nome = [string]$t.TaskName',
   '    caminho = [string]$t.TaskPath',
@@ -4298,16 +4866,36 @@ const ROTINAS_PS = [
   "    proxima = if ($i) { Dt $i.NextRunTime } else { '' }",
   // autor e programa: e' este par que separa as automacoes DELE das do sistema
   '    autor = [string]$t.Author',
-  '    programa = [string](@($t.Actions | ForEach-Object { [string]$_.Execute } | Where-Object { $_ }) | Select-Object -First 1)',
+  '    programa = [string]$acao.Execute',
+  /* leva 41: o que a tela precisava e nao tinha. A descricao diz em portugues o
+     que a automacao faz (o Hugo escreve uma em quase todas); argumentos e pasta
+     de trabalho dizem ONDE ela mora (o "abrir a pasta"); os gatilhos dizem de
+     quanto em quanto ela roda -- sem eles, as que rodam "ao entrar no Windows"
+     apareciam como "sem proxima marcada", como se estivessem paradas. */
+  '    descricao = [string]$t.Description',
+  '    args = [string]$acao.Arguments',
+  '    pastaTrabalho = [string]$acao.WorkingDirectory',
+  '    gatilhos = @($t.Triggers | ForEach-Object { [pscustomobject]@{',
+  '      tipo = [string]$_.CimClass.CimClassName',
+  '      inicio = [string]$_.StartBoundary',
+  '      dias = $_.DaysInterval',
+  '      semanas = $_.WeeksInterval',
+  '      diasSemana = $_.DaysOfWeek',
+  "      intervalo = if ($_.Repetition) { [string]$_.Repetition.Interval } else { '' }",
+  // Enabled pode vir nulo: nulo NAO e' desligado
+  '      ativo = ($_.Enabled -ne $false)',
+  '      mudanca = $_.StateChange',
+  '    } })',
   '  }',
   '}',
-  'ConvertTo-Json -InputObject @($out) -Compress -Depth 3',
+  // -Depth 5: tarefa > gatilhos > gatilho. Com 3 o gatilho virava texto
+  'ConvertTo-Json -InputObject @($out) -Compress -Depth 5',
 ].join('\n');
 
 const psBase64 = (script) => Buffer.from(script, 'utf16le').toString('base64');
 // texto literal do PowerShell: aspas simples nao interpolam nada, e a unica
 // fuga dentro delas e' dobrar a propria aspa
-const psTexto = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+const psTexto = (s) => "'" + String(s).replace(/['‘’‚‛]/g, (c) => c + c) + "'";   // o PowerShell tambem fecha string em ’ ‘ ‚ ‛ (auditoria 1)
 
 /* Erro que sai pelo stderr redirecionado vem serializado em CLIXML. Jogar isso
    na tela e' pior que nao dizer nada: aqui sobra so' o texto das mensagens. */
@@ -4362,6 +4950,10 @@ const ROTINA_ESTADO = { Ready: 'pronta', Running: 'rodando', Disabled: 'desativa
    Conferido nas 35 desta maquina: as 19 dele entram e as 16 de fabricante ficam
    de fora -- inclusive as tres do Chrome, que trazem o usuario como Author mas
    rodam um .exe de Program Files.
+   E quando NAO ha' programa nenhum? A acao pode ser COM handler ou e-mail, e ai
+   nao existe caminho pra olhar. Nesse caso vale a mesma politica da tela ("na
+   duvida a rotina e' DELE, porque o erro de esconder e' pior"), com dois
+   desempates antes do chute -- estao no fim do rotinaEhDele.
    Isto NAO esconde nada: a tela mostra os dois grupos. So' o destaque vermelho
    fica com o que e' dele. Antes o bloco vinha com 4 falhas e metade era ruido
    (OneDrive 0x8004EE04 e Realtek 0x40010004 no meio de RadarSkillsMCP
@@ -4374,18 +4966,36 @@ const USUARIO_DA_MAQUINA = (() => {
 const RODA_SCRIPT = /^(wscript|cscript|powershell|pwsh|cmd|node|python|python3|py|bash|sh)(\.exe)?$/i;
 // tudo em minusculas e com uma barra so', pra comparar caminho do Windows sem susto
 const soUmaBarra = (x) => String(x || '').toLowerCase().split('/').join('\\').replace(/\\+$/, '');
-function rotinaEhDele(autor, programa) {
+function rotinaEhDele(autor, programa, caminho) {
   const a = String(autor || '').trim();
   // "HUGOMOTTI\hugom" -> "hugom"; autor vazio tambem conta (o agendador nao exige um)
-  const dono = !a || (!!USUARIO_DA_MAQUINA && a.toLowerCase().split('\\').pop() === USUARIO_DA_MAQUINA);
+  const assinou = !!a && !!USUARIO_DA_MAQUINA && a.toLowerCase().split('\\').pop() === USUARIO_DA_MAQUINA;
+  const dono = !a || assinou;
   if (!dono) return false;
   // o Agendador guarda o programa com aspas (as vezes duas), como em ""C:\...\x.exe""
   const p = String(programa || '').trim().replace(/^"+/, '').replace(/"+$/, '');
-  if (!p) return false;
-  const nome = soUmaBarra(p).split('\\').pop();
-  if (RODA_SCRIPT.test(nome)) return true;
-  const casa = soUmaBarra(HOME);
-  return !!casa && soUmaBarra(p).startsWith(casa + '\\');
+  if (p) {
+    const nome = soUmaBarra(p).split('\\').pop();
+    if (RODA_SCRIPT.test(nome)) return true;
+    const casa = soUmaBarra(HOME);
+    return !!casa && soUmaBarra(p).startsWith(casa + '\\');
+  }
+  /* SEM programa: a acao nao e' "rode este .exe" -- e' COM handler ou e-mail, e
+     nao sobrou caminho pra olhar. Isto virava "nao e' dele" DURO, e a rotina caia
+     no grupo recolhido "Do sistema e de programas" -- justamente onde o destaque
+     de falha nao chega. A tela ja' decide o contrario quando falta o campo
+     (t.dele !== false, "na duvida a rotina e' DELE, porque o erro de esconder e'
+     pior"); agora o main diz a mesma coisa. Dois desempates antes do chute, pra
+     duvida nao virar ruido no bloco vermelho:
+       1. ele mesmo assinou a tarefa -- ai nao ha' duvida nenhuma;
+       2. senao, o chute so' vale na RAIZ do Agendador, que e' onde as 19 dele
+          moram. Pasta de fabricante nao ganha o beneficio da duvida: as quatro
+          SoftLanding* desta maquina sao exatamente este caso (COM handler, sem
+          autor e sem programa) e vivem em \SoftLanding\S-1-5-21-...\ -- seguem
+          fora, e o total continua 19 dele / 16 de fabricante. */
+  if (assinou) return true;
+  const c = String(caminho == null ? '\\' : caminho).trim();
+  return c === '' || c === '\\' || c === '/';
 }
 const rotinaHex = (n) => '0x' + (n >>> 0).toString(16).toUpperCase();
 function rotinaMotivo(n) {
@@ -4398,10 +5008,130 @@ function rotinaMotivo(n) {
 }
 const rotinaFalhou = (n) => Number.isFinite(n) && !ROTINA_SEM_FALHA.has(n);
 
+/* De quanto em quanto a automacao roda, em portugues ("todo dia", "seg a sex, a
+   cada 10 min", "ao entrar no Windows"). Sem isto, as 7 desta maquina que rodam
+   ao entrar no Windows diziam "sem proxima marcada" -- como se estivessem
+   paradas. A hora fica de fora: a tela ja' mostra a proxima execucao.
+   Gatilho mensal chega do Windows sem os dias (classe generica MSFT_TaskTrigger):
+   ai' volta vazio e a tela fica so' com a proxima, sem inventar. */
+const ROTINA_DIA_CURTO = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const ROTINA_DIA_TODO = ['todo domingo', 'toda segunda', 'toda terça', 'toda quarta', 'toda quinta', 'toda sexta', 'todo sábado'];
+// "PT10M" -> "10 min", "PT1H30M" -> "1 h 30 min", "P1D" -> "1 dia"
+function rotinaDuracao(iso) {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(String(iso || '').trim());
+  if (!m || !(m[1] || m[2] || m[3] || m[4])) return '';
+  const partes = [];
+  if (+m[1]) partes.push(m[1] + (+m[1] === 1 ? ' dia' : ' dias'));
+  if (+m[2]) partes.push(m[2] + ' h');
+  if (+m[3]) partes.push(m[3] + ' min');
+  if (+m[4] && !partes.length) partes.push(m[4] + ' s');
+  return partes.join(' ');
+}
+function rotinaDiasDaSemana(mascara) {
+  const n = Number(mascara) || 0;
+  const dias = [0, 1, 2, 3, 4, 5, 6].filter((i) => n & (1 << i));
+  if (!dias.length) return '';
+  if (dias.length === 7) return 'todo dia';
+  if (dias.length === 1) return ROTINA_DIA_TODO[dias[0]];
+  if (dias.join() === '1,2,3,4,5') return 'seg a sex';
+  const nomes = dias.map((i) => ROTINA_DIA_CURTO[i]);
+  return nomes.slice(0, -1).join(', ') + ' e ' + nomes[nomes.length - 1];
+}
+function rotinaRepeteUm(g) {
+  const tipo = String((g && g.tipo) || '').replace(/^MSFT_Task/, '').replace(/Trigger$/, '');
+  const cada = rotinaDuracao(g && g.intervalo);
+  const aCada = cada && cada !== '1 dia' ? 'a cada ' + cada : '';
+  if (tipo === 'Daily') {
+    const d = Number(g.dias) || 1;
+    return [d > 1 ? 'a cada ' + d + ' dias' : 'todo dia', aCada].filter(Boolean).join(', ');
+  }
+  if (tipo === 'Weekly') {
+    const s = Number(g.semanas) || 1;
+    const dias = rotinaDiasDaSemana(g.diasSemana) || 'toda semana';
+    return [dias + (s > 1 ? ', a cada ' + s + ' semanas' : ''), aCada].filter(Boolean).join(', ');
+  }
+  if (tipo === 'Time') return cada === '1 dia' ? 'todo dia' : (aCada || 'uma vez só');
+  if (tipo === 'Logon') return 'ao entrar no Windows';
+  if (tipo === 'Boot') return 'ao ligar o PC';
+  if (tipo === 'Idle') return 'com o PC parado';
+  if (tipo === 'Event') return 'quando o Windows registra um evento';
+  if (tipo === 'Registration') return 'quando foi criada';
+  if (tipo === 'SessionStateChange') {
+    const m = Number(g.mudanca);
+    return m === 8 ? 'ao desbloquear a tela' : m === 7 ? 'ao bloquear a tela' : 'ao mudar de sessão';
+  }
+  return '';   // generico (mensal) ou desconhecido: nao inventa
+}
+function rotinaRepete(gatilhos) {
+  const lista = Array.isArray(gatilhos) ? gatilhos : (gatilhos ? [gatilhos] : []);
+  const textos = [];
+  for (const g of lista) {
+    if (!g || g.ativo === false) continue;
+    const t = rotinaRepeteUm(g);
+    if (t && !textos.includes(t)) textos.push(t);
+  }
+  return textos.slice(0, 2).join(' e ') + (textos.length > 2 ? '…' : '');
+}
+
+/* Onde a automacao mora, pro "abrir a pasta": a pasta de trabalho; senao a do
+   script que ela roda (quase todas as dele sao wscript/pwsh + um .vbs/.ps1 nos
+   argumentos); senao a do proprio programa, se nao for um interpretador (esse
+   mora no System32 e nao diz nada). Sem path.win32 de proposito: e' texto do
+   Windows, e isto roda igual em qualquer sistema (e no teste). */
+const ROTINA_SCRIPT = /\.(vbs|vbe|js|wsf|ps1|cmd|bat|py|pyw|sh)$/i;
+const rotinaSemAspas = (x) => String(x || '').trim().replace(/^"+/, '').replace(/"+$/, '').trim();
+const rotinaPastaDe = (p) => {
+  const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+  const d = i > 0 ? p.slice(0, i) : '';
+  return /^[a-z]:$/i.test(d) ? d + '\\' : d;   // "C:\x.ps1" mora em "C:\", nao em "C:"
+};
+const rotinaEhAbsoluto = (p) => /^[a-z]:[\\/]/i.test(p) || /^\\\\[^\\]/.test(p);
+function rotinaScript(args) {
+  const s = String(args || '');
+  for (const m of s.matchAll(/"([^"]+)"|(\S+)/g)) {
+    const p = rotinaSemAspas(m[1] || m[2]);
+    if (rotinaEhAbsoluto(p) && ROTINA_SCRIPT.test(p)) return p;
+  }
+  return '';
+}
+function rotinaPasta(programa, args, pastaTrabalho) {
+  const pt = rotinaSemAspas(pastaTrabalho);
+  if (pt && rotinaEhAbsoluto(pt) && !pt.includes('%')) return pt.replace(/[\\/]+$/, '');
+  const script = rotinaScript(args);
+  if (script) return rotinaPastaDe(script);
+  const p = rotinaSemAspas(programa);
+  if (p && rotinaEhAbsoluto(p) && !RODA_SCRIPT.test(p.split(/[\\/]/).pop())) return rotinaPastaDe(p);
+  return '';
+}
+// o que ela roda, em uma palavra: o script, ou o programa
+function rotinaPrograma(programa, args) {
+  const alvo = rotinaScript(args) || rotinaSemAspas(programa);
+  return alvo ? alvo.split(/[\\/]/).pop() : '';
+}
+
 let cacheRotinas = { quando: 0, itens: [] };
-ipcMain.handle('rotinas:listar', async () => {
-  if (!EH_WIN) return { itens: [], error: 'As rotinas agendadas só existem no Windows.' };
-  if (Date.now() - cacheRotinas.quando < 15000) return { itens: cacheRotinas.itens };
+let rotinasEmVoo = null;   // a leitura que o PowerShell esta' fazendo agora (uma por vez)
+/* Sobe a cada acao que muda o Agendador (rodar, ligar, desligar). Leitura que
+   comecou ANTES da acao nao serve pra ninguem que pergunta DEPOIS dela, nem
+   pode gravar no cache. Provado na tela: uma leitura em voo durante o
+   "desligar" era reaproveitada e a linha voltava a dizer "pronta". */
+let rotinasVersao = 0;
+/* leva 41: o botao "Atualizar agora" da tela passa { forcar: true } e fura o
+   cache de 15 s -- antes, clicado ate' 15 s depois da ultima leitura, ele
+   devolvia a MESMA lista e nada mudava (a tarefa que acabou de rodar seguia
+   "rodando agora"). Quem chega com uma leitura em voo pega a resposta dela:
+   dois pedidos juntos nao sobem dois PowerShell (mesma regra da Torre). */
+ipcMain.handle('rotinas:listar', async (_e, o) => {
+  if (!EH_WIN) return { itens: [], error: 'As automações agendadas só existem no Windows.' };
+  const forcar = !!(o && o.forcar === true);
+  if (!forcar && Date.now() - cacheRotinas.quando < 15000) return { itens: cacheRotinas.itens };
+  if (!rotinasEmVoo) {
+    const p = lerRotinasDoAgendador(rotinasVersao).finally(() => { if (rotinasEmVoo === p) rotinasEmVoo = null; });
+    rotinasEmVoo = p;
+  }
+  return rotinasEmVoo;
+});
+async function lerRotinasDoAgendador(versao) {
   try {
     const r = await rodar('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', psBase64(ROTINAS_PS)], 30000);
     /* rodar() nao rejeita: falha e timeout chegam como {err} com saida vazia, e
@@ -4436,16 +5166,24 @@ ipcMain.handle('rotinas:listar', async () => {
         motivo: rotinaMotivo(resultado),
         falhou: rotinaFalhou(resultado) && !rodando,
         // e' automacao dele ou tarefa de fabricante? separa o destaque do ruido
-        dele: rotinaEhDele(t && t.autor, t && t.programa),
+        dele: rotinaEhDele(t && t.autor, t && t.programa, t && t.caminho),
+        // leva 41: o que ela faz, de quanto em quanto roda e onde mora
+        descricao: String((t && t.descricao) || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+        repete: rotinaRepete(t && t.gatilhos),
+        pasta: rotinaPasta(t && t.programa, t && t.args, t && t.pastaTrabalho),
+        programa: rotinaPrograma(t && t.programa, t && t.args),
       };
     }).filter((t) => t.nome);
-    cacheRotinas = { quando: Date.now(), itens };
+    // lida antes de uma acao que ja' terminou: responde a quem pediu, mas nao vira cache
+    if (versao === rotinasVersao) cacheRotinas = { quando: Date.now(), itens };
     return { itens };
   } catch (e) { return { itens: cacheRotinas.itens, velho: cacheRotinas.itens.length > 0, error: String(e && e.message || e).slice(0, 200) }; }
-});
+}
 
-ipcMain.handle('rotinas:disparar', async (_e, { nome, caminho } = {}) => {
-  if (!EH_WIN) return { error: 'As rotinas agendadas só existem no Windows.' };
+/* Um comando do Agendador sobre UMA tarefa (rodar, ligar, desligar), com a
+   mesma conferencia e a mesma traducao de erro pros tres. */
+async function rotinaNoAgendador(cmdlet, nome, caminho, naoConfirmou) {
+  if (!EH_WIN) return { error: 'As automações agendadas só existem no Windows.' };
   const n = String(nome || '');
   const c = String(caminho || '\\');
   /* nome vem da tela, entao e' conferido aqui tambem: quebra de linha ou byte
@@ -4456,31 +5194,82 @@ ipcMain.handle('rotinas:disparar', async (_e, { nome, caminho } = {}) => {
   try {
     /* O erro sai pelo stdout, em texto: se ele fosse pro stderr o PowerShell o
        serializaria em CLIXML (uma sopa de XML), e era ISSO que ia parar na
-       faixa de avisos no lugar do motivo. */
+       faixa de avisos no lugar do motivo. Enable/Disable devolvem a tarefa: o
+       Out-Null cala isso, senao o "ok" nao seria a ultima linha. */
     const script = [
       "$ErrorActionPreference='Stop'",
       "$ProgressPreference='SilentlyContinue'",
       '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
-      'try { Start-ScheduledTask -TaskName ' + psTexto(n) + ' -TaskPath ' + psTexto(c) + "; Write-Output 'ok' }",
+      'try { ' + cmdlet + ' -TaskName ' + psTexto(n) + ' -TaskPath ' + psTexto(c) + " | Out-Null; Write-Output 'ok' }",
       "catch { Write-Output ('erro: ' + $_.Exception.Message) }",
     ].join('\n');
     const r = await rodar('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', psBase64(script)], 30000);
     const saida = String(r.out || '').replace(/\r/g, '').trim();
     if (/(^|\n)ok$/.test(saida)) {
-      cacheRotinas.quando = 0;   // proxima leitura ja pega o "rodando agora"
+      cacheRotinas.quando = 0;   // proxima leitura ja pega o estado novo
+      rotinasVersao++;           // ...e nao pega carona numa leitura de ANTES da acao
+      rotinasEmVoo = null;
       return { ok: true };
     }
     const dito = /(^|\n)erro:\s*([\s\S]*)$/.exec(saida);
     const bruto = psErroLimpo(dito ? dito[2] : (r.errout || saida));
     const motivo = /não pode encontrar|não foi encontrad|was not found|cannot find|does not exist|No MSFT_ScheduledTask/i.test(bruto) ? 'o Windows não achou essa rotina'
       : /Acesso negado|Access is denied|denied|não autorizad|Unauthorized/i.test(bruto) ? 'o Windows negou acesso (a rotina pode pedir administrador)'
+      // provado com tarefa de teste: rodar uma desligada da' "A tarefa está desabilitada." (0x80041326)
+      : /desabilitad|is disabled|0x80041326/i.test(bruto) ? 'ela está desligada: ligue antes de rodar'
       : bruto ? bruto.slice(0, 160)
-      : (r.err ? 'o agendador não respondeu' : 'o agendador não confirmou o disparo');
+      : (r.err ? 'o agendador não respondeu' : naoConfirmou);
     return { error: motivo };
   } catch (e) { return { error: String(e && e.message || e).slice(0, 200) }; }
+}
+ipcMain.handle('rotinas:disparar', async (_e, { nome, caminho } = {}) =>
+  rotinaNoAgendador('Start-ScheduledTask', nome, caminho, 'o agendador não confirmou o disparo'));
+/* leva 41: ligar/desligar. Desligar NAO apaga nada: a tarefa fica no Agendador,
+   so' para de rodar sozinha ate' ser ligada de novo. 'ligar' tem que vir
+   true/false de verdade -- qualquer outra coisa e' pedido quebrado, e na duvida
+   nao se mexe numa automacao. */
+ipcMain.handle('rotinas:ligar', async (_e, { nome, caminho, ligar } = {}) => {
+  if (typeof ligar !== 'boolean') return { error: 'pedido inválido (ligar ou desligar?)' };
+  return rotinaNoAgendador(ligar ? 'Enable-ScheduledTask' : 'Disable-ScheduledTask', nome, caminho,
+    ligar ? 'o agendador não confirmou que ligou' : 'o agendador não confirmou que desligou');
 });
 
-ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores }) => {
+/* Pasta de trabalho de um motor LOCAL. Se ela sumiu (apagada, renomeada, pen
+   drive ou unidade do Drive que nao montou), o spawn morria com "ENOENT" e
+   parecia que o motor nem estava instalado. Agora abre na pasta pessoal e diz.
+   Pura: 'existe' vem de fora (o teste passa um falso). */
+function cwdQueExiste(p, home, existe) {
+  if (!p) return { cwd: home, aviso: '' };
+  if (existe(p)) return { cwd: p, aviso: '' };
+  return { cwd: home, aviso: 'A pasta ' + p + ' não existe mais (ou a unidade não está montada). Abri na sua pasta pessoal.' };
+}
+const ehPasta = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+/* Religar sozinho (leva 41, B2) nunca pode criar um SEGUNDO motor numa conversa
+   que outro painel vivo ja esta usando: dois 'claude --resume' no mesmo .jsonl
+   se atropelam, e no Codex o threadToPane seria roubado. */
+function outroDonoDaSessao(engine, sessaoId, paneId) {
+  if (!sessaoId) return null;
+  if (engine === 'codex') {
+    const dono = codex.threadToPane.get(sessaoId);
+    return (dono !== undefined && dono !== paneId) ? dono : null;
+  }
+  for (const id of claudePanes.keys()) if (id !== paneId && vigiaTurno.sessaoDe(id) === String(sessaoId)) return id;
+  return null;
+}
+
+ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores, abaId, religar }) => {
+  vigiaTurno.registrarPainel(paneId, { engine, abaId: abaId || '', remoto: !!remoto });
+  if (religar && outroDonoDaSessao(engine, resumeId, paneId) != null) {
+    emit(paneId, 'note', { text: 'Esta conversa já está aberta em outro painel. Não religuei aqui para não ter dois motores na mesma conversa.', error: true });
+    return false;
+  }
+  // painel remoto: a pasta e' do servidor, nao do disco deste PC
+  if (!remoto) {
+    const conferida = cwdQueExiste(cwd, HOME, ehPasta);
+    if (conferida.aviso) emit(paneId, 'note', { text: conferida.aviso, error: true });
+    cwd = conferida.cwd;
+  }
   if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores });
   if (engine === 'acp') {
     // no painel ACP o "model" e' o COMANDO do agente (gemini --acp, claude-code-acp...)
@@ -4578,11 +5367,14 @@ ipcMain.handle('pane:send', async (_e, { paneId, engine, text, effort, anexos })
     if (sobraram.length && !jaNoTexto) t += '\n\nArquivos que anexei (abra cada um antes de responder):\n' + sobraram.map(f => '- ' + f).join('\n');
     else if (sobraram.length) t += '\n' + sobraram.map(f => '- ' + f).join('\n');
     const content = [...blocos, { type: 'text', text: t }];
+    vigiaTurno.ligar(paneId);   // em turno ate' o 'result': se o processo morrer antes, a tela religa
     st.proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');
     return true;
   }
   const tid = codex.paneToThread.get(paneId);
   if (!tid) return false;
+  // em turno ja' antes da resposta: o turn/start pode levar o turno inteiro pra voltar
+  vigiaTurno.ligar(paneId);
   /* imagem vai como item localImage DENTRO do turno - o turn/start aceita
      (conferido no schema do app-server 0.147). Antes ia so' o caminho no texto
      e o modelo precisava abrir o arquivo na mao. */
@@ -4596,7 +5388,14 @@ ipcMain.handle('pane:send', async (_e, { paneId, engine, text, effort, anexos })
   }
   // prazo longo: se o app-server so' responde quando o turno acaba, o padrao de
   // 30s dizia "falhou" com o trabalho ainda rodando na tela
-  await codexReq('turn/start', { threadId: tid, input: [...itensImg, { type: 'text', text }], ...(effort ? { effort } : {}) }, 15 * 60 * 1000);
+  try {
+    await codexReq('turn/start', { threadId: tid, input: [...itensImg, { type: 'text', text }], ...(effort ? { effort } : {}) }, 15 * 60 * 1000);
+  } catch (e) {
+    /* o turno nem comecou: nao fica marcado como "em turno". Se foi o servidor
+       que caiu, o 'engine-down' ja' saiu antes (o close avisa primeiro). */
+    vigiaTurno.desligar(paneId);
+    throw e;
+  }
   return true;
 });
 
@@ -4640,6 +5439,8 @@ ipcMain.handle('pane:steer', async (_e, { paneId, engine, text }) => {
 });
 
 ipcMain.handle('pane:interrupt', async (_e, { paneId, engine }) => {
+  // voce mandou parar: se o processo morrer daqui ate' o fim do turno, nao e' queda pra religar
+  vigiaTurno.desligar(paneId);
   // ACP tem cancelamento de verdade (session/cancel): o turno termina com
   // stopReason 'cancelled' e o 'turn-end' sai pelo caminho normal
   if (engine === 'acp') { acp.interromper(paneId); return true; }
@@ -4665,10 +5466,12 @@ ipcMain.handle('pane:interrupt', async (_e, { paneId, engine }) => {
 });
 
 ipcMain.handle('pane:stop', (_e, { paneId, engine }) => {
+  vigiaTurno.desligar(paneId);   // parada de proposito (trocar motor, modelo, conta, fechar...)
   if (engine === 'acp') { acp.parar(paneId); autoLiberadas.delete(paneId); }   // liberacao vale so' enquanto o painel viver
   else if (ehCli(engine)) cliParar(paneId);
   else if (engine === 'claude') claudeStop(paneId);
   else {
+    observabilidade.encerrarPainel(paneId, 'codex', 'A conversa Codex foi desligada deste painel.');
     const tid = codex.paneToThread.get(paneId);
     const turno = codex.paneTurn.get(paneId);
     // interrompe de verdade: sem isso o turno seguia rodando sem tela nenhuma
@@ -5109,6 +5912,11 @@ function menu() {
       { label: 'Painel anterior', accelerator: 'Control+Shift+Tab', click: () => win && win.webContents.send('menu', 'painelAnterior') },
       { type: 'separator' },
       { label: 'Trocar pasta do painel…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
+      /* Ctrl+SHIFT+M, nao Ctrl+Alt+M: em teclado ABNT2 o AltGr E' Ctrl+Alt, e
+         um atalho Ctrl+Alt+letra dispara sozinho no meio da digitacao. Os
+         Ctrl+Alt que existem no app sao globalShortcut e sao opt-in nos
+         Ajustes justamente por isso; atalho de janela aqui e' CmdOrCtrl. */
+      { label: 'Trocar de motor', accelerator: 'CmdOrCtrl+Shift+M', click: () => win && win.webContents.send('menu', 'trocarMotor') },
       { label: 'Limpar conversa', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'clearPane') },
       { label: 'Parar o que está rodando (Esc)', click: () => win && win.webContents.send('menu', 'parar') },
     ]},
@@ -5167,7 +5975,24 @@ function limparSettingsAntigos() {
 }
 
 if (EH_WIN) { try { app.setAppUserModelId('com.homeromotti.cockpit'); } catch {} }
+/* GPU, rede, utilitarios do Chromium: quando um cai, fica anotado (a saida
+   normal no fechamento, 'clean-exit', nao e' queda) */
+app.on('child-process-gone', (_e, d) => {
+  if (!d || d.reason === 'clean-exit') return;
+  registrarQueda({ motor: 'electron', tipo: 'processo-caiu', processo: d.type || '', nome: d.name || d.serviceName || '', motivo: d.reason || '', codigo: d.exitCode != null ? d.exitCode : null });
+});
+
+/* A tela restaurou um painel: esta conversa estava no meio de um turno quando
+   o app fechou (ou a tela recarregou)? Devolve e TIRA da lista: a mesma
+   conversa nunca e' retomada duas vezes. */
+ipcMain.handle('retomar:pegar', (_e, o) => {
+  if (!o || typeof o !== 'object') return null;
+  return retomada.pegar({ engine: String(o.engine || ''), sessaoId: o.sessaoId ? String(o.sessaoId) : '', paneId: o.paneId ? String(o.paneId) : '' });
+});
+
 app.whenReady().then(() => {
+  // o retomar.json da ultima vez: le, apaga, fica com o que tem menos de 2 h
+  try { retomada.carregar(); } catch {}
   menu();
   createWindow();
   limparColadosAntigos();
@@ -5187,3 +6012,48 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => { shutdown(); if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', shutdown);
+
+/* Discussão acionada pela interface: histórico comum, identidades nativas separadas. */
+const { DebateManager } = require('./cockpit-debate');
+const { createDebateRunner } = require('./cockpit-debate-adapters');
+const { captureReview } = require('./cockpit-review');
+const debateRunner = createDebateRunner({
+  codexReady: codexStart, codexRequest: codexReq,
+  subscribe: (paneId, listener) => { debateListeners.set(paneId, listener); return () => debateListeners.delete(paneId); },
+  bindThread: (tid, paneId) => { codex.threadToPane.set(tid, paneId); codex.paneToThread.set(paneId, tid); },
+  unbindThread: (tid, paneId) => {
+    descartarPermissoes(paneId); descartarPerguntasCodex(paneId);
+    codex.threadToPane.delete(tid); codex.paneToThread.delete(paneId); codex.paneTurn.delete(paneId); codex.paneMsgId.delete(paneId);
+    observabilidade.encerrarPainel(paneId, 'codex', 'Discussão encerrada');
+  },
+  spawnClaude: (args, cwd) => spawnBin(claudeBin(), args, { cwd, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] }),
+  stopProcess: matarProcesso,
+  workspace: () => { const dir = path.join(app.getPath('userData'), 'debate-workspace'); fs.mkdirSync(dir, { recursive: true }); return dir; },
+  /* o Codex le o projeto por este servidor MCP so' de leitura (o Electron roda
+     como node, igual ao pergunta-mcp.js). Ver leitura-mcp.js pro porque. */
+  leitor: (cwd) => ({ command: process.execPath, args: [path.join(__dirname, 'leitura-mcp.js')], env: { ELECTRON_RUN_AS_NODE: '1', COCKPIT_RAIZ: cwd } }),
+  /* auditoria 2: o terminal do Codex nunca liga no debate (nem com o sandbox
+     so'-leitura pronto): por ele um `type .env` lia o segredo que o leitor nega.
+     O leitor acima basta pra ler o projeto. */
+});
+const debates = new DebateManager({
+  directory: () => path.join(app.getPath('userData'), 'debates'), runTurn: debateRunner,
+  onUpdate: state => { if (win && !win.isDestroyed()) win.webContents.send('debate:event', state); },
+});
+const debateCall = fn => async (_event, input) => { try { return await fn(input); } catch (error) { return { error: String(error.message || error).slice(0, 1500) }; } };
+ipcMain.handle('debate:start', debateCall(input => debates.start(input)));
+ipcMain.handle('debate:get', debateCall(id => debates.get(id)));
+ipcMain.handle('debate:list', debateCall(() => debates.list()));
+// a tela pergunta antes de abrir o dialogo (auditoria 2): a mesma regra que decide a leitura
+ipcMain.handle('debate:leitura', debateCall(input => { const l = debates.leituraDe({ cwd: input?.cwd, remoto: false }); return { ...l, ampla: l.semLeitura === 'ampla' }; }));
+ipcMain.handle('debate:continue', debateCall(async input => {
+  const state = debates.get(input.id);
+  if (state.review) {
+    const actual = await captureReview(state.review.cwd);
+    if (actual.hash !== state.review.hash) throw new Error('O código mudou desde a revisão. Inicie um novo debate para revisar a versão atual.');
+  }
+  return debates.continue(input);
+}));
+ipcMain.handle('debate:stop', debateCall(id => debates.stop(id)));
+ipcMain.handle('debate:review', debateCall(input => captureReview(input?.cwd)));
+app.on('before-quit', () => debates.stopAll());

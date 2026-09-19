@@ -49,9 +49,11 @@ for (const n of ['IGNORE', 'PONTO_OK', 'escondido', 'ordemDaArvore', 'EXT_VIS_IM
 const blocoSonda = main.slice(main.indexOf('const SONDA_GNU'), main.indexOf('/* A mesma pasta, mas dentro do servidor'));
 vm.runInContext(blocoSonda + '\nthis.SONDA_GNU = SONDA_GNU; this.AVISO_SEM_GNU = AVISO_SEM_GNU; this.erroDaSondaGnu = erroDaSondaGnu;', ctx);
 
+// o ramo LOCAL entra junto: e' com ele que o remoto tem que empatar
+ctx.fs = require('fs');
 for (const f of ['function qLinux(', 'function cdRemoto(', 'function qRemoto(', 'function registrosNul(',
   'async function listDirRemoto(', 'async function varrerArquivosRemoto(', 'async function verArquivoRemoto(',
-  'function pontuarArquivos(']) vm.runInContext(pegarBloco(main, f, f), ctx);
+  'function verArquivoLocal(', 'function pontuarArquivos(']) vm.runInContext(pegarBloco(main, f, f), ctx);
 
 // o que o servidor cospe: registros separados por NUL, em base64
 const emPacote = (registros) => Buffer.from(registros.map((r) => r + '\0').join(''), 'utf8').toString('base64');
@@ -161,6 +163,49 @@ async function main2() {
   const gordo = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/filme.mp4');
   checa('arquivo que nao abre aqui volta como "outro", sem baixar nada', gordo.tipo === 'outro' && gordo.bytes === 900000000);
 
+  /* ---- ACHADO da leva 38: arquivo VAZIO no servidor ----
+     "base64 -w0" de um arquivo de 0 byte nao imprime nada. O pacote vazio caia
+     no mesmo balde do "nao cabe" e o visor dizia "Este tipo nao abre aqui
+     dentro" para um .txt em branco -- enquanto o ramo LOCAL abre o mesmo
+     arquivo como texto vazio, com um <pre> em branco. Agora os dois empatam.
+     Quem separa "vazio" de "deu errado" e' o tamanho que o servidor mandou. */
+  respostaFalsa = { out: 'COCKPIT_TAM 0' + NL };
+  const vazio = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/em-branco.txt');
+  checa('(38) texto VAZIO no servidor abre como texto vazio, nao como "tipo nao suportado"',
+    vazio.tipo === 'texto' && vazio.dados === '' && vazio.bytes === 0, JSON.stringify(vazio));
+
+  // ...e o empate com o ramo local, provado no mesmo arquivo de verdade
+  const os = require('os');
+  const fsr = require('fs');
+  const tmp = path.join(os.tmpdir(), 'cockpit-teste-vazio.txt');
+  fsr.writeFileSync(tmp, '');
+  const local = ctx.verArquivoLocal(tmp);
+  try { fsr.unlinkSync(tmp); } catch {}
+  checa('(38) e o ramo remoto empata com o LOCAL no mesmo arquivo de 0 byte',
+    local.tipo === vazio.tipo && local.dados === vazio.dados && local.bytes === vazio.bytes,
+    JSON.stringify({ local: local.tipo + '/' + JSON.stringify(local.dados), remoto: vazio.tipo + '/' + JSON.stringify(vazio.dados) }));
+
+  respostaFalsa = { out: 'COCKPIT_TAM 0' + NL };
+  const pngVazio = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/prints/vazio.png');
+  checa('(38) imagem de 0 byte tambem segue o ramo local (imagem sem carga), nao "outro"',
+    pngVazio.tipo === 'imagem' && pngVazio.dados === 'data:image/png;base64,', JSON.stringify(pngVazio));
+
+  // e o outro lado da moeda: pacote vazio com tamanho > 0 NAO e' arquivo vazio
+  respostaFalsa = { out: 'COCKPIT_TAM 12' + NL };
+  const mudo = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/tem-coisa.txt');
+  checa('(38) pacote vazio com tamanho > 0 continua "outro" (nao inventa arquivo vazio)',
+    mudo.tipo === 'outro' && mudo.bytes === 12, JSON.stringify(mudo));
+
+  respostaFalsa = { out: 'COCKPIT_TAM -1' + NL };
+  const statFalhou = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/proibido.txt');
+  checa('(38) comando que falhou (stat -1) continua ERRO, e nao "arquivo vazio"',
+    !!statFalhou.erro && !statFalhou.tipo, JSON.stringify(statFalhou));
+
+  respostaFalsa = { out: '' };
+  const nadaVeio = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/x.txt');
+  checa('(38) resposta que nem trouxe o tamanho tambem continua ERRO',
+    !!nadaVeio.erro && !nadaVeio.tipo, JSON.stringify(nadaVeio));
+
   respostaFalsa = { out: 'COCKPIT_SEM_ARQUIVO' };
   const sumiu = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/foi.txt');
   checa('arquivo que nao existe la diz isso (o visor mostra a frase)', !!sumiu.erro && /servidor/i.test(sumiu.erro));
@@ -234,6 +279,91 @@ async function main2() {
   checa('quem AFIRMA que da certo e a conexao de verdade, no execRemoto',
     /muxEstado = true; muxProvado = true;/.test(exec)
     && !/muxEstado = true/.test(pegarBloco(main, 'function muxDaConta(', 'muxDaConta')));
+
+  /* ---------- 7) ACHADO da leva 38: a degradacao do mux vale SEMPRE ----------
+     O execRemoto so' tentava de novo sem multiplexing enquanto ele nao tinha
+     sido "provado". Depois da primeira ida boa nao havia mais volta: mestre
+     morto ou socket vencido no meio da sessao derrubava arvore, "@" e visor ate'
+     reiniciar o app. Inerte nesta maquina (aqui nenhum ssh multiplexa), vivo no
+     dia em que o Cockpit rodar em Mac/Linux -- entao o teste roda o execRemoto
+     de verdade com um sshUmaVez de mentira, que devolve o combinado. */
+  console.log(NL + '7) o multiplexing degrada sempre, nao so antes da primeira prova');
+  const ctxMux = { ...globaisFalsos(), console, Buffer };
+  vm.createContext(ctxMux);
+  const valorMux = (nome) => {
+    const decl = 'const ' + nome + ' = ';
+    const i = main.indexOf(decl);
+    if (i < 0) throw new Error('nao achei ' + nome);
+    return vm.runInContext('(' + main.slice(i + decl.length, main.indexOf(';', i + decl.length)) + ')', ctxMux);
+  };
+  for (const n of ['SSH_MUX_TORTO', 'SSH_ERRO_FECHADO', 'sshDeuCerto']) ctxMux[n] = valorMux(n);
+  for (const f of ['function motivoDoSsh(', 'function ssgValido(', 'function normalizarRemoto(',
+    'function erroDoSsh(', 'function podeSerCulpaDoMux(', 'async function execRemoto(']) {
+    vm.runInContext(pegarBloco(main, f, f), ctxMux);
+  }
+  let idas = [];
+  let respostas = [];
+  let desistiu = 0;
+  ctxMux.sshUmaVez = (_alvo, script, _t, comMux) => {
+    idas.push({ comMux: !!comMux, script });
+    return Promise.resolve(respostas.shift() || { falhou: true, errout: 'o teste nao combinou resposta pra esta ida' });
+  };
+  ctxMux.muxDaConta = () => Promise.resolve(ctxMux.muxEstado !== false);
+  ctxMux.desistirDoMux = () => { desistiu++; ctxMux.muxEstado = false; };
+  const alvoMux = { usuario: 'hugo', host: 'vps', chave: 'k', caminhoRemoto: '~' };
+  const cena = (estado, provado) => { ctxMux.muxEstado = estado; ctxMux.muxProvado = provado; ctxMux.muxSustos = 0; idas = []; desistiu = 0; };
+
+  // 1) mux JA PROVADO e o mestre morre no meio da sessao
+  cena(true, true);
+  respostas = [{ code: 255, out: '', errout: 'mux_client_request_session: send fds failed' },
+    { code: 0, out: 'a arvore do servidor', errout: '' }];
+  const morreu = await ctxMux.execRemoto(alvoMux, 'ls', 1000);
+  checa('(38) mestre morto DEPOIS de provado ainda cai no modo simples, e a chamada passa',
+    morreu.out === 'a arvore do servidor' && !morreu.error && idas.length === 2
+    && idas[0].comMux === true && idas[1].comMux === false, JSON.stringify({ morreu, idas }));
+  checa('(38) e o mux sai de cena pelo resto da sessao (desistirDoMux)',
+    desistiu === 1 && ctxMux.muxEstado === false, desistiu + '/' + ctxMux.muxEstado);
+
+  // 2) e a chamada seguinte ja nasce sem mux, com uma ida so
+  idas = [];
+  respostas = [{ code: 0, out: 'de novo', errout: '' }];
+  const depois = await ctxMux.execRemoto(alvoMux, 'ls', 1000);
+  checa('(38) depois de desistir, a proxima chamada ja vai direto sem mux',
+    depois.out === 'de novo' && idas.length === 1 && idas[0].comMux === false, JSON.stringify(idas));
+
+  // 3) erro fechado nao merece segunda conexao: a resposta seria a mesma
+  cena(true, false);
+  respostas = [{ code: 255, out: '', errout: 'hugo@vps: Permission denied (publickey).' },
+    { code: 0, out: 'ESTA IDA NAO DEVIA EXISTIR', errout: '' }];
+  const recusou = await ctxMux.execRemoto(alvoMux, 'ls', 1000);
+  checa('(38) chave recusada nao vira retentativa (nao e culpa do mux)',
+    idas.length === 1 && !!recusou.error && /chave/i.test(recusou.error), JSON.stringify({ recusou, idas }));
+
+  // 4) o comando RODOU la e voltou com codigo proprio: o tunel funcionou
+  cena(true, false);
+  respostas = [{ code: 1, out: '', errout: 'bash: line 1: cd: /naoexiste: No such file or directory' },
+    { code: 0, out: 'ESTA IDA NAO DEVIA EXISTIR', errout: '' }];
+  const semPastaLa = await ctxMux.execRemoto(alvoMux, 'cd /naoexiste', 1000);
+  checa('(38) pasta inexistente (codigo do proprio comando) tambem nao repete',
+    idas.length === 1 && !!semPastaLa.error, JSON.stringify({ semPastaLa, idas }));
+
+  // 5) falha ambigua: UMA volta e para ai -- nada de laco
+  cena(true, true);
+  respostas = [{ code: 255, out: '', errout: '' }, { code: 255, out: '', errout: '' },
+    { code: 0, out: 'ESTA IDA NAO DEVIA EXISTIR', errout: '' }];
+  const ambigua = await ctxMux.execRemoto(alvoMux, 'ls', 1000);
+  checa('(38) falha ambigua tenta UMA vez sem mux e para (sem laco)',
+    idas.length === 2 && !!ambigua.error, JSON.stringify({ ambigua, idas }));
+  checa('(38) e com o mux ja provado a falha ambigua nao aposenta o que ja funcionou',
+    desistiu === 0 && ctxMux.muxEstado === true && ctxMux.muxSustos === 0,
+    desistiu + '/' + ctxMux.muxEstado + '/' + ctxMux.muxSustos);
+
+  // 6) nesta maquina o mux nunca liga: tem que continuar exatamente como antes
+  cena(false, false);
+  respostas = [{ code: 0, out: 'sem mux nenhum', errout: '' }];
+  const simples = await ctxMux.execRemoto(alvoMux, 'ls', 1000);
+  checa('(38) com o mux desligado (o caso desta maquina) nada mudou: uma ida so, sem mux',
+    simples.out === 'sem mux nenhum' && idas.length === 1 && idas[0].comMux === false, JSON.stringify(idas));
 
   console.log(NL + (falhas ? falhas + ' FALHA(S)' : 'o backend remoto de arquivos esta de pe'));
   process.exit(falhas ? 1 : 0);

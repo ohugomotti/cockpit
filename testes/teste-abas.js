@@ -55,6 +55,9 @@ async function rodar(pasta) {
     }
   `, ctx);
   // savePanes passou a usar fichaDoPainel; o codigo antigo nao tem essa funcao
+  if (appTxt.includes('function guardarEstadoDoMotor(')) {
+    vm.runInContext(pegar(appTxt, 'function guardarEstadoDoMotor(', 'guardarEstadoDoMotor'), ctx);
+  }
   if (appTxt.includes('function fichaDoPainel(')) {
     vm.runInContext(pegar(appTxt, 'function fichaDoPainel(', 'fichaDoPainel'), ctx);
   }

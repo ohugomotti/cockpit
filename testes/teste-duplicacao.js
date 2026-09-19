@@ -10,6 +10,8 @@ const { RAIZ, versaoAnterior } = require('./raiz');
 const SRC = path.join(RAIZ, 'src');
 const mainTxt = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
 const appTxt = fs.readFileSync(path.join(SRC, 'renderer', 'app.js'), 'utf8');
+const { criarObservabilidade, resultadoFerramenta } = require(path.join(SRC, 'cockpit-observability'));
+const proto = require(path.join(SRC, 'codex-protocol'));
 
 function pegar(txt, assinatura, nome) {
   const i = txt.indexOf(assinatura);
@@ -29,6 +31,8 @@ function pegar(txt, assinatura, nome) {
 const emitido = [];
 const ctxMain = {
   ...require('./raiz').globaisFalsos(),
+  proto, resultadoFerramenta,
+  observabilidade: criarObservabilidade(),
   emit: (paneId, kind, data) => emitido.push({ paneId, kind, ...data }),
   codex: { paneMsgId: new Map(), paneTurn: new Map(), threadToPane: new Map(), paneToThread: new Map() },
   msgSeqPorPane: new Map(),
@@ -86,6 +90,7 @@ function montarRenderer() {
     mdSeguro: (t) => String(t),
     clearEmpty() {}, scroll() {},
     linkarArquivos() {}, marcarLinksWeb() {}, botoesDeCodigo() {},
+    desenharBlocosExcalidraw() {},   // leva 41 (B5): o texto final tambem desenha bloco excalidraw
     svgMotor: () => '', ico: () => '',
     $: (sel, raiz) => (raiz && raiz.__body) || dom.criar(),
   };
@@ -103,6 +108,7 @@ function montarRenderer() {
   // textDelta chama ela: sem extrair as duas, o teste morre no meio
   vm.runInContext(pegar(appTxt, 'function selarPassos(', 'selarPassos'), ctx);
   vm.runInContext(pegar(appTxt, 'function textDelta(', 'textDelta'), ctx);
+  vm.runInContext(pegar(appTxt, 'function metadadosDaMensagem(', 'metadadosDaMensagem'), ctx);
   vm.runInContext(pegar(appTxt, 'function textFinal(', 'textFinal'), ctx);
   const P = { engine: 'claude', blocks: new Map(), hist: [], chat: dom.criar(), el: dom.criar() };
   return { ctx, P, bolhas };
@@ -131,8 +137,11 @@ ctxMain.codex.threadToPane.set('t1', 'p1');
 ctxMain.codexNotification('item/agentMessage/delta', { threadId: 't1', delta: 'Bom dia, vou olhar isso agora' });
 ctxMain.codexNotification('item/completed', { threadId: 't1', item: { type: 'agentMessage', id: 'item_42', text: 'Bom dia, vou olhar isso agora e te falo.' } });
 const evCodex = emitido.filter(e => e.kind === 'text-delta' || e.kind === 'text-final');
-checa('delta e final saem com o MESMO id',
-  evCodex.length === 2 && evCodex[0].id === evCodex[1].id,
+// O contrato atual conserva o id REAL do completed para não misturar falas
+// intercaladas. Quando o delta não traz id, a fusão cabe ao renderer; as
+// duas provas abaixo continuam exigindo uma bolha e uma entrada no histórico.
+checa('delta usa fallback e final preserva o id real do item',
+  evCodex.length === 2 && evCodex[0].id === 'msg' && evCodex[1].id === 'item_42',
   JSON.stringify(evCodex.map(e => e.kind + '=' + e.id)));
 let r = montarRenderer();
 aplicar(r, evCodex);

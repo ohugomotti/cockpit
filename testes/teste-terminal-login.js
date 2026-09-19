@@ -27,7 +27,7 @@ function montarPalco(fonteJanela) {
         _sel: sel, className: '', textContent: '', innerHTML: '', title: '',
         clientWidth: 700, clientHeight: 400, onclick: null, style: {},
         classList: { add: (x) => c.add(x), remove: (x) => c.delete(x), contains: (x) => c.has(x) },
-        appendChild() {}, focus() {},
+        appendChild() {}, focus() {}, addEventListener() {},
       });
     }
     return criados.get(sel);
@@ -41,6 +41,8 @@ function montarPalco(fonteJanela) {
   Terminal.prototype.dispose = function () { this.morto = true; };
   Terminal.prototype.resize = function () {};
   Terminal.prototype.focus = function () {};
+  Terminal.prototype.attachCustomKeyEventHandler = function () {};   // colar/copiar (leva 41.1)
+  Terminal.prototype.hasSelection = function () { return false; };
 
   const chamadas = [];
   const api = {
@@ -63,6 +65,7 @@ function montarPalco(fonteJanela) {
   vm.createContext(ctx);
   vm.runInContext(pegarBloco(app, 'function fecharTerminalEmSilencio('), ctx);
   vm.runInContext(pegarBloco(app, 'function ajustarTerminal('), ctx);
+  vm.runInContext(pegarBloco(app, 'function textoVisivelDoTerminal('), ctx);
   vm.runInContext(fonteJanela, ctx);
   return { ctx, el, feitos, chamadas };
 }

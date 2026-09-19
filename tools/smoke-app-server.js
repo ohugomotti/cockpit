@@ -1,125 +1,132 @@
-/* Smoke test do protocolo contra o codex app-server DE VERDADE.
-   Nao entra no `node --test`: precisa do Codex instalado e logado, e sobe um
-   processo. Roda a mao antes de empacotar:  node tools/smoke-app-server.js
-   Nao executa comando nenhum na maquina - so' abre conversa, le skills e Apps. */
-const os = require('os');
+'use strict';
+/* Smoke real e seguro: cria e retoma somente sua propria thread. */
+const fs = require('fs');
+const path = require('path');
 const { spawnBin } = require('../src/plataforma');
-const proto = require('../src/codex-protocol');
+const ROOT = path.resolve(__dirname, '..');
+const OUT = path.join(ROOT, 'artifacts', 'smoke-motores-astra.json');
+const MARK = 'COCKPIT_SMOKE_7F3A';
+let seq = 0, buf = '', threadId = '', model = '';
+const pending = new Map(), events = [], waits = [], results = [];
+const proc = spawnBin('codex', ['app-server'], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
 
-const HOME = os.homedir();
-let id = 0;
-const pend = new Map();
-const notas = [];
-
-const p = spawnBin('codex', ['app-server'], { cwd: HOME, stdio: ['pipe', 'pipe', 'pipe'] });
-let buf = '';
-p.stdout.on('data', (c) => {
-  buf += c.toString('utf8');
-  let i;
-  while ((i = buf.indexOf('\n')) >= 0) {
-    const linha = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-    if (!linha) continue;
-    let m; try { m = JSON.parse(linha); } catch { continue; }
-    if (m.id !== undefined && m.method === undefined) {
-      const d = pend.get(m.id); if (!d) continue;
-      pend.delete(m.id);
-      m.error ? d.rej(new Error(m.error.message || JSON.stringify(m.error))) : d.ok(m.result);
-    } else if (m.method) notas.push(m.method);
+function dispatch(m) {
+  if (m.id !== undefined && !m.method) {
+    const p = pending.get(m.id); if (!p) return;
+    pending.delete(m.id); clearTimeout(p.timer);
+    return m.error ? p.reject(new Error(m.error.message || JSON.stringify(m.error))) : p.resolve(m.result);
+  }
+  if (!m.method) return;
+  events.push(m);
+  for (let i = waits.length - 1; i >= 0; i--) if (waits[i].test(m)) {
+    const w = waits.splice(i, 1)[0]; clearTimeout(w.timer); w.resolve(m);
+  }
+}
+proc.stdout.on('data', c => {
+  buf += c.toString('utf8'); let n;
+  while ((n = buf.indexOf('\n')) >= 0) {
+    const line = buf.slice(0, n).trim(); buf = buf.slice(n + 1);
+    if (line) try { dispatch(JSON.parse(line)); } catch {}
   }
 });
 
-const req = (method, params, ms) => new Promise((ok, rej) => {
-  const meu = ++id;
-  const t = setTimeout(() => { pend.delete(meu); rej(new Error('sem resposta em ' + (ms || 20000) + 'ms')); }, ms || 20000);
-  pend.set(meu, { ok: (v) => { clearTimeout(t); ok(v); }, rej: (e) => { clearTimeout(t); rej(e); } });
-  p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: meu, method, params }) + '\n');
-});
-const nota = (method, params) => p.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
-
-
-/* pega o id da ultima conversa gravada em ~/.codex/sessions */
-function ultimaConversaDoDisco() {
-  const fs = require('fs'), path = require('path');
-  const raiz = path.join(HOME, '.codex', 'sessions');
-  let melhor = null;
-  const olhar = (dir, fundo) => {
-    if (fundo > 5) return;
-    let itens = [];
-    try { itens = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const it of itens) {
-      const cheio = path.join(dir, it.name);
-      if (it.isDirectory()) { olhar(cheio, fundo + 1); continue; }
-      const m = /^rollout-.*?-([0-9a-f-]{36})\.jsonl$/i.exec(it.name);
-      if (!m) continue;
-      let quando = 0;
-      try { quando = fs.statSync(cheio).mtimeMs; } catch {}
-      if (!melhor || quando > melhor.quando) melhor = { id: m[1], quando };
-    }
-  };
-  olhar(raiz, 0);
-  return melhor && melhor.id;
+function request(method, params = {}, ms = 30000) {
+  return new Promise((resolve, reject) => {
+    const id = ++seq;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method}: timeout ${ms}ms`)); }, ms);
+    pending.set(id, { resolve, reject, timer });
+    proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+  });
+}
+function notify(method, params = {}) { proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n'); }
+function waitEvent(test, ms = 180000) {
+  const old = events.find(test); if (old) return Promise.resolve(old);
+  return new Promise((resolve, reject) => {
+    const w = { test, resolve, reject };
+    w.timer = setTimeout(() => { const i = waits.indexOf(w); if (i >= 0) waits.splice(i, 1); reject(new Error('evento esperado: timeout')); }, ms);
+    waits.push(w);
+  });
+}
+async function step(name, fn) {
+  try { const detail = await fn(); results.push({ status: 'ok', name, detail }); return detail; }
+  catch (e) { results.push({ status: 'falhou', name, detail: String(e.message || e).slice(0, 500) }); return undefined; }
+}
+function arrayAt(value, names) {
+  for (const name of names) if (Array.isArray(value && value[name])) return value[name];
+  return Array.isArray(value) ? value : [];
+}
+function eventText(m) {
+  const p = m.params || {}, item = p.item || {};
+  return String(p.delta || p.text || item.text || (typeof item.content === 'string' ? item.content : ''));
+}
+function toolError(r) {
+  if (!r || !r.isError) return '';
+  const blocks = Array.isArray(r.content) ? r.content : [];
+  return blocks.map(x => typeof x.text === 'string' ? x.text : '').filter(Boolean).join(' ').slice(0, 300) || 'isError sem detalhe';
+}
+async function turn(prompt) {
+  const start = events.length;
+  const r = await request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'on-request' }, 40000);
+  const tid = r && (r.turnId || (r.turn && r.turn.id));
+  await waitEvent(m => m.method === 'turn/completed' && (!tid || (m.params || {}).turnId === tid || ((m.params || {}).turn || {}).id === tid));
+  return events.slice(start).map(eventText).join('');
 }
 
-const passos = [];
-const passo = async (nome, fn) => {
-  try { const r = await fn(); passos.push(['ok', nome, r || '']); }
-  catch (e) { passos.push(['falhou', nome, String((e && e.message) || e).slice(0, 200)]); }
-};
-
 (async () => {
-  await passo('initialize', async () => {
-    await req('initialize', { clientInfo: { name: 'cockpit-smoke', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true } });
-    nota('initialized', {});
-    return 'handshake aceito';
-  });
-
-  let tid = '';
-  await passo('thread/start com o modo Revisado', async () => {
-    const { method, params } = proto.buildThreadOpenRequest({
-      cwd: HOME, approval: 'revisado', developerInstructions: 'smoke test, nao faca nada',
+  try {
+    await step('initialize', async () => {
+      await request('initialize', { clientInfo: { name: 'cockpit-safe-smoke', version: '2.0.0' }, capabilities: { experimentalApi: true } });
+      notify('initialized'); return { accepted: true };
     });
-    if (method !== 'thread/start') throw new Error('montou o metodo errado: ' + method);
-    const r = await req(method, params, 40000);
-    tid = (r && (r.threadId || (r.thread && r.thread.id))) || '';
-    if (!tid) throw new Error('nao devolveu threadId');
-    if (r.approvalsReviewer !== 'auto_review') throw new Error('revisor nao aplicou: ' + r.approvalsReviewer);
-    return tid + ' / revisor=' + r.approvalsReviewer;
-  });
-
-  await passo('thread/resume reaplicando "Sem pedir permissão"', async () => {
-    /* retoma uma conversa REAL do historico: uma thread recem-criada ainda nao
-       tem rollout em disco, e o app-server responde "no rollout found" - foi o
-       que aconteceu na primeira versao deste teste */
-    const antiga = ultimaConversaDoDisco();
-    if (antiga) tid = antiga;
-    if (!tid) throw new Error('sem thread pra retomar');
-    const { method, params } = proto.buildThreadOpenRequest({
-      resumeId: tid, cwd: HOME, approval: 'bypass', developerInstructions: 'smoke test',
+    await step('model/list Astra', async () => {
+      const r = await request('model/list', { includeHidden: true, limit: 100 }, 40000);
+      const models = arrayAt(r, ['data', 'models', 'items']);
+      const found = models.find(x => /astra/i.test(`${x.id || ''} ${x.model || ''} ${x.displayName || ''} ${x.name || ''}`));
+      if (!found) throw new Error('Astra ausente em model/list');
+      model = found.id || found.model || found.name; return { model, available: true };
     });
-    if (method !== 'thread/resume') throw new Error('montou o metodo errado: ' + method);
-    const r = await req(method, params, 40000);
-    if (r.approvalPolicy !== 'never') throw new Error('o modo nao foi aplicado na retomada: ' + r.approvalPolicy);
-    return 'approvalPolicy=' + r.approvalPolicy;
-  });
-
-  await passo('skills/list', async () => {
-    const r = await req('skills/list', { cwds: [HOME] }, 25000);
-    const s = proto.normalizeSkillsResponse(r, HOME);
-    return s.length + ' skills (ex.: ' + s.slice(0, 3).map((x) => x.name).join(', ') + ')';
-  });
-
-  await passo('app/list + app/installed', async () => {
-    const lista = await req('app/list', {}, 25000).catch((e) => ({ __erro: String(e.message) }));
-    const inst = await req('app/installed', {}, 25000).catch((e) => ({ __erro: String(e.message) }));
-    const apps = proto.mergeApps(lista.__erro ? null : lista, inst.__erro ? null : inst);
-    if (lista.__erro && inst.__erro) return 'os dois recusaram (' + lista.__erro.slice(0, 60) + ') - a tela mostra o recado';
-    return apps.length + ' apps; erro em app/list: ' + (lista.__erro || 'nenhum');
-  });
-
-  console.log('\n--- smoke do app-server ---');
-  for (const [st, nome, det] of passos) console.log((st === 'ok' ? '  OK   ' : '  FALHOU ') + nome + (det ? '  ->  ' + det : ''));
-  const ruins = passos.filter((x) => x[0] !== 'ok').length;
-  console.log(ruins ? '\n' + ruins + ' passo(s) falharam' : '\ntudo passou');
-  try { p.kill(); } catch {}
-  process.exit(ruins ? 1 : 0);
+    await step('skills/list', async () => {
+      const r = await request('skills/list', { cwds: [ROOT], forceReload: false }, 40000);
+      return { count: arrayAt(r, ['data', 'skills', 'items']).length };
+    });
+    await step('thread/start exclusiva', async () => {
+      const r = await request('thread/start', { cwd: ROOT, model, approvalPolicy: 'on-request', sandbox: 'workspace-write', developerInstructions: 'Thread exclusiva de smoke. Nao use ferramentas. Responda apenas ao teste.' }, 50000);
+      threadId = r && (r.threadId || (r.thread && r.thread.id));
+      if (!threadId) throw new Error('threadId ausente'); return { threadId, approvalPolicy: 'on-request' };
+    });
+    await step('turno Astra minimo', async () => {
+      if (!(await turn(`Responda exatamente ${MARK}`)).includes(MARK)) throw new Error('marcador nao apareceu');
+      return { markerConfirmed: true };
+    });
+    await step('thread/resume mesmo ID', async () => {
+      const r = await request('thread/resume', { threadId, cwd: ROOT, model, approvalPolicy: 'on-request', sandbox: 'workspace-write', excludeTurns: false }, 50000);
+      const id = r && (r.threadId || (r.thread && r.thread.id));
+      if (id !== threadId) throw new Error(`ID divergente: ${id || 'vazio'}`); return { threadId: id, sameId: true, approvalPolicy: 'on-request' };
+    });
+    await step('contexto preservado', async () => {
+      if (!(await turn('Qual marcador exato voce respondeu antes? Responda somente ele.')).includes(MARK)) throw new Error('contexto nao voltou');
+      return { contextConfirmed: true };
+    });
+    await step('MCP status', async () => {
+      const r = await request('mcpServerStatus/list', { threadId, detail: 'full', limit: 100 }, 90000);
+      const servers = arrayAt(r, ['data', 'servers', 'items']);
+      const names = servers.map(x => x.name || x.server || x.id).filter(Boolean);
+      for (const name of ['chrome-logado', 'windows-mcp']) if (!names.includes(name)) throw new Error(`${name} ausente; recebidos: ${names.join(', ')}`);
+      return { connected: ['chrome-logado', 'windows-mcp'] };
+    });
+    await step('chrome-logado list_pages', async () => {
+      const r = await request('mcpServer/tool/call', { server: 'chrome-logado', threadId, tool: 'list_pages', arguments: {} }, 90000);
+      if (r && r.isError) throw new Error(toolError(r)); return { called: true };
+    });
+    await step('windows-mcp Snapshot', async () => {
+      const r = await request('mcpServer/tool/call', { server: 'windows-mcp', threadId, tool: 'Snapshot', arguments: { use_vision: false } }, 90000);
+      if (r && r.isError) throw new Error(toolError(r)); return { called: true, useVision: false };
+    });
+  } catch {} finally {
+    const artifact = { createdAt: new Date().toISOString(), codexVersion: '0.153.4', testThreadId: threadId || null, safety: { usedOnlyCreatedThread: true, readExistingHistory: false }, results };
+    artifact.passed = results.length === 10 && results.every(x => x.status === 'ok');
+    fs.mkdirSync(path.dirname(OUT), { recursive: true }); fs.writeFileSync(OUT, JSON.stringify(artifact, null, 2) + '\n');
+    try { proc.stdin.end(); } catch {} setTimeout(() => { try { proc.kill(); } catch {} }, 500).unref();
+    console.log(JSON.stringify(artifact, null, 2)); process.exitCode = artifact.passed ? 0 : 1;
+  }
 })();

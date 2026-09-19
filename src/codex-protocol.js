@@ -67,10 +67,32 @@ function normalizeUserInputRequest(rpcId, params = {}) {
   })).filter((question) => question.id && question.pergunta);
   return {
     id: 'codex_q_' + String(rpcId).replace(/[^a-zA-Z0-9_-]/g, ''),
+    bloqueante: params.isBlocking !== false,
     // a tela desenha no maximo 4; 'todas' e' quem garante resposta pra TODAS
     perguntas: todas.slice(0, 4),
     todas,
   };
+}
+
+function normalizeAgentMessage(item = {}) {
+  let text = typeof item.text === 'string' ? item.text : '';
+  const questions = Array.isArray(item.questions) ? item.questions : [];
+  // Texto remoto vai ao Markdown: neutraliza HTML e sintaxe nas perguntas.
+  const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/([\\`*_{}\[\]()#+.!|~-])/g, '\\$1');
+  for (const question of questions) {
+    if (!question || typeof question.title !== 'string') continue;
+    const parts = [question.title, ...(Array.isArray(question.options) ? question.options.filter(o => typeof o === 'string') : [])];
+    const missing = parts.filter(part => part && !text.includes(part) && !text.includes(escape(part)));
+    if (missing.length) text += (text ? '\n\n' : '') + missing.map(escape).join('\n\n');
+  }
+  return { text, phase: item.phase || '', delivery: item.delivery ?? null, questions: item.questions ?? null, memoryCitation: item.memoryCitation ?? null };
+}
+
+function normalizeCommandOutput(method, params = {}) {
+  if (method === 'command/exec/outputDelta') {
+    return { id: params.processId, text: typeof params.deltaBase64 === 'string' ? Buffer.from(params.deltaBase64, 'base64').toString('utf8') : '' };
+  }
+  return { id: params.itemId ?? params.callId, text: typeof params.delta === 'string' ? params.delta : '' };
 }
 
 function buildUserInputResponse(questions, responses, canceled) {
@@ -160,6 +182,8 @@ module.exports = {
   buildThreadOpenRequest,
   buildApprovalResponse,
   normalizeUserInputRequest,
+  normalizeAgentMessage,
+  normalizeCommandOutput,
   buildUserInputResponse,
   normalizeSkillsResponse,
   mergeApps,

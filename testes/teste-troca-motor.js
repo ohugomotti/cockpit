@@ -27,7 +27,7 @@ async function rodar(pasta, mexerCtx, motorAlvo) {
       setConfig: () => { chamou.setConfig++; },
     } },
     note() {}, remotoDoPane: () => null,
-    fillModels() {}, paintEngine() {}, pintarModo() {}, setDot() {},
+    fillModels() {}, paintEngine() {}, mostrarPastaNoPainel() {}, pintarModo() {}, setDot() {},
     pintarTokens() {}, pintarFila() {}, pararTrabalho() {}, limparPassos() {},
     savePanes: () => { chamou.savePanes++; },
     marcaTroca() {}, esconderPermissao() {},
@@ -46,6 +46,12 @@ async function rodar(pasta, mexerCtx, motorAlvo) {
   if (appTxt.includes('function modoValido(')) {
     vm.runInContext('var MODOS = ' + pegar(appTxt, 'const MODOS = ', 'MODOS').replace('const MODOS = ', '') + ';', ctx);
     vm.runInContext(pegar(appTxt, 'function modoValido(', 'modoValido'), ctx);
+  }
+  // A troca agora preserva uma sessao por motor. Exercitar os helpers reais;
+  // uma copia antiga continua rodando somente com as funcoes que ja possuia.
+  for (const nome of ['guardarEstadoDoMotor', 'restaurarEstadoDoMotor']) {
+    const assinatura = 'function ' + nome + '(';
+    if (appTxt.includes(assinatura)) vm.runInContext(pegar(appTxt, assinatura, nome), ctx);
   }
   vm.runInContext(pegar(appTxt, 'async function trocarMotor(', 'trocarMotor'), ctx);
 
@@ -94,6 +100,9 @@ async function rodar(pasta, mexerCtx, motorAlvo) {
   checa('contador de contexto zerado', novo.P.tokens === 0 && novo.P.janela === 0, novo.P.tokens + '/' + novo.P.janela);
   checa('motor trocado', novo.P.engine === 'codex', novo.P.engine);
   checa('resumeId limpo', novo.P.resumeId === null, JSON.stringify(novo.P.resumeId));
+  checa('a sessao Claude foi preservada no estado proprio, sem vazar para Codex',
+    novo.P.engineStates && novo.P.engineStates.claude.sessaoId === 'sess-claude-123',
+    JSON.stringify(novo.P.engineStates));
   checa('a conversa vai junto pro motor novo',
     typeof novo.P.passarContexto === 'string' && novo.P.passarContexto.includes('rodapé'),
     String(novo.P.passarContexto).slice(0, 60));

@@ -29,11 +29,14 @@ function analisar(arquivo) {
     // ancorado no NOME DA FUNCAO, nao num comentario: comentario muda, funcao nao
     { nome: 'sair da aba', marca: 'async function guardarPaineisDaAba(' },
     { nome: 'terminar o turno fora da tela', marca: '// desliga o MOTOR (acabou o trabalho)' },
-    { nome: 'a conexao caiu', marca: "case 'engine-down':" },
+    /* leva 41 (B2): a queda saiu do switch e virou motorCaiu() (que tambem
+       decide o religar sozinho). A versao antiga continua no case. */
+    { nome: 'a conexao caiu', marca: 'function motorCaiu(', reserva: "case 'engine-down':" },
   ];
   const out = {};
   for (const p of pontos) {
-    const i = s.indexOf(p.marca);
+    let i = s.indexOf(p.marca);
+    if (i < 0 && p.reserva) i = s.indexOf(p.reserva);
     if (i < 0) { out[p.nome] = 'nao achei o trecho'; continue; }
     // janela grande o bastante pra cobrir a funcao inteira: o ponto que importa
     // fica perto do fim dela, depois do comentario que explica o porque

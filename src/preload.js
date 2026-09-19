@@ -1,11 +1,21 @@
 const { webUtils, contextBridge, ipcRenderer } = require('electron');
 
+/* Leva 41 (B2): TODA parada de proposito da tela passa pelo paneStop (trocar
+   motor, modelo, modo, conta, pasta, fechar painel, guardar a aba...). A hora
+   fica anotada aqui; antes de religar um motor que caiu, a tela confere -- se
+   voce parou quase junto com a queda, nao religa. */
+const paradas = new Map();
+
 contextBridge.exposeInMainWorld('api', {
   // desde o Electron 32 o File nao tem ".path"; e' assim que se pega o caminho
   caminhoDoArquivo: (f) => { try { return webUtils.getPathForFile(f); } catch { return ''; } },
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (c) => ipcRenderer.invoke('config:set', c),
   home: () => ipcRenderer.invoke('sys:home'),
+  versao: () => ipcRenderer.invoke('sys:versao'),
+  /* o tema salvo, lido UMA vez aqui (antes do app.js): a tela ja' nasce nele,
+     sem piscar escuro enquanto o boot le o config */
+  temaInicial: (() => { try { return ipcRenderer.sendSync('config:tema') || ''; } catch { return ''; } })(),
   plataforma: process.platform,
 
   pickFolder: (start) => ipcRenderer.invoke('dialog:pickFolder', start),
@@ -16,6 +26,9 @@ contextBridge.exposeInMainWorld('api', {
   buscarArquivos: (o) => ipcRenderer.invoke('fs:buscarArquivos', o),   // { cwd, termo, remoto? }
   gitStatus: (o) => ipcRenderer.invoke('git:status', o),
   gitDiff: (o) => ipcRenderer.invoke('git:diff', o),
+  gitWorktreesList: (o) => ipcRenderer.invoke('git:worktrees:list', o),
+  gitWorktreesCreate: (o) => ipcRenderer.invoke('git:worktrees:create', o),
+  gitWorktreesOpen: (o) => ipcRenderer.invoke('git:worktrees:open', o),
   apagarSessao: (o) => ipcRenderer.invoke('sessao:apagar', o),
   exportarSessao: (o) => ipcRenderer.invoke('sessao:exportar', o),
   readFile: (f) => ipcRenderer.invoke('fs:read', f),
@@ -28,7 +41,18 @@ contextBridge.exposeInMainWorld('api', {
   paneInterrupt: (o) => ipcRenderer.invoke('pane:interrupt', o),
   paneSteer: (o) => ipcRenderer.invoke('pane:steer', o),
   paneCompactar: (o) => ipcRenderer.invoke('pane:compactar', o),
-  paneStop: (o) => ipcRenderer.invoke('pane:stop', o),
+  paneStop: (o) => { if (o && o.paneId != null) paradas.set(String(o.paneId), Date.now()); return ipcRenderer.invoke('pane:stop', o); },
+  paradaEm: (paneId) => paradas.get(String(paneId)) || 0,
+  // conversa que estava em turno quando o app fechou/recarregou (entregue uma vez so')
+  retomarPegar: (o) => ipcRenderer.invoke('retomar:pegar', o),
+  debateStart: (o) => ipcRenderer.invoke('debate:start', o),
+  debateGet: (id) => ipcRenderer.invoke('debate:get', id),
+  debateList: () => ipcRenderer.invoke('debate:list'),
+  debateLeitura: (o) => ipcRenderer.invoke('debate:leitura', o),
+  debateContinue: (o) => ipcRenderer.invoke('debate:continue', o),
+  debateStop: (id) => ipcRenderer.invoke('debate:stop', id),
+  debateReview: (o) => ipcRenderer.invoke('debate:review', o),
+  onDebateEvent: (cb) => { const handler = (_e, state) => cb(state); ipcRenderer.on('debate:event', handler); return () => ipcRenderer.removeListener('debate:event', handler); },
   approve: (o) => ipcRenderer.invoke('pane:approve', o),
   autoLiberar: (o) => ipcRenderer.invoke('pane:autoLiberar', o),
   liberacoes: (o) => ipcRenderer.invoke('pane:liberacoes', o),
@@ -46,16 +70,22 @@ contextBridge.exposeInMainWorld('api', {
   pickPhoto: () => ipcRenderer.invoke('user:pickPhoto'),
   anexoLer: (f) => ipcRenderer.invoke('anexo:ler', f),
   colados: () => ipcRenderer.invoke('clipboard:anexos'),
+  // terminal embutido: colar o codigo do login e copiar o que foi marcado
+  textoCopiado: () => ipcRenderer.invoke('clipboard:texto'),
+  copiarTexto: (t) => ipcRenderer.invoke('clipboard:copiar', t),
   // anexo colado mora SEMPRE aqui no PC: quem abre anexo nao passa 'remoto'
   verArquivo: (f, remoto) => ipcRenderer.invoke('arquivo:ver', remoto ? { file: f, remoto } : f),
   renomear: (o) => ipcRenderer.invoke('sessao:renomear', o),
+  // leva 41 (B6): nome de 3 palavras da conversa nova ({ chave, texto } -> { titulo })
+  tituloAuto: (o) => ipcRenderer.invoke('titulo:gerar', o),
   sessaoFork: (o) => ipcRenderer.invoke('sessao:fork', o),
   motoresVersoes: () => ipcRenderer.invoke('motores:versoes'),
   acpConfig: (o) => ipcRenderer.invoke('acp:config', o),
-  agentesClaude: () => ipcRenderer.invoke('agentes:claude'),
+  agentesClaude: (o) => ipcRenderer.invoke('agentes:claude', o),
   // rotinas = tarefas agendadas do Windows (so' existem nesta plataforma)
-  rotinasListar: () => ipcRenderer.invoke('rotinas:listar'),
+  rotinasListar: (o) => ipcRenderer.invoke('rotinas:listar', o),   // { forcar: true } fura o cache de 15 s do main
   rotinasDisparar: (o) => ipcRenderer.invoke('rotinas:disparar', o),
+  rotinasLigar: (o) => ipcRenderer.invoke('rotinas:ligar', o),   // { nome, caminho, ligar: true|false }
   imagemSalvar: (o) => ipcRenderer.invoke('imagem:salvar', o),
   textoSalvar: (o) => ipcRenderer.invoke('arquivo:salvarTexto', o),
   textoLer: (o) => ipcRenderer.invoke('arquivo:lerTexto', o),
@@ -92,6 +122,9 @@ contextBridge.exposeInMainWorld('api', {
   contasEsquecer: (o) => ipcRenderer.invoke('contas:esquecer', o),
   mcpList: (e) => ipcRenderer.invoke('mcp:list', e),
   mcpAcao: (o) => ipcRenderer.invoke('mcp:acao', o),
+  mcpDiagnostico: (o) => ipcRenderer.invoke('mcp:diagnostico', o),
+  mcpRecarregar: (o) => ipcRenderer.invoke('mcp:recarregar', o),
+  agentesSessao: (o) => ipcRenderer.invoke('agentes:sessao', o),
 
   termRun: (o) => ipcRenderer.invoke('term:run', o),
   termInput: (o) => ipcRenderer.invoke('term:input', o),

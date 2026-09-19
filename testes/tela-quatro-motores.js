@@ -226,7 +226,9 @@ function tirarIsca() { try { fs.rmSync(PASTA_ISCA, { recursive: true, force: tru
         genNaoEhNaN: [histGen.gemini, histGen.grok, pintaGen.gemini].every(n => typeof n === 'number' && !isNaN(n)),
       });
     })()`));
-    checa('os contadores por motor nao viram NaN', listas.cacheTemOsQuatro === 'claude,codex,gemini,grok' && listas.genNaoEhNaN,
+    // o ACP virou o quinto motor: o cache passou a ter cinco chaves, e este
+    // teste ficou preso nos quatro de antes
+    checa('os contadores por motor nao viram NaN', listas.cacheTemOsQuatro === 'claude,codex,gemini,grok,acp' && listas.genNaoEhNaN,
       listas.cacheTemOsQuatro + ' / ' + listas.genNaoEhNaN);
     checa('o Grok diz que a lista nao foi ligada, em vez de "nenhuma conversa"',
       /não foi ligada/i.test(listas.grok), JSON.stringify(listas.grok));
@@ -280,14 +282,17 @@ function tirarIsca() { try { fs.rmSync(PASTA_ISCA, { recursive: true, force: tru
     const painel = JSON.parse(await cdp.avaliar(`JSON.stringify({
       paineis: document.querySelectorAll('.pane').length,
       classes: [...(document.querySelector('.pane') || {classList:[]}).classList],
-      botaoMotor: ((document.querySelector('.pane .p-motor-outro') || {}).textContent || '').trim(),
-      chaveEscondida: !!(document.querySelector('.pane .p-chave') || {}).classList.contains('hidden'),
+      botaoMotor: ((document.querySelector('.pane .p-motor .pm-nome') || {}).textContent || '').trim(),
+      // leva 39: o seletor do topo e' UM botao so'. Contar > 0 e = 1 ainda pode
+      // falhar (um molde com dois, um botao criado a mao por engano); procurar
+      // a .p-chave nao podia mais, porque ela sumiu do arquivo inteiro.
+      seletoresNoTopo: document.querySelectorAll('.pane .pane-hd .p-motor').length,
       corDoAcento: getComputedStyle(document.querySelector('.pane') || document.body).getPropertyValue('--accent').trim(),
     })`));
     checa('o painel nasceu', painel.paineis === 1, String(painel.paineis));
     checa('o painel e do Gemini', painel.classes.includes('eng-gemini'), JSON.stringify(painel.classes));
     checa('o botao do motor diz Gemini', painel.botaoMotor === 'Gemini', JSON.stringify(painel.botaoMotor));
-    checa('o interruptor Claude/Codex some num painel Gemini', painel.chaveEscondida, String(painel.chaveEscondida));
+    checa('o topo tem UM seletor de motor, nao dois', painel.seletoresNoTopo === 1, String(painel.seletoresNoTopo));
     checa('o Gemini tem cor propria (nao o roxo generico #8b7fd4)',
       painel.corDoAcento && painel.corDoAcento.toLowerCase() !== '#8b7fd4', JSON.stringify(painel.corDoAcento));
 

@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
   "version": "1.0.0",
-  "description": "Codex e Claude lado a lado, com acesso a tudo no Mac",
+  "description": "Codex e Claude em um ambiente compartilhado, com debates e ferramentas integradas",
   "main": "main.js",
   "author": "Homero Motti",
   "license": "MIT",

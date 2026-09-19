@@ -98,6 +98,7 @@ test('pergunta nativa do Codex vira o cartão de perguntas do Cockpit', () => {
     ],
   }];
   assert.equal(got.id, 'codex_q_91');
+  assert.equal(got.bloqueante, true);
   assert.deepEqual(got.perguntas, esperado);
   assert.deepEqual(got.todas, esperado);
 });

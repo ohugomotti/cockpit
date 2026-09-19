@@ -22,8 +22,15 @@ Windows, com as correções e as levas de melhoria feitas em cima dela.
 - **Torre de controle** — todos os painéis de todas as abas numa tela só (trabalhando ·
   esperando você autorizar · parado · guardado), mais as sessões do Claude que rodam **fora**
   do Cockpit (VS Code, terminal, Telegram).
-- **Rotinas** — as tarefas agendadas do Windows numa view própria, com bloco vermelho no topo
-  para o que parou de funcionar em silêncio.
+- **Automações** (antes "Rotinas") — as tarefas agendadas do Windows numa view própria, com
+  bloco vermelho no topo para o que parou de funcionar em silêncio.
+- **Pendências** — quem está esperando a sua resposta (autorizar uma ferramenta, responder uma
+  pergunta), de qualquer aba, inclusive servidor. Você responde ali mesmo, e o sino da barra
+  lateral mostra quantos são, com a view fechada.
+- **Robô em segundo plano** — quando um subagente ou comando de fundo continua rodando depois
+  do turno, o painel mostra o chip "N robôs trabalhando" com o tempo, em vez de parecer parado.
+- **Debate entre motores** — Claude e Codex discutem um tema em rodadas, lendo os arquivos do
+  projeto só para leitura (pasta pessoal, `.ssh`, `.env` e credenciais ficam de fora).
 - **Trocar de conta sem refazer login** — guarda credenciais por apelido e alterna entre elas.
 - **Permissão com o diff na frente** — antes de autorizar, você vê o que vai mudar no arquivo.
 - **Terminal embutido**, chip do git, busca dentro das conversas, grupos de conversa, painel em
@@ -67,9 +74,9 @@ terminal embutido quebra.
 ## Testes
 
 ```bash
-node testes/rodar-tudo.js                # a bateria inteira: 21 testes
+node testes/rodar-tudo.js                # a bateria de testes/: 25 arquivos
 node testes/teste-duplicacao.js          # ou um de cada vez
-node --test test/codex-protocol.test.js  # 19 casos do protocolo do Codex
+node --test "test/*.test.js"             # os 449 casos de test/ (node:test)
 ```
 
 A bateria de `testes/` não usa framework: carrega as funções **reais** do `main.js` e do
@@ -79,8 +86,9 @@ handlers `ipcMain` de verdade contra uma HOME temporária.
 
 Cada teste existe por causa de um bug que aconteceu de verdade — o nome dos casos diz qual.
 
-O `test/codex-protocol.test.js` é o único que usa `node:test`, porque o `src/codex-protocol.js`
-é puro: não depende do Electron e dá para exercitar direto.
+Os arquivos de `test/` usam o `node:test` do próprio Node. Alguns exercitam módulos puros, como
+o `src/codex-protocol.js`, que não dependem do Electron; outros carregam o `main.js` ou o
+`renderer/app.js` com um Electron e um DOM de mentira.
 
 ## Como o app é organizado
 
@@ -152,6 +160,11 @@ não moram no código. Duplo clique na aba para preencher.
 | 36 | **Entrada** — voz sem clique e comandos de voz, motor Parakeet, recorte de tela, foto, quadro Excalidraw embutido, OCR local, prompts salvos, caixa de entrada do Telegram |
 | 37 | **Remoto de 1ª classe** — árvore, @-menção e visor de arquivo no servidor; view **Rotinas** com as tarefas agendadas do Windows |
 | 38 | **Codex app-server 0.147/0.153** — retomar reaplica as escolhas, recusa chega ao Codex, pergunta do próprio Codex vira cartão (com campo oculto para senha), skills nativas e Apps do ChatGPT na tela de conectores |
+| 39 | **Um seletor de motor só** — o topo de todo painel abre a mesma lista de motores; antes, Claude e Codex tinham um interruptor de dois lados e os outros motores, um botão diferente |
+| 40 | Os três achados de baixa gravidade que a auditoria da leva 37 tinha deixado para depois |
+| 41 | **Debate entre motores** lendo o projeto, **conta do Claude agindo no servidor** (entrar, sair, trocar, guardar), motor que cai **religa sozinho**, Esc só no painel em foco, **ramificar** conversa (pela lista, pelo `/` e no servidor), **quadro de fluxo** que vira PNG + passo a passo, nome automático de três palavras, reordenar abas, logos oficiais e o tema **Motti IA** |
+| 41.1 | **Colar no terminal embutido** (Ctrl+V, Ctrl+Shift+V, Shift+Insert, botão direito e botão Colar) e link de login sem as sequências de controle do ConPTY |
+| 42 | **Pendências** (view + sino com contador) e chip de **robô em segundo plano** |
 
 As levas 35 e 36 passaram por 4 rodadas de auditoria dupla: **94 achados, 176 correções**.
 

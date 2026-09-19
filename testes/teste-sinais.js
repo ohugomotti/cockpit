@@ -2,7 +2,8 @@
    de verdade, e as provas de que o que doia sumiu do codigo (o teto de 8
    passos que apagava erro; a fala do CLI desenhada como se fosse sua). */
 const vm = require('vm');
-const { lerFonte, pegarBloco, globaisFalsos } = require('./raiz');
+const { RAIZ, lerFonte, pegarBloco, globaisFalsos } = require('./raiz');
+const { resultadoFerramenta } = require(require('path').join(RAIZ, 'src', 'cockpit-observability'));
 
 const app = lerFonte('renderer', 'app.js');
 const main = lerFonte('main.js');
@@ -44,13 +45,15 @@ checa('passo() so move a caixa quando ela nao esta no fim (custo constante)', /i
 checa('erro fica a vista mesmo recolhido (css)', lerFonte('renderer', 'style.css').includes('.passos.recolhido .passo.erro{display:flex}'));
 
 // --- imagens do resultado da ferramenta (main) ---
-const ctxM = { ...globaisFalsos(), console };
+const ctxM = { ...globaisFalsos(), console, resultadoFerramenta };
 vm.createContext(ctxM);
 vm.runInContext('const LIM_IMG_PASSO = 3 * 1024 * 1024;\n' + pegarBloco(main, 'function imagensDoResultado(', 'imagensDoResultado'), ctxM);
-const png = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
-checa('bloco de imagem base64 vira {mime, dados}', JSON.stringify(ctxM.imagensDoResultado([{ type: 'text', text: 'x' }, png])) === '[{"mime":"image/png","dados":"AAAA"}]');
+const dadosPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aR4cAAAAASUVORK5CYII=';
+const png = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: dadosPng } };
+checa('bloco de imagem base64 vira {mime, dados}', JSON.stringify(ctxM.imagensDoResultado([{ type: 'text', text: 'x' }, png])) === JSON.stringify([{ mime: 'image/png', dados: dadosPng }]));
 checa('texto puro nao rende imagem', ctxM.imagensDoResultado('so texto').length === 0);
-checa('no maximo 4 por resultado', ctxM.imagensDoResultado([png, png, png, png, png, png]).length === 4);
+checa('no maximo 4 por resultado', ctxM.imagensDoResultado(Array.from({ length: 6 }, () => ({ ...png, source: { ...png.source } }))).length === 4);
+checa('base64 que não é PNG válido fica de fora', ctxM.imagensDoResultado([{ ...png, source: { ...png.source, data: 'AAAA' } }]).length === 0);
 checa('imagem enorme fica de fora', ctxM.imagensDoResultado([{ type: 'image', source: { type: 'base64', data: 'x'.repeat(3 * 1024 * 1024 + 1) } }]).length === 0);
 
 // --- o main entrega a PushNotification e o plano do Cockpit ---

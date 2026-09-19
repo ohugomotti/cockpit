@@ -1,0 +1,182 @@
+/* Identidade do site motti.ia.br. Origem e licencas: docs/MOTTI-IDENTIDADE.md. */
+/* A ação comum usa índigo; os botões dos motores preservam seu contraste próprio. */
+html[data-tema="motti"] .co-actions .co-primary { color: #ffffff; }
+@font-face {
+  font-family: "Archivo";
+  src: url("assets/motti/Archivo-var.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("assets/motti/IBMPlexSans-var.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("assets/motti/IBMPlexMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("assets/motti/IBMPlexMono-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+:root {
+  --motti-azul: #07182f;
+  --motti-estrutura: #0f2e57;
+  --motti-indigo: #2f55ff;
+  --motti-neutro: #eef1f6;
+  --motti-grafite: #10151c;
+  --motti-apoio: #8fa6c8;
+  --motti-display: "Archivo", "Segoe UI", sans-serif;
+  --sans: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+/* Apenas o novo tema troca os tokens. Os outros conservam suas paletas. */
+html[data-tema="motti"] {
+  color-scheme: dark;
+  --bg: var(--motti-azul);
+  --bg2: #0a203d;
+  --bg3: #0c2649;
+  --bg4: var(--motti-estrutura);
+  --act: var(--motti-azul);
+  --bg-flutua: var(--motti-azul);
+  --bg-foco: #091d37;
+  --fundo-fundo: var(--motti-grafite);
+  --line: #233b59;
+  --line2: #3d5678;
+  --fg: var(--motti-neutro);
+  --fg-dim: #b5c5dc;
+  --fg-fraco: #9bb1d0;
+  --fg-strong: #ffffff;
+  --hover: #eef1f608;
+  --hover2: #eef1f610;
+  --hover3: #eef1f618;
+  --puxador: var(--motti-neutro);
+  --sobre-accent: var(--motti-azul);
+  --borda-forte: #030c1a80;
+  --sombra1: #030c1a60;
+  --sombra2: #030c1a90;
+  --veu: #030c1a88;
+  --accent: var(--motti-indigo);
+  /* Cores dos motores e estados permanecem semanticas, distintas da marca. */
+  --green: #83c995;
+  --yellow: #e7c88b;
+  --red: #ff8d91;
+  --erro-fundo: #4c293b;
+  --rot-falha: #322537;
+  --rot-falha-borda: #805269;
+}
+
+.motti-lockup {
+  width: 48px;
+  height: 43px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.motti-lockup img {
+  display: block;
+  width: 29px;
+  height: 29px;
+  border-radius: 6px;
+}
+
+/* Pseudo-elemento sobrevive quando o renderizador atualiza a lista de abas. */
+#abasLocal::before {
+  content: "Motti.IA\A Cockpit";
+  white-space: pre;
+  flex: none;
+  margin-right: 4px;
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+  color: var(--fg-strong);
+  font-family: var(--motti-display);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.02em;
+}
+
+/* Quatro opcoes continuam legiveis mesmo na barra lateral estreita. */
+.temas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.tema-am.motti {
+  position: relative;
+  background: var(--motti-azul);
+  border-color: var(--motti-estrutura);
+  overflow: hidden;
+}
+.tema-am.motti::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 64%;
+  background: var(--motti-estrutura);
+}
+.tema-am.motti::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--motti-indigo);
+}
+
+html[data-tema="motti"] :is(.side-head, .aj-titulo, .msg-body h1, .msg-body h2, .msg-body h3) {
+  font-family: var(--motti-display);
+}
+html[data-tema="motti"] .msg-body a {
+  color: #a8bcff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+html[data-tema="motti"] #activitybar .act.active::before {
+  background: var(--motti-indigo);
+  width: 3px;
+}
+html[data-tema="motti"] .aba-local.on {
+  border-color: var(--motti-indigo);
+}
+html[data-tema="motti"] :is(button, a, select, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #a8bcff;
+  outline-offset: 2px;
+}
+html[data-tema="motti"] ::selection {
+  background: var(--motti-indigo);
+  color: #ffffff;
+}
+html[data-tema="motti"] ::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  background-clip: content-box;
+}
+html[data-tema="motti"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--motti-apoio);
+  background-clip: content-box;
+}
+
+@media (max-width: 600px) {
+  #abasLocal::before {
+    content: "Motti.IA";
+    font-size: 11px;
+    padding-right: 10px;
+    margin-right: 0;
+  }
+}

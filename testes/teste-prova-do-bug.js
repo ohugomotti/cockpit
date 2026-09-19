@@ -26,6 +26,7 @@ function rendererDe(pasta) {
     document: { createElement: () => ({ className: '', innerHTML: '', appendChild() {}, addEventListener() {} }) },
     mdSeguro: (t) => String(t),
     clearEmpty() {}, scroll() {}, linkarArquivos() {}, marcarLinksWeb() {}, botoesDeCodigo() {},
+    desenharBlocosExcalidraw() {},   // leva 41 (B5): o texto final tambem desenha bloco excalidraw
     svgMotor: () => '', $: () => ({ innerHTML: '', addEventListener() {} }),
   };
   vm.createContext(ctx);
@@ -37,6 +38,7 @@ function rendererDe(pasta) {
   if (appTxt.includes('function selarPassos(')) vm.runInContext(pegar(appTxt, 'function selarPassos(', 'selarPassos'), ctx);
   else vm.runInContext('function selarPassos(){}', ctx);
   vm.runInContext(pegar(appTxt, 'function textDelta(', 'textDelta'), ctx);
+  if (appTxt.includes('function metadadosDaMensagem(')) vm.runInContext(pegar(appTxt, 'function metadadosDaMensagem(', 'metadadosDaMensagem'), ctx);
   vm.runInContext(pegar(appTxt, 'function textFinal(', 'textFinal'), ctx);
   const P = { engine: 'codex', blocks: new Map(), hist: [], chat: {}, el: {} };
   return { ctx, P, bolhas };
@@ -72,7 +74,7 @@ console.log('codigo NOVO    ->', depois.bolhas, 'bolha(s) na tela,', depois.hist
 
 let erro = 0;
 if (antes && antes.bolhas !== 2) { console.log('FALHA: o codigo antigo deveria duplicar - o teste nao esta provando nada'); erro = 1; }
-else console.log('ok   o codigo antigo REALMENTE duplicava a resposta');
+else if (antes) console.log('ok   o codigo antigo REALMENTE duplicava a resposta');
 if (depois.bolhas !== 1) { console.log('FALHA: o codigo novo ainda duplica'); erro = 1; }
 else console.log('ok   o codigo novo mostra a resposta uma vez so');
 process.exit(erro);

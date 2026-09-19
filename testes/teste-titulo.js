@@ -39,7 +39,7 @@ console.log(NL + 'O que o titulo NUNCA pode ser');
 {
   // mensagem que e' so' link/caminho/codigo: melhor ficar sem nome do que
   // carimbar a URL crua - o titulo do Claude Code assume depois
-  const soLink = t('https://previdenciaaoquadrado.com/oficina-0926');
+  const soLink = t('https://exemplo.com/oficina');
   checa('link sozinho nao vira titulo', soLink === '', JSON.stringify(soLink));
 
   const soCaminho = t('C:\\Users\\hugom\\Projetos-claude\\nexfin-erp\\src\\main.js');

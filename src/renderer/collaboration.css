@@ -1,0 +1,50 @@
+/* botao "Debater" do painel: icone + rotulo (o rotulo some em painel estreito --
+   @container no fim do style.css). Rodando: .ativo com um ponto pulsando; a
+   largura nao pula porque o texto nao muda. */
+.p-debate{display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;color:var(--fg);padding:3px 8px;border:1px solid var(--line);border-radius:5px;flex:none;position:relative}
+.p-debate .ic{width:13px;height:13px;flex:none}
+.p-debate:hover,.p-debate.ativo{color:var(--fg-strong);border-color:var(--fg-dim);background:var(--hover2)}
+.pd-ponto{display:none;width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
+.p-debate.ativo .pd-ponto{display:inline-block;animation:co-pulsa 1.4s ease-in-out infinite}
+@keyframes co-pulsa{0%,100%{opacity:1}50%{opacity:.25}}
+/* acao principal do dialogo: cor NEUTRA do tema (o --accent e' o azul do Codex
+   e no jornal dava ~3,4:1). No tema motti a acao comum e' o indigo da marca
+   (motti-brand.css ja' pinta o texto de branco). */
+.co-dialog{--co-acao-fundo:var(--fg-strong);--co-acao-texto:var(--bg)}
+html[data-tema="motti"] .co-dialog{--co-acao-fundo:var(--motti-indigo,#2f55ff);--co-acao-texto:#ffffff}
+.co-dialog{margin:auto;width:min(1000px,calc(100vw - 32px));height:min(850px,calc(100vh - 32px));max-width:none;max-height:none;background:var(--bg);color:var(--fg);border:1px solid var(--line2);border-radius:12px;padding:0;box-shadow:0 20px 80px #0005;font:14px/1.5 var(--sans);overflow:hidden}
+.co-dialog[open]{display:flex;flex-direction:column}.co-dialog::backdrop{background:#020b18aa}.co-dialog-head{display:flex;justify-content:space-between;gap:20px;padding:22px 28px 16px;border-bottom:1px solid var(--line);flex:none}.co-dialog h2{font:600 22px/1.25 'Archivo',var(--sans);color:var(--fg-strong);margin:0 0 6px}.co-dialog-head p{font-size:13px;color:var(--fg-dim);max-width:660px}.co-close{align-self:flex-start;padding:5px 8px;border-radius:5px;border:1px solid var(--line)}
+.co-dialog-body{padding:18px 28px;overflow:auto;min-height:0;flex:1}.co-dialog input,.co-dialog select,.co-dialog textarea{font:inherit;color:var(--fg-strong);background:var(--bg2);border:1px solid var(--line2);border-radius:6px;padding:9px 10px;max-width:100%}.co-dialog select{min-width:0}.co-dialog textarea{display:block;width:100%;resize:vertical;min-height:58px;max-height:210px;user-select:text}.co-dialog textarea::placeholder{color:var(--fg-dim)}.co-dialog button:focus-visible,.co-dialog input:focus-visible,.co-dialog textarea:focus-visible,.co-dialog select:focus-visible,.p-debate:focus-visible{outline:2px solid var(--fg-strong);outline-offset:3px}.co-dialog [hidden]{display:none!important}
+.co-field{display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0;margin-bottom:12px}
+/* cartoes na ordem da fala, com o Inverter entre eles */
+.co-model-grid{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:center;margin:4px 0 14px}
+.co-participant{padding:12px 14px 2px;border:1px solid var(--line);border-top:3px solid var(--codex);border-radius:7px;min-width:0;align-self:stretch}.co-participant.claude{border-top-color:var(--claude)}
+.co-part-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.co-part-head strong{color:var(--fg-strong)}
+.co-selo{margin-left:auto;font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line2);color:var(--fg-dim)}
+.co-inverter{padding:7px 10px;border-radius:999px;border:1px solid var(--line2);font-size:12px;color:var(--fg);white-space:nowrap}.co-inverter:hover{border-color:var(--fg-dim);color:var(--fg-strong)}
+.co-logo{display:inline-flex;flex:none}.co-logo:empty{display:none}
+/* rodadas 1 · 2 · 3 lado a lado */
+.co-rodadas{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.co-rodada{width:36px;height:30px;border:1px solid var(--line2);border-radius:6px;font-size:13px;color:var(--fg)}
+.co-rodada.on{background:var(--co-acao-fundo);color:var(--co-acao-texto);border-color:var(--co-acao-fundo);font-weight:600}.co-rodadas .co-hint{margin:0 0 0 6px}
+.co-check{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px;font-size:13px;margin:10px 0}.co-check input{accent-color:var(--fg-strong);width:16px;height:16px;flex:none}.co-tam{font-size:12px;color:var(--fg-dim)}
+.co-hint{font-size:12px;color:var(--fg-dim);margin:8px 0}.co-max{margin-top:-4px}
+/* informacao (pasta que os dois leem, arquivos novos fora do Git, historico nao
+   salvo) != erro: fundo neutro, sem vermelho */
+.co-info,.co-aviso{font-size:12.5px;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--fg-dim);border-radius:6px;padding:8px 11px;margin:0 0 14px;overflow-wrap:anywhere}
+.co-aviso{border-left-color:var(--yellow)}
+.co-error{color:var(--red);font-size:13px;margin:12px 0;white-space:pre-wrap}.co-status{padding:10px 0;font-size:13px;color:var(--fg-strong)}
+.co-transcript{display:flex;flex-direction:column;gap:14px;overflow:auto;user-select:text}.co-transcript:empty{display:none}
+.co-vazio{margin:6px 0 0;padding:26px 16px;text-align:center;font-size:13px;color:var(--fg-dim);border:1px dashed var(--line2);border-radius:8px}
+/* rodando/depois: a configuracao some e a conversa ocupa a altura toda */
+.co-dialog.co-conversa .co-dialog-body{display:flex;flex-direction:column;overflow:hidden}.co-dialog.co-conversa .co-transcript{flex:1;min-height:0}
+.co-dialog.co-conversa .co-dialog-body>.co-field{flex:none;margin:12px 0 0}
+.co-message{padding:14px 18px;border:1px solid var(--line);border-left:3px solid var(--codex);border-radius:7px;background:var(--bg2)}.co-message.claude{border-left-color:var(--claude)}.co-message.user{border-left-color:var(--fg-dim)}.co-message header{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-bottom:10px}.co-message header strong{color:var(--fg-strong)}.co-message-model{font:11px var(--mono);color:var(--fg-dim)}.co-message-body{overflow-wrap:anywhere;user-select:text}.co-message-body p{margin:9px 0}.co-message-body h1,.co-message-body h2,.co-message-body h3{font-size:15px;line-height:1.35;color:var(--fg-strong);margin:14px 0 6px}.co-message-body ul,.co-message-body ol{padding-left:22px;margin:8px 0}.co-message-body pre{overflow:auto;max-width:100%;background:var(--bg);padding:12px;border-radius:5px}.co-message-body table{border-collapse:collapse;display:block;overflow:auto}.co-message-body td,.co-message-body th{padding:6px;border:1px solid var(--line)}.co-message-state{display:block;margin-top:6px;font-size:11.5px;color:var(--fg-dim)}
+.co-leu{font:11px/1.5 var(--mono);color:var(--fg-dim);margin:10px 0 0;overflow-wrap:anywhere}
+/* rodape: "Debates salvos" a esquerda, acoes a direita */
+.co-actions{padding:14px 28px;display:flex;flex-wrap:wrap;align-items:center;gap:9px;border-top:1px solid var(--line);background:var(--bg2);flex:none}.co-espaco{flex:1}.co-actions .co-salvos{max-width:280px;padding:7px 9px;font-size:12.5px}
+.co-actions button{padding:9px 14px;border-radius:6px;border:1px solid var(--line2);font-size:13px}.co-actions button:disabled{opacity:.5;cursor:wait}.co-actions .co-primary{background:var(--co-acao-fundo);color:var(--co-acao-texto);border-color:var(--co-acao-fundo);font-weight:600}.co-danger{color:var(--red)}
+.co-health-card{border:1px solid var(--line);border-radius:7px;padding:15px;margin:12px 0}.co-health-card h3{font-size:15px;color:var(--fg-strong);margin-bottom:8px}.co-health-stages{display:flex;gap:8px;flex-wrap:wrap;font-size:12px}.co-health-stages span{padding:3px 7px;border:1px solid var(--line);border-radius:4px}.co-health-stages .yes{color:var(--green)}.co-health-stages .unknown{color:var(--fg-dim)}
+.co-agents{display:flex;flex-direction:column;gap:2px}.co-agent{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-radius:7px;font-size:12px;overflow-wrap:anywhere}.co-agent:hover{background:var(--hover)}.co-agent strong{font-weight:500;display:flex;gap:8px;align-items:flex-start}.co-agent-logo{flex:none;display:inline-flex;margin-top:2px}.co-agent .co-agent-state,.co-agent>.co-hint,.co-agent>p{padding-left:22px}.co-agent .co-hint{margin:0}.co-agent-state{color:var(--fg-strong)}.co-tool-resources{padding:8px;font-size:12px;overflow-wrap:anywhere}.co-resource-link{color:var(--accent);text-decoration:underline;text-align:left}.co-tool-resources pre{white-space:pre-wrap;max-height:200px;overflow:auto}
+/* janela estreita (o dialogo mede a janela, nao o painel) */
+@media(max-width:700px){.co-dialog{width:calc(100vw - 12px);height:calc(100dvh - 12px);border-radius:8px}.co-dialog-head{padding:16px;gap:10px}.co-dialog h2{font-size:19px}.co-dialog-body{padding:14px 16px}.co-model-grid{grid-template-columns:1fr}.co-inverter{justify-self:center}.co-actions{padding:12px 16px}.co-actions .co-salvos{max-width:none;flex:1 1 100%}.co-espaco{display:none}.co-message{padding:12px}.co-dialog-head p{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.co-dialog *,.p-debate .pd-ponto{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
