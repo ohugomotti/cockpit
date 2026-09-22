@@ -194,7 +194,7 @@ test('cancelar Claude encerra apenas o processo criado para a discussão', async
 
 test('Claude que sai sem result falha e conserva diagnóstico stderr', async t => {
   const h = harness(t); const run = h.run('claude'); const rejected = assert.rejects(run.promise, /encerrou antes.*credencial indisponível/);
-  h.processes[0].stderr.write('credencial indisponível'); h.processes[0].emit('exit', 1);
+  h.processes[0].stderr.write('credencial indisponível'); h.processes[0].emit('close', 1);
   await rejected; assert.equal(h.stopped.length, 1);
 });
 

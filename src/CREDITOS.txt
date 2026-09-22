@@ -1,0 +1,8 @@
+Cockpit
+
+Código original: Homero Motti.
+Identidade visual: arquivos do projeto Cockpit, mantidos em sua forma original.
+
+A licença do código principal é MIT, conforme a identificação do projeto original.
+As bibliotecas e fontes incluídas mantêm suas respectivas licenças no aplicativo.
+As marcas dos motores de IA pertencem aos seus respectivos titulares.

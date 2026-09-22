@@ -104,7 +104,7 @@ test('link do login: o ConPTY move o cursor no lugar da quebra de linha e o link
 });
 
 /* ---------- janelaTerminal de verdade, num DOM de mentira ---------- */
-function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = true, confirma = true, erro } = {}) {
+function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = true, confirma = true, erro, aoFechar, opcoes, run } = {}) {
   const els = new Map();
   const el = (sel) => {
     if (!els.has(sel)) {
@@ -134,7 +134,8 @@ function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = 
   Terminal.prototype.attachCustomKeyEventHandler = function (fn) { this._tecla = fn; };
   const api = {
     termInput: (o) => log.push(['input', o.data]), termResize() {}, openUrl() {},
-    termKill: () => Promise.resolve({ ok: true }), termRun: () => Promise.resolve({ ok: true }),
+    termKill: () => Promise.resolve({ ok: true }), termRun: run || (() => Promise.resolve({ ok: true })),
+    onTermEvent: fn => { ctx.eventoTerminal = fn; },
     textoCopiado: () => { log.push(['leu']); return Promise.resolve(erro ? { texto: '', erro } : { texto: copiado }); },
     copiarTexto: (t) => { log.push(['copiou', t]); return Promise.resolve(true); },
   };
@@ -148,8 +149,12 @@ function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = 
   vm.runInContext(pegarBloco(APP, 'function fecharTerminalEmSilencio('), ctx);
   vm.runInContext(pegarBloco(APP, 'function ajustarTerminal('), ctx);
   vm.runInContext(pegarBloco(APP, 'function janelaTerminal('), ctx);
-  ctx.janelaTerminal({ id: 'p1', engine: 'claude', el: {} }, 'ssh -t hugo@vps "claude auth login"', 'Entrar');
-  return { ctx, el, log, term: termo };
+  const listener = APP.slice(APP.indexOf('window.api.onTermEvent('));
+  vm.runInContext(listener.slice(0, listener.indexOf('\n});') + 4), ctx);
+  const painel = { id: 'p1', engine: 'claude', el: {} };
+  ctx.panes.set(painel.id, painel);
+  ctx.janelaTerminal(painel, 'ssh -t hugo@vps "claude auth login"', 'Entrar', aoFechar, opcoes);
+  return { ctx, el, log, term: termo, painel };
 }
 const eventoTecla = (o) => { const e = tecla(o); e.prevenido = 0; e.preventDefault = () => { e.prevenido++; }; e.stopPropagation = () => {}; return e; };
 
@@ -341,4 +346,32 @@ test('auditoria 6: sem texto copiado (imagem, arquivo) avisa em vez de ficar cal
     assert.equal(p.el('.term-aviso').textContent, 'Não tem texto copiado pra colar.');
     assert.equal(p.log.some((x) => x[0] === 'paste'), false);
   }
+});
+
+
+test('terminal de conta: fechar antes do exit informa cancelamento sem código de sucesso', () => {
+  const fechamentos = [];
+  const h = palco({ aoFechar: fim => fechamentos.push(fim) });
+  h.el('#tmFecha').onclick(); h.el('#tmFecha').onclick();
+  assert.equal(fechamentos.length, 1); assert.equal(fechamentos[0].code, null); assert.equal(fechamentos[0].cancelled, true);
+});
+test('terminal de conta: exit conserva código real e informa término para verificação', () => {
+  const fins = [], fechamentos = [];
+  const h = palco({ aoFechar: fim => fechamentos.push(fim), opcoes: { onExit: fim => fins.push(fim) } });
+  const id = [...h.ctx.termsVivos.keys()][0];
+  h.ctx.eventoTerminal({ id, kind: 'exit', code: 0 });
+  assert.equal(fins.length, 1); assert.equal(fins[0].code, 0); assert.equal(fins[0].cancelled, false);
+  h.el('#tmFecha').onclick(); assert.equal(fechamentos[0].code, 0); assert.equal(fechamentos[0].cancelled, false);
+});
+test('terminal de conta: Cancelar prevalece sobre exit zero posterior e descarte silencioso é informado', () => {
+  const fins = []; let descartes = 0;
+  const h = palco({ opcoes: { onExit: fim => fins.push(fim), onDiscard: () => descartes++ } });
+  const id = [...h.ctx.termsVivos.keys()][0];
+  h.el('#tmCancela').onclick(); h.ctx.eventoTerminal({ id, kind: 'exit', code: 0 });
+  assert.equal(fins[0].cancelled, true);
+  h.ctx.fecharTerminalEmSilencio(h.painel); assert.equal(descartes, 1);
+});
+test('terminal de conta: falha ao iniciar solta o fluxo sem inventar exit zero', async () => {
+  const fins = []; palco({ run: () => Promise.reject(new Error('FALHA_FICTICIA')), opcoes: { onExit: fim => fins.push(fim) } });
+  await tique(); assert.equal(fins.length, 1); assert.equal(fins[0].code, null); assert.equal(fins[0].error, 'FALHA_FICTICIA');
 });

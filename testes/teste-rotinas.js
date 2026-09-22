@@ -340,6 +340,10 @@ const SAIDA_BOA = JSON.stringify([
   const caixaRot = new El('div');
   const viewRot = new El('div');
   const sidebar = new El('div');
+  sidebar.appendChild(viewRot); sidebar.contains = node => node === viewRot;
+  viewRot.isConnected = true;
+  viewRot.closest = sel => sel === '.hidden,[hidden]' && [viewRot, sidebar].some(e => e.hidden || e.classList.contains('hidden')) ? sidebar : null;
+  viewRot.getClientRects = () => viewRot.closest('.hidden,[hidden]') ? [] : [{}];
   const porSeletor = { '#rotinas': caixaRot, '.side-view[data-view="rotinas"]': viewRot, '#sidebar': sidebar };
 
   let perguntou = 0, respostaDoConfirm = true;
@@ -371,7 +375,7 @@ const SAIDA_BOA = JSON.stringify([
   const iniA = app.indexOf('let rotinasCache = ');
   const fimA = app.indexOf('/* ===================== ENTRADA SEM DIGITAR', iniA);
   checa('tela: o bloco das rotinas esta no app.js', iniA > 0 && fimA > iniA);
-  vm.runInContext(app.slice(iniA, fimA), ctxApp);
+  vm.runInContext(pegarBloco(app, 'function viewLateralVisivel(', 'viewLateralVisivel') + '\n' + app.slice(iniA, fimA), ctxApp);
 
   /* ---- (h) texto do sistema por textContent ---- */
   const veneno = '<img src=x onerror="alert(1)"> & "aspas"';

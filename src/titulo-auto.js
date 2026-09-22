@@ -23,6 +23,7 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { StringDecoder } = require('node:string_decoder');
 
 const MODELO = 'claude-haiku-4-5-20251001';
 const LIMITE_TEXTO = 4000;        // a mensagem vai cortada: pro nome, o comeco basta
@@ -136,16 +137,18 @@ function rodarUmaVez(texto, dep, semSafeMode) {
         { cwd: dep.cwd || os.tmpdir(), env: dep.env ? dep.env() : process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch (e) { return resolve({ titulo: '', motivo: 'sem-claude', ms: Date.now() - t0 }); }
     let out = '', err = '', acabou = false;
+    const stdoutDecoder = new StringDecoder('utf8'), stderrDecoder = new StringDecoder('utf8');
     const fim = (r) => { if (acabou) return; acabou = true; clearTimeout(prazo); resolve({ ...r, ms: Date.now() - t0 }); };
     const prazo = setTimeout(() => {
       try { (dep.matar || ((p) => p.kill()))(proc); } catch {}
       fim({ titulo: '', motivo: 'prazo' });
     }, dep.prazoMs || PRAZO_MS);
     proc.on('error', () => fim({ titulo: '', motivo: 'sem-claude' }));
-    if (proc.stdout) proc.stdout.on('data', (d) => { if (out.length < 400000) out += d.toString('utf8'); });
-    if (proc.stderr) proc.stderr.on('data', (d) => { if (err.length < 20000) err += d.toString('utf8'); });
+    if (proc.stdout) proc.stdout.on('data', (d) => { if (out.length < 400000) out += stdoutDecoder.write(Buffer.isBuffer(d) ? d : Buffer.from(d)); });
+    if (proc.stderr) proc.stderr.on('data', (d) => { if (err.length < 20000) err += stderrDecoder.write(Buffer.isBuffer(d) ? d : Buffer.from(d)); });
     proc.on('close', (code) => {
       if (acabou) return;
+      out += stdoutDecoder.end(); err += stderrDecoder.end();
       if (!semSafeMode && /unknown option[^\n]*safe-mode/i.test(err + out)) return fim({ titulo: '', motivo: 'sem-safe-mode' });
       const lido = lerSaida(out);
       if (lido.erro) return fim({ titulo: '', motivo: lido.erro === 'vazio' && code ? 'codigo-' + code : lido.erro });

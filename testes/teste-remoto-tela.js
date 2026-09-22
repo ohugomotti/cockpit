@@ -53,6 +53,10 @@ class El {
   addEventListener(n, f) { (this.eventos[n] = this.eventos[n] || []).push(f); }
   async disparar(n, ev) { for (const f of (this.eventos[n] || [])) await f(ev || {}); }
   scrollIntoView() {}
+  focus(options) { this.focusOptions = options; }
+  contains(node) { for (let p = node; p; p = p.pai) if (p === this) return true; return false; }
+  closest(sel) { for (let p = this; p; p = p.pai) { if (sel === '.hidden,[hidden]' && (p.hidden || p.classList.contains('hidden'))) return p; } return null; }
+  getClientRects() { return this.closest('.hidden,[hidden]') ? [] : [{}]; }
   // busca de mentira: cria o filho sob demanda so' pra o codigo poder escrever nele
   buscar(sel) {
     if (!this._achados.has(sel)) this._achados.set(sel, new El('span'));
@@ -177,10 +181,16 @@ async function arvore() {
   console.log(NL + '2) o "expanded" tem namespace por alvo');
   const k1 = leia("chaveAberta({ usuario: 'hugo', host: 'vps1' }, '/home/hugo/x')");
   const k2 = leia("chaveAberta({ usuario: 'hugo', host: 'vps2' }, '/home/hugo/x')");
+  const kp = leia("chaveAberta({ usuario: 'hugo', host: 'vps1', porta: 2222 }, '/home/hugo/x')");
+  const kc = leia("chaveAberta({ usuario: 'hugo', host: 'vps1', chave: 'outra-chave' }, '/home/hugo/x')");
   const kl = leia("chaveAberta(null, '/home/hugo/x')");
   checa('b) o mesmo caminho em dois servidores nao e a mesma chave', k1 !== k2, k1 + ' vs ' + k2);
   checa('b) e nenhum dos dois e o deste PC', k1 !== kl && kl.startsWith('local|'), kl);
-  checa('b) a chave leva usuario@host na frente', k1 === 'hugo@vps1|/home/hugo/x', k1);
+  checa('b) a chave leva usuario@host, porta padrao, chave SSH e caminho', k1 === 'hugo@vps1:22||/home/hugo/x', k1);
+  checa('b) o mesmo host em outra porta e outro destino', kp === 'hugo@vps1:2222||/home/hugo/x' && kp !== k1, kp);
+  checa('b) outra chave SSH tambem isola a expansao', kc === 'hugo@vps1:22|outra-chave|/home/hugo/x' && kc !== k1, kc);
+  checa('b) porta 22 explicita e implicita identificam o mesmo destino',
+    leia("chaveAberta({ usuario: 'hugo', host: 'vps1', porta: 22 }, '/home/hugo/x')") === k1);
 
   // prova de verdade: pasta aberta no vps1 nao pode nascer aberta no vps2
   leia('expanded.clear()');
@@ -199,6 +209,16 @@ async function arvore() {
   await ctxA.loadTree('/home/hugo', { usuario: 'hugo', host: 'vps1' });
   checa('b) no servidor certo ela nasce aberta (raiz + a pasta lembrada)',
     chamadas.length === 2 && chamadas[1].dir === '/home/hugo/app', chamadas.length + ' chamadas');
+
+  chamadas.length = 0;
+  await ctxA.loadTree('/home/hugo', { usuario: 'hugo', host: 'vps1', porta: 2222 });
+  checa('b) mesmo servidor em outra porta nao herda a pasta aberta',
+    chamadas.length === 1 && chamadas[0].remoto.porta === 2222, JSON.stringify(chamadas));
+
+  chamadas.length = 0;
+  await ctxA.loadTree('/home/hugo', { usuario: 'hugo', host: 'vps1', chave: 'outra-chave' });
+  checa('b) outra chave SSH nao herda a pasta aberta',
+    chamadas.length === 1 && chamadas[0].remoto.chave === 'outra-chave', JSON.stringify(chamadas));
 
   chamadas.length = 0;
   await ctxA.loadTree('/home/hugo', null);
@@ -253,7 +273,7 @@ async function arvore() {
   leia('expanded.clear()');
   const alvoA = { usuario: 'hugo', host: 'vpsA', chave: 'k' };
   const alvoB = { usuario: 'hugo', host: 'vpsB', chave: 'k' };
-  leia("expanded.add('hugo@vpsA|/A/sub')");   // a subpasta ja' estava aberta no A
+  leia("expanded.add(chaveAberta({ usuario: 'hugo', host: 'vpsA', chave: 'k' }, '/A/sub'))");   // a subpasta ja' estava aberta no A
   respostaLista = (dir) => {
     if (dir === '/A') return { entries: [
       { name: 'sub', dir: true, path: '/A/sub' },
@@ -273,6 +293,7 @@ async function arvore() {
   };
   await ctxA.loadTree('/A', alvoA);
   antesDeResponder = null;
+  checa('(3) a troca de servidor ocorreu durante a leitura da subpasta', trocou);
   checa('(3) a arvore fica SO com o que e do servidor em foco',
     nosPintados(caixaTree).join(',') === 'SO-DO-B.md', nosPintados(caixaTree).join(','));
   checa('(3) o laco do level reconfere o gen a cada volta, nao so na entrada',
@@ -303,7 +324,7 @@ async function arvore() {
   checa('(4) resposta atrasada nao pinta filho debaixo de pasta fechada',
     kids.filhos.length === 0 && kids.innerHTML === '', kids.filhos.length + ' filhos / html=' + JSON.stringify(kids.innerHTML));
   checa('(4) e a seta fica coerente com o estado (fechada)',
-    /chevron-right/.test(noPasta.buscar('.chev').innerHTML) && !leia("expanded.has('hugo@vpsA|/A/sub')"),
+    /chevron-right/.test(noPasta.buscar('.chev').innerHTML) && !leia("expanded.has(chaveAberta({ usuario: 'hugo', host: 'vpsA', chave: 'k' }, '/A/sub'))"),
     noPasta.buscar('.chev').innerHTML);
 }
 
@@ -325,6 +346,7 @@ async function umaArvorePorLote() {
      arvore esta' NA TELA (achado 4). Nascem visiveis, como estavam antes. */
   const barraLateral = new El('div');
   const viewArquivos = new El('div');
+  barraLateral.appendChild(viewArquivos);
   const nomeProj = new El('span');
   const tituloBarra = new El('span');
   const porSeletorF = {
@@ -335,6 +357,7 @@ async function umaArvorePorLote() {
   };
   const ctxF = {
     ...globaisFalsos(), console,
+    window: {},   // a camada nova e opcional; a janela do renderer sempre existe
     document: documentoFalso,
     $: (sel, raiz) => (raiz && raiz.buscar ? raiz.buscar(sel) : (porSeletorF[sel] || new El('div'))),
     loadTree: (dir, remoto) => { idas.push({ dir, remoto: remoto || null }); },
@@ -350,6 +373,7 @@ async function umaArvorePorLote() {
      em chamadas separadas uma funcao nao enxergaria a variavel da outra. */
   vm.runInContext(
     'let focusPane = null;\nconst panes = new Map();\n'
+    + pegarBloco(app, 'function irAtePainel(', 'irAtePainel') + '\n'
     + app.slice(app.indexOf('let montagemAdiada = 0;'), app.indexOf('function montarColunas() {'))
     + app.slice(app.indexOf('/* A barra da esquerda (arvore + titulo do projeto)'), app.indexOf('function soltarTerminaisMortos('))
     + '\nthis.setFocus = setFocus; this.comMontagemAdiada = comMontagemAdiada; this.panes = panes;'
@@ -599,7 +623,9 @@ async function janelinhaDoPainel() {
    ===================================================================== */
 function abertura() {
   console.log(NL + '8) achado 1: painel da tela de abertura nasce na pasta da ABA');
-  const linha = (app.match(/for \(const m of quais\) newPane\([^\n]*\);/) || [''])[0];
+  // o laco ja' foi 'of quais' e hoje e' 'of [...quais].reverse()' (sessao nova na
+  // esquerda). O que importa aqui e' o cwd, entao o regex nao prende a forma do laco.
+  const linha = (app.match(/for \(const m of .*?quais.*?\) newPane\([^\n]*\);/) || [''])[0];
   checa('(1a) a linha do newPane da tela de abertura existe', /newPane\(/.test(linha), linha);
 
   const rodar = (abaAtiva) => {

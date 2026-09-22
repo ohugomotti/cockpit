@@ -1,0 +1,259 @@
+/* ============================================================================
+   cockpit-anim.css — camada de movimento do Cockpit (v2, alvo 1.1.1)
+   21/09/2026. Referencia: catalogo 21st.dev (mapa no README.md desta pasta).
+
+   O QUE ESTA CAMADA FAZ: acrescenta movimento. Nao muda cor, tamanho, fonte,
+   espacamento nem posicao de nada parado na tela. Se voce tirar o <link>, o
+   Cockpit volta exatamente ao que era.
+
+   REGRAS (tiradas do proprio codigo do Cockpit):
+   1. So transform e opacity. O comentario do ck-halo antigo em cockpit-ui.css
+      conta o motivo: animar box-shadow repintava 20 selos da Torre 60 vezes por
+      segundo. Sombra, filter e cor de fundo em lista ficaram de fora.
+   2. Loop infinito so onde a maquina esta trabalhando, um elemento por painel.
+   3. O plano e RECRIADO a cada atualizacao (replaceChildren em CockpitUI.plan).
+      Por isso animacao de conclusao NAO mora no CSS de estado: ela e disparada
+      pelo cockpit-anim.js, que compara o antes e o depois e so anima o que
+      mudou de verdade. Sem isso a barra inteira piscaria a cada passo.
+   4. prefers-reduced-motion: reduce mata tudo, no fim do arquivo.
+   5. Tokens do tema, nunca cor fixa: os 4 temas continuam valendo.
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   1. A BARRA DO PLANO ENTRANDO
+   Quando o turno ganha um plano, a barra aparece de uma vez e empurra o campo
+   de escrita. 180 ms de fade + 3 px de subida tiram o solavanco. Roda uma vez:
+   a barra e criada uma vez por turno (o replaceChildren troca so os filhos).
+   --------------------------------------------------------------------------- */
+@keyframes mv-plano-entra {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+.ck-plan { animation: mv-plano-entra .18s ease-out; }
+
+/* ---------------------------------------------------------------------------
+   2. O SEGMENTO ATUAL RESPIRA
+   Hoje o segmento em andamento e azul parado, do lado dos cinzas ja feitos: de
+   relance a barra parece congelada mesmo quando a maquina esta trabalhando.
+   A respiracao e em opacity (1 -> .5), nao em cor: a paleta nao muda.
+   E o unico loop da barra, porque so existe um segmento current.
+   --------------------------------------------------------------------------- */
+@keyframes mv-respira {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .5; }
+}
+.ck-plan-segment.current { animation: mv-respira 1.8s ease-in-out infinite; }
+
+/* ---------------------------------------------------------------------------
+   3. SEGMENTO QUE ACABOU DE CONCLUIR — pop de 320 ms
+   A classe .mv-feito e posta pelo JS so no segmento que mudou nesta
+   atualizacao. scaleY, nao cor: o verde/cinza continua o mesmo.
+   --------------------------------------------------------------------------- */
+@keyframes mv-pop-seg {
+  0%   { transform: scaleY(1); }
+  40%  { transform: scaleY(2.1); }
+  100% { transform: scaleY(1); }
+}
+.ck-plan-segment.mv-feito { animation: mv-pop-seg .32s cubic-bezier(.2,.9,.3,1); }
+
+/* ---------------------------------------------------------------------------
+   4. O CONTADOR X/Y QUE MUDOU
+   Movimento curto de baixo pra cima, sem trocar a cor: o numero continua com
+   o mesmo --ink-faint de sempre, so avisa que virou.
+   --------------------------------------------------------------------------- */
+@keyframes mv-sobe {
+  0%   { transform: translateY(2px); opacity: .35; }
+  100% { transform: none; opacity: 1; }
+}
+.ck-plan-total.mv-flash,
+.pl-conta.mv-flash { animation: mv-sobe .3s ease-out; }
+
+/* ---------------------------------------------------------------------------
+   5. O TEXTO DO PASSO ATUAL TROCANDO
+   Sem isto, a frase muda de repente e voce nao percebe que a maquina passou de
+   fase. Com 160 ms de fade curto o olho pega a troca. Tambem so quando muda.
+   --------------------------------------------------------------------------- */
+@keyframes mv-troca-txt {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: none; }
+}
+.ck-plan-current.mv-troca { animation: mv-troca-txt .16s ease-out; }
+
+/* ---------------------------------------------------------------------------
+   6. A CAMADA "PLANO COMPLETO" — itens em cascata
+   Aqui pode ser CSS puro sem risco: a camada e montada do zero a cada abertura,
+   entao a cascata roda uma vez por abertura. So os 9 primeiros tem atraso; o
+   resto entra junto pra lista longa nao virar espera.
+   --------------------------------------------------------------------------- */
+@keyframes mv-entra-item {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+.ck-plan-item { animation: mv-entra-item .18s ease-out both; }
+.ck-plan-item:nth-child(1) { animation-delay: 0ms; }
+.ck-plan-item:nth-child(2) { animation-delay: 26ms; }
+.ck-plan-item:nth-child(3) { animation-delay: 52ms; }
+.ck-plan-item:nth-child(4) { animation-delay: 78ms; }
+.ck-plan-item:nth-child(5) { animation-delay: 104ms; }
+.ck-plan-item:nth-child(6) { animation-delay: 130ms; }
+.ck-plan-item:nth-child(7) { animation-delay: 156ms; }
+.ck-plan-item:nth-child(8) { animation-delay: 182ms; }
+.ck-plan-item:nth-child(9) { animation-delay: 208ms; }
+.ck-plan-item:nth-child(n+10) { animation-delay: 224ms; }
+
+/* ---------------------------------------------------------------------------
+   7. RESPOSTA AO TOQUE nos botoes de decisao
+   Enviar e o par sim/nao da pergunta. Sobe 1 px no hover, afunda no clique.
+   Nenhuma cor, borda ou sombra muda — so a sensacao de que o clique pegou.
+   --------------------------------------------------------------------------- */
+.p-send, .pp-yes, .pp-no {
+  transition: transform .12s ease;
+}
+.p-send:hover, .pp-yes:hover, .pp-no:hover { transform: translateY(-1px); }
+.p-send:active, .pp-yes:active, .pp-no:active { transform: translateY(0) scale(.97); }
+
+/* ---------------------------------------------------------------------------
+   8. CAMINHO LEGADO (.pl-*)
+   O Cockpit cai nele quando window.CockpitUI nao existe (app.js -> desenharPlano).
+   Mesmas regras, mesma disciplina: conclusao so anima com a classe do JS.
+   O line-through nativo do .pl-feito NAO e mexido — o visual continua igual.
+   --------------------------------------------------------------------------- */
+@keyframes mv-pop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+.pl-fazendo .pl-pt { animation: mv-respira 1.8s ease-in-out infinite; }
+.pl-item.mv-feito .pl-pt { animation: mv-pop .32s cubic-bezier(.2,.9,.3,1); }
+.pl-item.mv-novo { animation: mv-entra-item .18s ease-out both; }
+
+/* ---------------------------------------------------------------------------
+   9. UTILITARIOS — prontos, nao aplicados em nada hoje
+   Ficam aqui pra quando quisermos ligar, um de cada vez, com medida antes e
+   depois. Nenhum deles toca em elemento existente sozinho.
+     .mv-orb(.pensando|.escrevendo|.espera|.feito)  ponto de atividade
+     .mv-tempo                                      numero de tempo estavel
+     .mv-esqueleto / .mv-troca                      carregar sem salto
+   --------------------------------------------------------------------------- */
+.mv-orb {
+  position: relative;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--working, var(--fg-fraco));
+  display: inline-block; flex: none;
+}
+.mv-orb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid currentColor; opacity: 0; transform: scale(1);
+}
+.mv-orb.pensando { background: var(--primary, var(--accent)); color: var(--primary, var(--accent)); }
+.mv-orb.pensando::after { animation: mv-anel 1.4s ease-out infinite; }
+@keyframes mv-anel {
+  0%   { opacity: .8; transform: scale(1); }
+  100% { opacity: 0;  transform: scale(2.6); }
+}
+.mv-orb.escrevendo { background: var(--primary, var(--accent)); animation: mv-respira .7s ease-in-out infinite; }
+.mv-orb.espera { background: var(--attention, var(--yellow)); }
+.mv-orb.feito  { background: var(--done, var(--green)); animation: mv-pop .32s ease-out; }
+
+/* .mv-brilha (shimmer de texto) ficou FORA do app de proposito: ele anima
+   background-position, que repinta a caixa a cada quadro — a regua do projeto
+   (test/animacoes-estado.test.js) so aceita transform e opacity. O codigo dele
+   esta no README da pasta cockpit-animacoes, se um dia valer a pena medir. */
+
+.mv-tempo { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.mv-tempo .mv-sep { animation: mv-pisca 1s steps(1) infinite; }
+@keyframes mv-pisca { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .25; } }
+
+.mv-esqueleto {
+  position: relative; overflow: hidden; border-radius: 4px; height: 10px;
+  background: var(--high, var(--bg4));
+}
+.mv-esqueleto::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--hover, #ffffff14), transparent);
+  transform: translateX(-100%);
+  animation: mv-varre 1.25s ease-in-out infinite;
+}
+@keyframes mv-varre { to { transform: translateX(100%); } }
+.mv-troca { animation: mv-surge .2s ease-out both; }
+@keyframes mv-surge { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------------------------------------------------------------------------
+   10. A SESSAO NOVA CHEGANDO
+   Ela passou a nascer na ponta ESQUERDA da esteira (app.js), onde o olho ja
+   esta — antes abria na ponta direita, muitas vezes fora da tela. A entrada e
+   um fade curto e mais nada: o guia de marca do Cockpit diz "nada entra
+   deslizando", e ele continua valendo. A classe e posta depois do
+   montarColunas (que reparenta o elemento) e sai sozinha em 420 ms.
+   --------------------------------------------------------------------------- */
+@keyframes mv-nasce {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.pane.mv-nasce { animation: mv-nasce .22s ease-out; }
+
+/* ---------------------------------------------------------------------------
+   11. HOVER E FOCO EM 120 ms — o tempo que o guia pede
+   "Hover muda fundo em 120 ms" esta escrito no guia de marca e cobrado em
+   test/animacoes-estado.test.js. O app ja troca o fundo; o que faltava era
+   tirar o salto. Vale para as linhas da Torre, para os itens de menu e para o
+   painel que ganha o foco (que agora tambem acende a linha azul em volta).
+   --------------------------------------------------------------------------- */
+/* so background-color. outline-color ficou de fora de proposito: a linha azul
+   do foco vem de var(--focus), e transicionar uma cor que sai de variavel
+   CONGELA o valor antigo — trocando de tema, a linha continuava no azul do
+   tema anterior (medido em 22/09: --focus virava #2a4ad8 e o outline seguia
+   #8aa2ff). Sem a transicao, ela acompanha o tema na hora. */
+.ck-session,
+.ck-group-head,
+.pane { transition: background-color .12s ease; }
+
+/* ---------------------------------------------------------------------------
+   12. OS BOTOES DE ICONE RESPONDEM AO CLIQUE
+   A barra de baixo e o cabecalho sao quase todos icones sem rotulo. Sem
+   resposta ao toque, clicar neles e um ato de fe: nada confirma que pegou.
+   Um afundamento de 6% por 120 ms resolve, sem mexer em cor nem em tamanho.
+   --------------------------------------------------------------------------- */
+.cmp-bar button,
+.p-plus, .p-slash, .p-mic, .p-fluxo,
+.cont-chip, .sug-chip { transition: transform .12s ease; }
+.cmp-bar button:active,
+.p-plus:active, .p-slash:active, .p-mic:active, .p-fluxo:active,
+.cont-chip:active, .sug-chip:active { transform: scale(.94); }
+
+/* ============================================================================
+   GUARDA FINAL — quem pediu menos movimento recebe menos movimento.
+   Todo loop para. A informacao continua: cor, contagem e estado nao dependem
+   de animacao nenhuma pra serem lidos.
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .ck-plan,
+  .ck-plan-segment.current,
+  .ck-plan-segment.mv-feito,
+  .ck-plan-total.mv-flash,
+  .pl-conta.mv-flash,
+  .ck-plan-current.mv-troca,
+  .ck-plan-item,
+  .pl-fazendo .pl-pt,
+  .pl-item.mv-feito .pl-pt,
+  .pl-item.mv-novo,
+  .mv-orb.pensando::after,
+  .mv-orb.escrevendo,
+  .mv-orb.feito,
+  .mv-tempo .mv-sep,
+  .mv-esqueleto::after,
+  .mv-troca,
+  .pane.mv-nasce {
+    animation: none !important;
+  }
+  .ck-session, .ck-group-head, .pane { transition: none; }
+  .cmp-bar button,
+  .p-plus, .p-slash, .p-mic, .p-fluxo,
+  .cont-chip, .sug-chip { transition: none; }
+  .cmp-bar button:active,
+  .p-plus:active, .p-slash:active, .p-mic:active, .p-fluxo:active,
+  .cont-chip:active, .sug-chip:active { transform: none; }
+  .p-send, .pp-yes, .pp-no { transition: none; }
+  .p-send:hover, .pp-yes:hover, .pp-no:hover,
+  .p-send:active, .pp-yes:active, .pp-no:active { transform: none; }
+}

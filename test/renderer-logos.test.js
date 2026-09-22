@@ -104,7 +104,7 @@ test('cabecalho de cada coluna de conversas tem lugar pro logo do motor', () => 
 test('conta, "Entrar no X" e a paleta "/" mostram o logo do motor', () => {
   const blocoDe = (ini) => { const i = app.indexOf(ini); return app.slice(i, app.indexOf('\n}\n', i)); };
   assert.match(blocoDe('async function pintarCartaoConta('), /ct-entrar">' \+ marcaDoMotor\(engine\)/);
-  assert.match(blocoDe('async function janelaConta('), /mo-tit">' \+ marcaDoMotor\(P\.engine/);
+  assert.match(blocoDe('async function janelaConta('), /CockpitUI\.accountLayer\(P\.engine, abaPorId\(P\.abaId\)\)/);
   assert.match(blocoDe('async function menuContas('), /marcaDoMotor\(engine/);
   assert.match(blocoDe('async function menuSkills('), /nome: 'Trocar de motor', tag: nomeDoMotor\(P\.engine\), tagLogo: P\.engine/);
   assert.match(blocoDe('function elItem('), /logo \? marcaDoMotor\(logo\)/);

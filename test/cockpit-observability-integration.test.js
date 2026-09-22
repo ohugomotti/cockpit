@@ -14,6 +14,7 @@ function harness({ ativo = false, falhaCli = false, falhaRpc = false } = {}) {
     observabilidade: criarObservabilidade((paneId, kind, data) => events.push({ paneId, kind, ...data })),
     ipcMain: { handle: (name, fn) => { handlers[name] = fn; } },
     claudeRemoto: new Map(),
+    remotePaneTargets: new Map(),
     codex: { pronto: true, paneToThread: new Map([[0, 't1']]), paneTurn: new Map(ativo ? [[0, 'turn']] : []) },
     ehCli: () => false, claudeBin: () => 'claude', alvoDoTransporte: () => 'stdio',
     rodar: async (bin, args) => {
@@ -72,6 +73,25 @@ test('sem painel conectado, falha CLI e estado remoto não viram sucesso', async
   h.claudeRemoto.set(0, {}); h.calls.length = 0;
   const remoto = await h.handlers['mcp:diagnostico'](null, { engine: 'claude', paneId: 0 });
   assert.equal(remoto.itens.length, 0); assert.equal(h.calls.length, 0);
+});
+
+test('diagnóstico e reload de painel remoto não consultam catálogo nem runtime local', async () => {
+  for (const engine of ['codex', 'gemini', 'grok', 'acp']) {
+    const h = harness();
+    const remoto = { host: 'servidor-qa', usuario: 'teste', porta: 2222 };
+    h.remotePaneTargets.set(0, { engine, remoto });
+    const d = await h.handlers['mcp:diagnostico'](null, { engine, paneId: 0 });
+    assert.equal(d.itens.length, 0);
+    assert.match(d.avisos.join(' '), /destino remoto/);
+    const r = await h.handlers['mcp:recarregar'](null, { engine, paneId: 0 });
+    assert.match(r.error, /painel remoto/);
+    assert.equal(h.calls.length, 0, engine + ': nenhum processo ou RPC local');
+    h.remotePaneTargets.clear();
+    const explicito = await h.handlers['mcp:diagnostico'](null, { engine, remoto });
+    assert.equal(explicito.itens.length, 0);
+    assert.match((await h.handlers['mcp:recarregar'](null, { engine, remoto })).error, /painel remoto/);
+    assert.equal(h.calls.length, 0, engine + ': destino explícito também fica isolado');
+  }
 });
 
 test('tool_result Claude usa extração rica real do main com o shape de imagens existente', () => {

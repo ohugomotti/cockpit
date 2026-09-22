@@ -158,7 +158,7 @@ function ctxModo(extra) {
   };
   vm.createContext(ctx);
   vm.runInContext([constBloco('MODOS', 'const MODOS = {'), constBloco('modoDe', 'const modoDe = (P) => {'),
-    recorte('modoValido'), recorte('ajeitarModoRemoto'), recorte('pintarModo'), recorte('aplicarModoReal'), recorte('girarModo'), recorte('menuModos'),
+    recorte('modoValido'), recorte('ajeitarModoRemoto'), recorte('pintarModo'), recorte('aplicarModoReal'), recorte('girarModo'), recorte('menuModos'), recorte('mudarModoDoPainel'),
     recorte('menuModelos'), recorte('trocarModeloDoPainel', true), recorte('antesDaTroca'), recorte('avisarTroca')].join('\n'), ctx);
   return { ctx, el };
 }
@@ -319,14 +319,17 @@ test('achado 9a (tela): painel na pasta pessoal avisa que o debate nao le arquiv
   const h = montarDebate({ painel: { cwd: 'C:\\Users\\hugom' } });
   await h.CC.open(h.P);
   const avisos = dialogoDe(h).querySelectorAll('p.co-aviso').map((p) => p.textContent).join(' | ');
-  assert.match(avisos, /pasta de projeto/, avisos);
+  assert.match(avisos, /Pasta sensível: leitura de arquivos desativada/, avisos);
+  assert.match(dialogoDe(h).querySelector('.co-reading-scope').title, /pasta de projeto/);
   assert.ok(!/podem ler os arquivos de hugom/.test(dialogoDe(h).textContent), 'nao promete leitura na pasta pessoal');
   const raiz = montarDebate({ painel: { cwd: 'D:\\' } });
   await raiz.CC.open(raiz.P);
-  assert.match(dialogoDe(raiz).querySelectorAll('p.co-aviso').map((p) => p.textContent).join(' '), /pasta de projeto/);
+  assert.match(dialogoDe(raiz).querySelector('.co-reading-scope').textContent, /Pasta sensível: leitura de arquivos desativada/);
+  assert.match(dialogoDe(raiz).querySelector('.co-reading-scope').title, /pasta de projeto/);
   const proj = montarDebate();
   await proj.CC.open(proj.P);
-  assert.match(dialogoDe(proj).textContent, /podem ler os arquivos de prev-ia/);
+  assert.match(dialogoDe(proj).querySelector('.co-reading-scope').textContent, /prev-ia · só leitura/);
+  assert.match(dialogoDe(proj).querySelector('.co-reading-scope').title, /podem ler os arquivos de prev-ia/);
 });
 
 /* =====================================================================
@@ -338,12 +341,12 @@ const NOVO = '99999999-8888-4777-8666-555555555555';
 function telaRamo(extras) {
   const criados = [], faixas = [], notas = [], forks = [], avisos = [], salvou = { n: 0 };
   const ctx = vm.createContext({
-    cfg: { abaAtiva: 'pc' },
+    cfg: { abaAtiva: 'pc', abas: [{ id: 'pc', tipo: 'local' }, { id: 'vps', tipo: 'ssh', host: 'vps', usuario: 'qa' }] },
     criados, faixas, notas, forks, avisos, salvou,
     panes: new Map(), panesFundo: new Map(),
-    // o newPane de verdade recusa motor != Claude numa aba de servidor (motorDoPainelNovo)
+    // A montagem do DOM e falsa; a escolha do motor usa a funcao de producao.
     newPane: (o) => {
-      const engine = o.abaId === 'vps' ? 'claude' : o.engine;
+      const engine = ctx.motorDoPainelNovo(o.engine, { id: o.abaId, tipo: o.abaId === 'vps' ? 'ssh' : 'local' });
       const recusado = o.engine && o.engine !== engine;
       const P = { id: 'n' + criados.length, engine, cwd: o.cwd, model: recusado ? '' : (o.model || ''), mode: o.mode, effort: o.effort,
         abaId: o.abaId || 'pc', titulo: o.titulo || '', resumeId: recusado ? null : (o.resumeId || null), sessaoId: null,
@@ -358,26 +361,27 @@ function telaRamo(extras) {
     cabeMaisPainel: () => true,
     montarContexto: ({ hist }) => 'CONTEXTO:' + hist.length,
     nomeDoMotor: (e) => ({ claude: 'Claude', codex: 'Codex', gemini: 'Gemini', grok: 'Grok' })[e] || e,
-    remotoDoPane: (P) => (P && P.abaId === 'vps' ? { host: 'vps' } : null),
-    remotoDoAba: (a) => (a && a.id === 'vps' ? { host: 'vps' } : null),
-    abaAtual: () => ({ id: ctx.cfg.abaAtiva }),
     listaOuErro: (r) => ({ itens: Array.isArray(r) ? r : [] }),
     guardarEstadoDoMotor() {}, gravarNomeDoPainel() {},
     window: { api: {
+      motoresDisponiveis: async () => extras && extras.capacidades || { claude: { disponivel: true }, codex: { disponivel: false } },
       sessaoFork: async (o) => { forks.push(o); return (extras && extras.forkResp) ? extras.forkResp(o) : { id: 'fork-' + o.engine }; },
       sessionHistory: async () => (extras && extras.hist) || [{ role: 'user', text: 'oi' }, { role: 'bot', text: 'ola' }],
       sessionHistoryRemoto: async () => (extras && extras.hist) || [],
     } },
     ...(extras || {}),
   });
-  vm.runInContext([constLista('MODELOS_CLAUDE'), constLinha('APELIDO_CLAUDE'), constLinha('COM_1M', true),
+  if (!ctx.cfg.abas) ctx.cfg.abas = [{ id: 'pc', tipo: 'local' }, { id: 'vps', tipo: 'ssh', host: 'vps', usuario: 'qa' }];
+  vm.runInContext([constLista('MODELOS_CLAUDE'), constLinha('MOTORES'), constLinha('APELIDO_CLAUDE'), constLinha('COM_1M', true),
+    ...['abasLocais', 'abaPorId', 'abaAtual', 'remotoDoAba', 'remotoDoPane'].map(n => recorte(n)),
+    recorte('motorDoPainelNovo'), recorte('faltaConfigurarServidor'), recorte('capacidadeRemota'),
     ...['tituloDeRamo', 'novoPainelRamo', 'forkClaude', 'abrirRamo', 'ramoPorContexto', 'ramificar', 'ramificarAte',
       'ramificarDaLista', 'painelDaConversa', 'aoNascerSessao', 'guardarEnderecoAteASessao', 'modeloDoHistorico'].map((n) => recorte(n)),
     recorte('modeloDaOrigem', true), recorte('avisoRamoNoServidor', true)].join('\n'), ctx);
   return ctx;
 }
 
-test('achado 4: ramo de Codex numa aba de servidor e recusado ANTES de ramificar (sem painel Claude com id do Codex)', async () => {
+test('achado 4: Codex indisponivel no servidor e recusado ANTES do fork e da criacao do painel', async () => {
   const c = telaRamo();
   const P = { id: 'p1', engine: 'codex', abaId: 'vps', cwd: 'C:\\proj', sessaoId: 'thr-1', titulo: 'Tarefa', hist: [{ quem: 'Você', texto: 'a' }] };
   const r = await c.ramificarAte(P, null);
@@ -390,9 +394,9 @@ test('achado 4: ramo de Codex numa aba de servidor e recusado ANTES de ramificar
   assert.equal(c.forks.length, 0); assert.equal(c.criados.length, 0);
 });
 
-test('achado 4: pela lista, conversa do Codex numa aba de servidor nao vira ramo Claude', async () => {
+test('achado 4: pela lista, Codex indisponivel no servidor nao faz fork nem vira ramo Claude', async () => {
   const c = telaRamo({ cfg: { abaAtiva: 'vps' } });
-  const r = await c.ramificarDaLista({ engine: 'codex', id: 'thr-1', title: 'Tarefa', cwd: 'C:\\proj' });
+  const r = await c.ramificarDaLista({ engine: 'codex', id: 'thr-1', title: 'Tarefa', cwd: '/srv/app', remoto: true });
   assert.equal(r, null);
   assert.equal(c.forks.length, 0);
   assert.equal(c.criados.length, 0);
@@ -400,12 +404,52 @@ test('achado 4: pela lista, conversa do Codex numa aba de servidor nao vira ramo
 });
 
 test('achado 4: se o painel do ramo nascer em outro motor, o id/fork da origem nao vai junto', () => {
-  const c = telaRamo();
+  // Simula uma montagem inconsistente para exercitar a defesa de isolamento.
+  // O comportamento normal e preservar o motor, coberto nos casos positivos.
+  const c = telaRamo({ newPane: o => ({ id: 'inconsistente', engine: 'claude', el: {}, resumeId: o.resumeId }) });
   const P = { id: 'p1', engine: 'codex', abaId: 'vps', cwd: 'C:\\proj', titulo: 'X', hist: [] };
   const novo = c.novoPainelRamo(P, { resumeId: 'thr-9', fork: true });
   assert.equal(novo.engine, 'claude');
   assert.equal(novo.resumeId, null, 'Claude com --resume de thread do Codex = queda em laco');
   assert.ok(!novo.forkPendente);
+});
+
+test('achado 4: capacidade remota positiva preserva Codex, destino e id novo ao ramificar', async () => {
+  const c = telaRamo({ capacidades: { codex: { disponivel: true } } });
+  const P = { id: 'p1', engine: 'codex', abaId: 'vps', cwd: '/srv/app', sessaoId: 'origem', model: 'gpt-6-astra', titulo: 'Tarefa', hist: [{ quem: 'Você', texto: 'a' }] };
+  const ramo = await c.ramificarAte(P, null);
+  assert.equal(c.forks.length, 1);
+  assert.deepEqual({ ...c.forks[0], remoto: { ...c.forks[0].remoto } }, { engine: 'codex', id: 'origem', doFim: null, remoto: { host: 'vps', usuario: 'qa', chave: undefined, caminhoRemoto: '~' } });
+  assert.equal(ramo.engine, 'codex');
+  assert.equal(ramo.abaId, 'vps');
+  assert.equal(ramo.cwd, '/srv/app');
+  assert.equal(ramo.resumeId, 'fork-codex');
+  assert.equal(ramo.model, 'gpt-6-astra');
+  assert.equal(P.sessaoId, 'origem', 'a sessao de origem permanece intacta');
+});
+
+test('achado 4: pela lista, capacidade remota positiva permite o ramo no mesmo motor e servidor', async () => {
+  const c = telaRamo({ cfg: { abaAtiva: 'vps' }, capacidades: { codex: { disponivel: true } } });
+  const ramo = await c.ramificarDaLista({ engine: 'codex', id: 'origem', title: 'Tarefa', cwd: '/srv/app', remoto: true });
+  assert.ok(ramo);
+  assert.equal(ramo.engine, 'codex');
+  assert.equal(ramo.abaId, 'vps');
+  assert.equal(ramo.resumeId, 'fork-codex');
+  assert.equal(c.forks.length, 1);
+  assert.equal(c.forks[0].engine, 'codex');
+  assert.equal(c.forks[0].remoto.host, 'vps');
+  assert.equal(c.forks[0].remoto.usuario, 'qa');
+});
+
+test('achado 4: motor remoto disponivel sem capacidade de fork recusa a operacao sem criar painel', async () => {
+  for (const engine of ['claude', 'codex', 'gemini']) {
+    const c = telaRamo({ cfg: { abaAtiva: 'vps' }, capacidades: { [engine]: { disponivel: true, capacidades: { fork: false } } } });
+    const ramo = await c.ramificarDaLista({ engine, id: 'origem', title: 'Tarefa', cwd: '/srv/app', remoto: true });
+    assert.equal(ramo, null, engine);
+    assert.deepEqual(c.forks, [], engine);
+    assert.deepEqual(c.criados, [], engine);
+    assert.ok(c.avisos.length, engine + ': a recusa deve explicar a indisponibilidade');
+  }
 });
 
 test('achado 11: o endereco PROVISORIO do ramo (antes do Claude confirmar) nao da o ramo por nascido', () => {
@@ -571,6 +615,10 @@ function montarRotinas(itens) {
   const box = new El('div'); box.id = 'rotinas';
   const filtro = new El('input'); filtro.className = 'rot-filtro';
   const porId = { '#rotinas': box, '.side-view[data-view="rotinas"]': new El('div'), '#sidebar': new El('div'), '#rotFiltro': filtro, '#btnRotinasAtualizar': new El('button'), '#avisos': new El('div') };
+  const view = porId['.side-view[data-view="rotinas"]'], sidebar = porId['#sidebar'];
+  sidebar.appendChild(view); view.isConnected = true;
+  view.closest = (sel) => sel === '.hidden,[hidden]' && [view, sidebar].some(e => e.hidden || e.classList.contains('hidden')) ? sidebar : null;
+  view.getClientRects = () => view.closest('.hidden,[hidden]') ? [] : [{}];
   const ctx = { ...globaisFalsos(), console, document: documento,
     $: (sel, raiz) => (raiz ? raiz.querySelector(sel) : (porId[sel] || null)),
     ico: (n) => '<svg data-ico="' + n + '"></svg>', confirmarNoApp: () => Promise.resolve(true), abrirPastaDaSessao: () => {}, mostrarAviso: () => {},
@@ -578,7 +626,7 @@ function montarRotinas(itens) {
   vm.createContext(ctx);
   const ini = APP.indexOf('let rotinasCache = ');
   const fim = APP.indexOf('/* ===================== ENTRADA SEM DIGITAR', ini);
-  vm.runInContext(APP.slice(ini, fim), ctx);
+  vm.runInContext(recorte('viewLateralVisivel') + '\n' + APP.slice(ini, fim), ctx);
   return { ctx, box, filtro };
 }
 
@@ -797,9 +845,9 @@ test('achado 7: conversa do Opus 5 reaberta volta no claude-opus-5[1m] (o Hugo u
 });
 
 /* =====================================================================
-   8) ficha Codex numa aba de servidor vira Claude na pasta DA ABA
+   8) ficha remota preserva motor; motor desconhecido nao carrega estado alheio
    ===================================================================== */
-test('achado 8: motor recusado na aba de servidor: o painel Claude usa a pasta da aba e sem worktree do PC', () => {
+test('achado 8: painel remoto preserva Codex; ficha de motor desconhecido nao reaproveita pasta/id/worktree', () => {
   const fake = () => new El('div');
   const tpl = { content: { firstElementChild: { cloneNode: () => fake() } } };
   const notas = [];
@@ -811,16 +859,23 @@ test('achado 8: motor recusado na aba de servidor: o painel Claude usa a pasta d
     $: (sel) => (sel === '#tplPane' ? tpl : fake()),
     sairDaAbertura() {}, window: { CockpitCollaboration: null, api: {} }, ico: () => '', nomePasta: (p) => 'Pasta: ' + p,
     ligarDitado() {}, fillModels() {}, paintEngine() {}, pintarModo() {}, ligarArrastarPainel() {}, montarColunas() {}, setFocus() {},
-    note: (P, t) => notas.push(t), savePanes() {}, menuMotores() {}, menuModelos() {},
+    note: (P, t) => notas.push(t), nomeDoMotor: e => e, savePanes() {}, menuMotores() {}, menuModelos() {},
   };
   vm.createContext(ctx);
   vm.runInContext([constBloco('MODOS', 'const MODOS = {'), ...['abasLocais', 'abaPorId', 'abaAtual', 'remotoDoAba', 'remotoDoPane', 'pastasDaAba', 'cwdPadraoDaAba',
     'motorDoPainelNovo', 'modoValido', 'newPane'].map((n) => recorte(n))].join('\n'), ctx);
-  const P = ctx.newPane({ engine: 'codex', cwd: 'C:\\proj', abaId: 'vps', managedWorktree: { branch: 'x', path: 'C:\\proj\\.wt' }, resumeId: 'thr-1', model: 'gpt-6-astra' });
-  assert.equal(P.engine, 'claude');
-  assert.equal(P.cwd, '/home/hugo', 'nada de cd C:\\... no Linux');
-  assert.equal(P.managedWorktree, null);
-  assert.equal(P.resumeId, null);
+  const P = ctx.newPane({ engine: 'codex', cwd: '/srv/app', abaId: 'vps', resumeId: 'thr-1', model: 'gpt-6-astra' });
+  assert.equal(P.engine, 'codex');
+  assert.equal(P.abaId, 'vps');
+  assert.equal(P.cwd, '/srv/app');
+  assert.equal(P.resumeId, 'thr-1');
+  assert.equal(P.model, 'gpt-6-astra');
+  const invalido = ctx.newPane({ engine: 'motor-desconhecido', cwd: 'C:\\proj', abaId: 'vps', managedWorktree: { branch: 'x', path: 'C:\\proj\\.wt' }, resumeId: 'alheio', model: 'modelo-alheio' });
+  assert.equal(invalido.engine, 'claude');
+  assert.equal(invalido.cwd, '/home/hugo', 'ficha rejeitada nao usa caminho local no servidor');
+  assert.equal(invalido.managedWorktree, null);
+  assert.equal(invalido.resumeId, null);
+  assert.equal(invalido.model, '');
   // motor aceito: continua com a pasta pedida
   const Q = ctx.newPane({ engine: 'claude', cwd: '/srv/app', abaId: 'vps' });
   assert.equal(Q.cwd, '/srv/app');

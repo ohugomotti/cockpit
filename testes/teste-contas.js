@@ -72,11 +72,11 @@ const CRED = path.join(HOME_FALSA, '.claude', '.credentials.json');
 (async () => {
   console.log('\npasta testada:', pasta);
   console.log('\n1) guardar a conta de agora');
-  fs.writeFileSync(CRED, JSON.stringify({ token: 'AAA', conta: 'trabalho' }));
+  fs.writeFileSync(CRED, JSON.stringify({ claudeAiOauth: { accessToken: 'AAA', accountId: 'trabalho' } }));
   checa('guardou', (await chamar('contas:salvar', { engine: 'claude', apelido: 'trabalho' })).ok === true);
 
   console.log('\n2) entrar em outra conta e guardar tambem');
-  fs.writeFileSync(CRED, JSON.stringify({ token: 'BBB', conta: 'pessoal' }));
+  fs.writeFileSync(CRED, JSON.stringify({ claudeAiOauth: { accessToken: 'BBB', accountId: 'pessoal' } }));
   checa('guardou a segunda', (await chamar('contas:salvar', { engine: 'claude', apelido: 'pessoal' })).ok === true);
   const lista = await chamar('contas:listar', 'claude');
   checa('as duas aparecem na lista', lista.length === 2, JSON.stringify(lista));
@@ -88,7 +88,7 @@ const CRED = path.join(HOME_FALSA, '.claude', '.credentials.json');
   const r = await chamar('contas:trocar', { engine: 'claude', apelido: 'trabalho' });
   checa('trocou sem erro', r.ok === true, JSON.stringify(r));
   checa('a credencial em uso e a da conta escolhida',
-    JSON.parse(fs.readFileSync(CRED, 'utf8')).token === 'AAA',
+    JSON.parse(fs.readFileSync(CRED, 'utf8')).claudeAiOauth.accessToken === 'AAA',
     fs.readFileSync(CRED, 'utf8'));
   const lista2 = await chamar('contas:listar', 'claude');
   checa('a lista mostra a troca', lista2.find(x => x.apelido === 'trabalho').atual === true);
@@ -106,13 +106,13 @@ const CRED = path.join(HOME_FALSA, '.claude', '.credentials.json');
   fs.writeFileSync(path.join(dirContas, 'claude__' + encodeURIComponent('quebrada') + '.json'), 'isto nao e json');
   const r6 = await chamar('contas:trocar', { engine: 'claude', apelido: 'quebrada' });
   checa('recusou a conta corrompida', !!r6.error, JSON.stringify(r6));
-  checa('a credencial boa continuou no lugar', JSON.parse(fs.readFileSync(CRED, 'utf8')).token === 'AAA');
+  checa('a credencial boa continuou no lugar', JSON.parse(fs.readFileSync(CRED, 'utf8')).claudeAiOauth.accessToken === 'AAA');
 
   console.log('\n7) esquecer uma conta guardada');
   checa('esqueceu', (await chamar('contas:esquecer', { engine: 'claude', apelido: 'pessoal' })).ok === true);
   const lista3 = await chamar('contas:listar', 'claude');
   checa('saiu da lista', !lista3.find(x => x.apelido === 'pessoal'), JSON.stringify(lista3));
-  checa('a credencial em uso nao foi tocada', JSON.parse(fs.readFileSync(CRED, 'utf8')).token === 'AAA');
+  checa('a credencial em uso nao foi tocada', JSON.parse(fs.readFileSync(CRED, 'utf8')).claudeAiOauth.accessToken === 'AAA');
 
   console.log('\n8) trocar sem ter guardado nada devolve recado, nao explode');
   const r8 = await chamar('contas:trocar', { engine: 'claude', apelido: 'nao-existe' });

@@ -1,0 +1,14 @@
+'use strict';
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert/strict');
+const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?(['vendor','node_modules','graphify-out'].includes(e.name)?[]:walk(path.join(d,e.name))):[path.join(d,e.name)]);
+const files=walk('src');const code=files.filter(f=>f.endsWith('.js')).map(f=>({f,text:fs.readFileSync(f,'utf8')}));
+const preload=fs.readFileSync('src/preload.js','utf8');const channels=[...new Set([...preload.matchAll(/ipcRenderer\.(?:invoke|sendSync)\(['"]([^'"]+)/g)].map(m=>m[1]))].sort();
+const registrations=new Set(code.flatMap(({text})=>[...text.matchAll(/ipcMain\.(?:handle|on)\(['"]([^'"]+)/g)].map(m=>m[1])));
+const dynamic=['git:worktrees:list','git:worktrees:create','git:worktrees:open','contas:salvar','contas:trocar','contas:esquecer'];
+const missing=channels.filter(c=>!registrations.has(c)&&!dynamic.includes(c));
+const removed=['sessions:claudeRemoto','audio:pronto','audio:transcrever'];assert.ok(removed.every(c=>!channels.includes(c)&&!registrations.has(c)));
+const ipc={status:missing.length?'failed':'passed',at:new Date().toISOString(),ipcInvoked:channels.length,ipcDeclared:registrations.size,missingHandlers:missing,dynamicReviewed:dynamic.filter(c=>channels.includes(c)),removedUnusedChannels:removed,preservedUtility:'readFile/fs:read usado por QA real',channels};
+fs.writeFileSync('artifacts/auditoria-ipc.json',JSON.stringify(ipc,null,2)+'\n');
+const inventory=files.filter(f=>/\.(js|py|css|html)$/.test(f)).map(f=>({path:f.replace(/\\/g,'/'),lines:fs.readFileSync(f,'utf8').split('\n').length,bytes:fs.statSync(f).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')}));
+fs.writeFileSync('artifacts/auditoria-inventario.json',JSON.stringify(inventory,null,2)+'\n');
+console.log(JSON.stringify({ipc:ipc.status,invokes:channels.length,missingHandlers:missing,inventory:inventory.length}));process.exitCode=missing.length?1:0;

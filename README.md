@@ -76,7 +76,7 @@ terminal embutido quebra.
 ```bash
 node testes/rodar-tudo.js                # a bateria de testes/: 25 arquivos
 node testes/teste-duplicacao.js          # ou um de cada vez
-node --test "test/*.test.js"             # os 449 casos de test/ (node:test)
+node --test "test/*.test.js"             # os 752 casos de test/ (node:test)
 ```
 
 A bateria de `testes/` não usa framework: carrega as funções **reais** do `main.js` e do
@@ -165,6 +165,7 @@ não moram no código. Duplo clique na aba para preencher.
 | 41 | **Debate entre motores** lendo o projeto, **conta do Claude agindo no servidor** (entrar, sair, trocar, guardar), motor que cai **religa sozinho**, Esc só no painel em foco, **ramificar** conversa (pela lista, pelo `/` e no servidor), **quadro de fluxo** que vira PNG + passo a passo, nome automático de três palavras, reordenar abas, logos oficiais e o tema **Motti IA** |
 | 41.1 | **Colar no terminal embutido** (Ctrl+V, Ctrl+Shift+V, Shift+Insert, botão direito e botão Colar) e link de login sem as sequências de controle do ConPTY |
 | 42 | **Pendências** (view + sino com contador) e chip de **robô em segundo plano** |
+| 1.1.x | **Aplicativo versionado com instalador próprio**, sessões remotas (transporte, credenciais e cofre) e o CSS quebrado por módulo. Na tela: os textos da barra de escrever viraram ícones com dica no hover, as pastas subiram para uma barra horizontal, a lateral ficou com a **Torre fixa** (ela não muda quando se troca de pasta) sobre o histórico, o foco azul passou a circundar a caixa da sessão, a Torre e a lateral ganharam alças de arrastar, e o carregando virou um anel no lugar dos três pontos, tudo atrás de `prefers-reduced-motion` |
 
 As levas 35 e 36 passaram por 4 rodadas de auditoria dupla: **94 achados, 176 correções**.
 

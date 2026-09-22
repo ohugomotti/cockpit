@@ -1,6 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { StringDecoder } = require('node:string_decoder');
 
 /* Regra de sistema do debate. Desde 14/09/2026 os dois motores LEEM o projeto
    do painel (so' leitura). Sem pasta local (painel de servidor, pasta que
@@ -161,12 +162,16 @@ function createDebateRunner({ codexReady, codexRequest, subscribe, bindThread, u
       proc.on('error', finish);
       proc.stdin.on('error', error => finish(error));
       proc.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-1600); });
-      proc.stdout.on('data', chunk => {
+      const decoder = new StringDecoder('utf8');
+      let saidaFechada = false;
+      const lerSaida = (chunk, final = false) => {
         if (settled) return;
-        buf += chunk.toString(); if (buf.length > 2 * 1024 * 1024) { finish(new Error('Resposta do Claude excedeu o limite.')); return; }
+        buf += chunk; if (buf.length > 2 * 1024 * 1024) { finish(new Error('Resposta do Claude excedeu o limite.')); return; }
+        if (final && buf.trim()) buf += '\n';
         let at;
         while ((at = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, at); buf = buf.slice(at + 1); let m; try { m = JSON.parse(line); } catch { continue; }
+          if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
           sessionId = m.session_id || sessionId;
           if (m.type === 'stream_event') {
             const d = m.event?.delta;
@@ -193,8 +198,12 @@ function createDebateRunner({ codexReady, codexRequest, subscribe, bindThread, u
             finish(m.is_error ? new Error(String(m.result || m.subtype || 'Falha no Claude.')) : null); return;
           }
         }
-      });
-      proc.on('exit', code => { if (!settled) finish(new Error('Claude encerrou antes de responder (' + code + '). ' + stderr)); });
+      };
+      const fecharSaida = () => { if (!saidaFechada) { saidaFechada = true; lerSaida(decoder.end(), true); } };
+      proc.stdout.on('data', chunk => { if (!saidaFechada) lerSaida(decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); });
+      proc.stdout.on('end', fecharSaida);
+      // 'exit' pode chegar antes do último bloco de stdout; 'close' garante a drenagem.
+      proc.on('close', code => { fecharSaida(); if (!settled) finish(new Error('Claude encerrou antes de responder (' + code + '). ' + stderr)); });
       proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: options.prompt }] } }) + '\n');
     });
   }

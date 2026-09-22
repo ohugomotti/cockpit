@@ -48,62 +48,24 @@ function apelidoDoArquivo(nome) {
   try { return decodeURIComponent(m[1]); } catch { return null; }
 }
 
-/* Credencial com cara de JSON de verdade: o primeiro caractere util e' "{" e
-   logo depois vem uma chave. Um arquivo vazio ou cortado nao passa. */
-const CARA_DE_JSON = '[ "$(tr -d \' \\t\\r\\n\' < "$ARQ" 2>/dev/null | head -c 2)" = \'{"\' ]';
-const confereJson = (variavel) => CARA_DE_JSON.replace('$ARQ', () => variavel);
-
-// Todo script termina com "exit 0" e responde por palavra-chave: codigo
-// diferente de zero o execRemoto trataria como falha de conexao.
-function scriptListar(o) {
-  return cabecalho(o)
-    + '[ -d "$D" ] || exit 0; '
-    + "find \"$D\" -maxdepth 1 -type f -name 'claude__*.json' 2>/dev/null | while IFS= read -r f; do "
-    + 'if [ -f "$C" ] && cmp -s "$f" "$C"; then a=1; else a=0; fi; '
-    + "printf '%s\\t%s\\n' \"$a\" \"${f##*/}\"; done; exit 0";
+// Require a real parser; without Node, refuse changes instead of guessing JSON validity.
+function scriptPerfis(acao, apelido, o) {
+  return cabecalho(o) + 'N=' + qLinux(nomeDoArquivo(apelido || 'perfil')) + '; '
+    + 'NODE=$(command -v node || command -v nodejs); [ -n "$NODE" ] || { echo COCKPIT_SEM_NODE; exit 0; }; '
+    + '"$NODE" -e ' + qLinux("eval(require('zlib').inflateSync(Buffer.from('" + require('zlib').deflateSync(require('./cockpit-remote-credential-program').program()).toString('base64') + "','base64')).toString('utf8'))") + ' "$D" "$C" "$N" ' + qLinux(acao) + '; exit 0';
 }
+const scriptListar = o => scriptPerfis('listar', '', o);
+const scriptSalvar = (apelido, o) => scriptPerfis('salvar', apelido, o);
+const scriptTrocar = (apelido, o) => scriptPerfis('trocar', apelido, o);
+const scriptEsquecer = (apelido, o) => scriptPerfis('esquecer', apelido, o);
+const scriptDisponivel = o => scriptPerfis('disponivel', '', o);
 function lerLista(out) {
-  const lista = [];
-  for (const linha of String(out || '').split('\n')) {
-    const m = /^([01])\t(\S+)$/.exec(linha.trim());
-    if (!m) continue;
-    const apelido = apelidoDoArquivo(m[2]);
-    if (apelido !== null) lista.push({ apelido, atual: m[1] === '1' });
+  const rows = [];
+  for (const line of String(out || '').split('\n')) {
+    if (!line.startsWith('COCKPIT_PERFIL\t')) continue;
+    try { const p = JSON.parse(Buffer.from(line.slice('COCKPIT_PERFIL\t'.length), 'base64').toString('utf8')); if (typeof p.apelido === 'string') rows.push(p); } catch {}
   }
-  lista.sort((a, b) => a.apelido.localeCompare(b.apelido));
-  return lista;
-}
-
-function scriptSalvar(apelido, o) {
-  return cabecalho(o) + 'N=' + qLinux(nomeDoArquivo(apelido)) + '; '
-    + 'if [ ! -s "$C" ] || ! ' + confereJson('$C') + '; then echo COCKPIT_SEM_CONTA; exit 0; fi; '
-    + 'umask 077; mkdir -p "$D" && chmod 700 "$D" || { echo COCKPIT_ERRO_PASTA; exit 0; }; '
-    + 'T="$D/.guardando.$$"; '
-    + 'if cp "$C" "$T" && chmod 600 "$T" && mv -f "$T" "$D/$N"; then echo COCKPIT_OK; '
-    + 'else rm -f "$T"; echo COCKPIT_ERRO_COPIA; fi; exit 0';
-}
-
-/* Trocar: copia a guardada pra um temporario AO LADO da credencial e faz um mv
-   (rename no mesmo disco = troca de uma vez). Escrever direto por cima podia
-   pegar o Claude no meio de uma renovacao de token e deixar o arquivo pela
-   metade. */
-function scriptTrocar(apelido, o) {
-  return cabecalho(o) + 'A="$D"/' + qLinux(nomeDoArquivo(apelido)) + '; '
-    + '[ -f "$A" ] || { echo COCKPIT_SEM_CONTA; exit 0; }; '
-    + confereJson('$A') + ' || { echo COCKPIT_CORROMPIDA; exit 0; }; '
-    + 'umask 077; mkdir -p "$(dirname "$C")" || { echo COCKPIT_ERRO_PASTA; exit 0; }; '
-    + 'T="$C.cockpit-troca.$$"; '
-    + 'if cp "$A" "$T" && chmod 600 "$T" && mv -f "$T" "$C"; then echo COCKPIT_OK; '
-    + 'else rm -f "$T"; echo COCKPIT_ERRO_TROCA; fi; exit 0';
-}
-
-function scriptEsquecer(apelido, o) {
-  return cabecalho(o) + 'if rm -f -- "$D"/' + qLinux(nomeDoArquivo(apelido))
-    + '; then echo COCKPIT_OK; else echo COCKPIT_ERRO; fi; exit 0';
-}
-
-function scriptDisponivel(o) {
-  return cabecalho(o) + 'if [ -s "$C" ]; then echo COCKPIT_SIM; else echo COCKPIT_NAO; fi; exit 0';
+  return rows.sort((a, b) => a.apelido.localeCompare(b.apelido));
 }
 
 /* "claude auth status" pelo shell de LOGIN do usuario ($SHELL -lc): e' la' que
@@ -157,6 +119,10 @@ function lerConta(out) {
 function lerResposta(out, recados) {
   const s = String(out || '');
   if (/\bCOCKPIT_OK\b/.test(s)) return { ok: true };
+  if (s.includes('COCKPIT_SEM_NODE')) return { error: 'O servidor precisa de Node.js para validar perfis. Use o terminal para entrar na conta.' };
+  if (s.includes('COCKPIT_EXPIRADA')) return { error: 'A credencial guardada expirou e não pode ser renovada. Entre novamente.' };
+  if (s.includes('COCKPIT_APELIDO_USADO')) return { error: 'Esse apelido já pertence a outra conta. Escolha outro apelido.' };
+  if (s.includes('COCKPIT_ERRO_OPERACAO')) return { error: 'Não foi possível concluir a operação nos arquivos da conta do servidor.' };
   for (const [chave, frase] of Object.entries(recados || {})) {
     if (s.includes(chave)) return { error: frase };
   }
@@ -174,15 +140,19 @@ function linhaTerminal(remoto, acao, ehWindows) {
   const cmd = ACAO_CONTA[acao];
   if (!cmd || !remoto) return null;
   const usuario = String(remoto.usuario || ''), host = String(remoto.host || ''), chave = String(remoto.chave || '');
+  const porta = Number(remoto.porta || 22);
+  if (!Number.isInteger(porta) || porta < 1 || porta > 65535) return null;
   // o primeiro caractere NAO pode ser "-", senao o ssh le como opcao
-  if (!/^[\w][\w.-]{0,31}$/.test(usuario) || !/^[\w][\w.-]{0,252}$/.test(host)) return null;
+  const ip = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  const hostValido = ip.includes(':') ? !ip.includes('%') && require('node:net').isIP(ip) === 6 : /^[\w][\w.-]{0,252}$/.test(host);
+  if (!/^[\w][\w.-]{0,31}$/.test(usuario) || !hostValido) return null;
   if (!chave || /["`\r\n%]/.test(chave)) return null;
   const remotoCmd = 'exec ${SHELL:-/bin/sh} -lc ' + "'" + cmd + "'";
-  const alvo = usuario + '@' + host;
+  const alvo = usuario + '@' + ip;
   if (ehWindows) {
-    return 'ssh -t -i "' + chave + '" -o StrictHostKeyChecking=accept-new ' + alvo + ' "' + remotoCmd + '"';
+    return 'ssh -t -i "' + chave + '" -p ' + porta + ' -o StrictHostKeyChecking=accept-new ' + alvo + ' "' + remotoCmd + '"';
   }
-  return 'ssh -t -i ' + qLinux(chave) + ' -o StrictHostKeyChecking=accept-new ' + alvo + ' ' + qLinux(remotoCmd);
+  return 'ssh -t -i ' + qLinux(chave) + ' -p ' + porta + ' -o StrictHostKeyChecking=accept-new ' + alvo + ' ' + qLinux(remotoCmd);
 }
 
 module.exports = {

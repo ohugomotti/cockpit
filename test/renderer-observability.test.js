@@ -21,11 +21,11 @@ class Element {
   descendants() { return this.children.flatMap(n => [n, ...n.descendants()]); }
 }
 
-function harness(api = {}) {
+function harness(api = {}, remoto = null) {
   const body = new Element('body'), step = new Element('section');
   const ctx = { URL, Map, Set, Date, panes: new Map(),
     window: { api }, document: { body, createElement: tag => new Element(tag) },
-    acharPasso: () => step, acharPainel: () => ({ titulo: 'Projeto A' }), nomeDoMotor: engine => engine, note: () => {},
+    acharPasso: () => step, acharPainel: () => ({ titulo: 'Projeto A' }), nomeDoMotor: engine => engine, note: () => {}, remotoDoPane:()=>remoto,
   };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer/collaboration.js'), 'utf8'), ctx);
@@ -79,4 +79,15 @@ test('Claude não oferece recarga que a ponte não suporta', async () => {
   await h.health({ engine: 'claude', id: 0 });
   const reload = h.body.descendants().find(n => n.tagName === 'button' && n.textContent === 'Recarregar conectores');
   assert.equal(reload.disabled, true);
+});
+
+test('diagnóstico e recarga conservam o destino remoto do painel', async () => {
+  const remoto={host:'servidor.example.invalid',usuario:'qa',porta:2222,chave:'qa.key'}, calls=[];
+  const h=harness({mcpDiagnostico:async options=>{calls.push(options);return{itens:[],avisos:[]};},mcpRecarregar:async options=>{calls.push(options);return{ok:false,error:'Recarga indisponível neste destino'};}},remoto);
+  await h.health({engine:'codex',id:'painel-remoto'});
+  const reload=h.body.descendants().find(n=>n.tagName==='button'&&n.textContent==='Recarregar conectores');
+  await reload.listeners.click();
+  assert.equal(calls.length,2);
+  for(const call of calls){assert.equal(call.remoto,remoto);assert.equal(call.paneId,'painel-remoto');assert.equal(call.engine,'codex');}
+  assert.match(h.body.textContent,/Recarga indisponível neste destino/);
 });

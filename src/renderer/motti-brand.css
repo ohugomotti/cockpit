@@ -98,7 +98,7 @@ html[data-tema="motti"] {
 
 /* Pseudo-elemento sobrevive quando o renderizador atualiza a lista de abas. */
 #abasLocal::before {
-  content: "Motti.IA\A Cockpit";
+  content: "Cockpit";
   white-space: pre;
   flex: none;
   margin-right: 4px;
@@ -174,7 +174,7 @@ html[data-tema="motti"] ::-webkit-scrollbar-thumb:hover {
 
 @media (max-width: 600px) {
   #abasLocal::before {
-    content: "Motti.IA";
+    content: "Cockpit";
     font-size: 11px;
     padding-right: 10px;
     margin-right: 0;

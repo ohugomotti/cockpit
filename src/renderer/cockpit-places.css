@@ -1,0 +1,57 @@
+/* Lugares e automações: formatos compactos da referência, com controles legados preservados. */
+.ck-app #modalGrupo .ck-place-dialog {width:460px;max-width:calc(100vw - 32px);max-height:calc(100vh - 40px);overflow:auto;padding:18px;box-sizing:border-box; background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);}
+.ck-place-dialog > .mo-sub {display:none}
+.ck-place-dialog .mo-top {margin-bottom:12px}
+.ck-place-dialog .mo-tit {font-size:15px;font-weight:600}
+.ck-place-dialog .tipo-toggle {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.ck-place-dialog .tipo-bt {display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:95px;text-align:left;border:1px solid var(--line);border-radius:var(--radius-md);padding:12px;background:var(--surface);color:var(--ink)}
+.ck-place-dialog .tipo-bt.on {border-color:var(--primary);background:var(--hover)}
+.ck-place-dialog .tipo-bt svg {width:22px;height:22px}
+.ck-place-kind {font-size:13px;font-weight:600}
+.ck-place-example {font:11px var(--font-code);color:var(--ink-muted);white-space:nowrap}
+.ck-place-dialog input:not([type=checkbox]) {box-sizing:border-box;min-width:0;max-width:100%;width:100%;font-size:12px}
+.ck-place-dialog .mo-form {margin-top:8px;gap:7px}
+.ck-place-dialog .path-box {overflow-wrap:anywhere}
+.ck-place-dialog .mo-dica {font-size:11px}
+.ck-place-dialog .ck-place-advanced,.ck-ssh-details {border-top:1px solid var(--line);padding-top:8px;margin-top:8px}
+.ck-place-dialog summary {cursor:pointer;color:var(--ink-muted);font-size:11px;min-height:24px}
+.ck-ssh-details[open] {display:flex;flex-direction:column;gap:7px}
+.ck-ssh-details summary {width:100%}
+.ck-place-probe {font-size:11px;line-height:1.45;color:var(--ink-muted);margin:8px 0;overflow-wrap:anywhere}
+.ck-place-probe[data-state=error],.ck-place-dialog #abDestinoErro {color:var(--attention)}
+.ck-place-probe[data-state=available] {color:var(--ink)}
+.ck-place-recents {margin:12px 0 0;max-height:150px;overflow:auto}
+.ck-place-recents h3 {font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-muted);font-weight:500;margin:0 0 6px}
+.ck-place-recent {display:grid;grid-template-columns:16px 1fr;align-items:center;gap:3px 8px;width:100%;height:auto;min-height:34px;padding:5px 6px;text-align:left}
+.ck-place-recent svg {grid-row:span 2;width:15px;height:15px}
+.ck-place-recent span {font-size:12px}
+.ck-place-recent small {font:10px var(--font-code);color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ck-place-dialog .mo-rodape {position:sticky;bottom:-18px;background:var(--surface);padding:12px 0 4px;z-index:1}
+.ck-app .ck-automations-sheet {width:min(420px,calc(100vw - 32px));max-height:min(680px,calc(100vh - 32px));}
+.ck-automations-sheet .ck-layer-body {padding:8px}
+.ck-automations-sheet .side-view {width:100%;min-width:0}
+.ck-automations-sheet .side-head {padding:0 4px 6px;font-size:11px}
+.ck-automations-sheet .side-head>span {color:var(--ink-muted)}
+.ck-automations-sheet .rot {padding:0}
+.ck-automations-sheet .rot-resumo,.ck-automations-sheet .rot-sub {font-size:10px;line-height:1.4;margin:4px 6px}
+.ck-automations-sheet .rot-sub {color:var(--ink-muted)}
+.ck-automations-sheet .rot-caixa {padding:0;border:0;background:none}
+.ck-automations-sheet .rot-grupo {padding:7px 6px;margin-top:5px;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.ck-automations-sheet .rot-item {padding:7px 6px;gap:8px;border-radius:var(--radius-md);min-width:0}
+.ck-automations-sheet .rot-item.espera {background:var(--attention-soft)}
+.ck-automations-sheet .ri-tit {font-size:12px}
+.ck-automations-sheet .ri-est,.ck-automations-sheet .ri-quando {font-size:10px;line-height:1.4}
+.ck-automations-sheet .ri-marca {width:18px;height:18px;flex:0 0 18px}
+.ck-automations-sheet .ri-marca svg {width:17px;height:17px}
+.ck-automations-sheet .ri-txt {min-width:0}
+.ck-automations-sheet .ri-det {font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.ck-automations-sheet .ck-run-automation {align-self:center;white-space:nowrap;height:25px;font-size:10px;padding:3px 6px}
+.ck-auto-attention {position:relative}
+.ck-auto-attention::after {content:"";position:absolute;right:4px;top:4px;width:5px;height:5px;border-radius:50%;background:var(--attention)}
+.ck-auto-stale {text-decoration:underline dotted;text-underline-offset:3px}
+.ck-automation-group>h3 {font-size:10px;letter-spacing:.04em;font-weight:500;color:var(--ink-muted);padding:8px 8px 4px;margin:0}
+.ck-navigator.ck-collapsed:not(.ck-peek) .ck-automation-group>h3 {display:none}
+@media(max-width:480px){.ck-place-dialog .tipo-bt{padding:9px}.ck-place-example{font-size:9px}}
+
+.ck-automations-sheet .side-head {display:flex !important;justify-content:flex-end;min-height:28px}
+.ck-automations-sheet .side-head>span {display:none}

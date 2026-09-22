@@ -67,6 +67,8 @@ function globaisFalsos() {
     limparPlano: () => {},
     limparAuditoria: () => {},
     limparSugestoes: () => {},
+    contaEmAlteracao: () => false,
+    escopoDaConta: lugar => lugar.remoto ? "Servidor · " + lugar.chave : "Neste PC",
     zerarTurno: () => {},
     /* levas 33/34: legenda do trabalhando, linha do tempo sem teto, continuar,
        diff tardio do ACP - os testes extraem textDelta/textFinal/passo soltos */

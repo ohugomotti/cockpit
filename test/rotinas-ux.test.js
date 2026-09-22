@@ -90,6 +90,12 @@ function montarTela(opcoes) {
   const box = new El('div');
   const view = new El('div');
   const sidebar = new El('div');
+  sidebar.appendChild(view);
+  sidebar.contains = node => node === view;
+  view.isConnected = true;
+  view.closest = selector => selector === '.hidden,[hidden]' &&
+    (view.classList.contains('hidden') || sidebar.classList.contains('hidden')) ? sidebar : null;
+  view.getClientRects = () => view.closest('.hidden,[hidden]') ? [] : [{}];
   const filtro = new El('input'); filtro.className = 'rot-filtro hidden';
   const atualizar = new El('button');
   const avisos = new El('div');
@@ -122,7 +128,9 @@ function montarTela(opcoes) {
   const ini = app.indexOf('let rotinasCache = ');
   const fim = app.indexOf('/* ===================== ENTRADA SEM DIGITAR', ini);
   assert.ok(ini > 0 && fim > ini, 'bloco das rotinas no app.js');
-  vm.runInContext(app.slice(ini, fim), ctx);
+  const visibilityStart = app.indexOf('function viewLateralVisivel(');
+  const visibilityEnd = app.indexOf('\n}', visibilityStart) + 2;
+  vm.runInContext(app.slice(visibilityStart, visibilityEnd) + '\n' + app.slice(ini, fim), ctx);
   return { ctx, box, filtro, atualizar, avisos, reg, pintar: (...a) => ctx.pintarRotinas(...a) };
 }
 const AGORA = new Date(2026, 8, 14, 21, 40, 0).getTime();   // 14/09/2026 21:40, hora local

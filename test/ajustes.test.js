@@ -3,7 +3,7 @@
    pasta padrao validada, Parakeet que nao some, tema sem piscar -- e o Sonnet 5
    como padrao dos paineis novos do Claude (com o seletor nos Ajustes), a
    conversa reaberta no modelo em que estava, o debate nascendo com o padrao e o
-   painel novo de aba de servidor nascendo no Claude. Pecas extraidas do fonte
+   painel novo mantendo o motor escolhido quando o servidor o suporta. Pecas extraidas do fonte
    de verdade (pegarBloco + vm). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,10 +47,22 @@ test('todos os ids e contratos dos Ajustes continuam no index.html', () => {
     'btnInboxAbrir', 'verLine', 'torre', 'btnTorreAtualizar']) {
     assert.ok(html.includes('id="' + id + '"'), 'sumiu o id ' + id);
   }
-  for (const t of ['motti', 'escuro', 'claro', 'jornal']) assert.ok(html.includes('class="tema-bt" data-tema="' + t + '"'), 'sumiu o tema ' + t);
+  for (const t of ['azul', 'escuro', 'claro', 'jornal']) assert.ok(html.includes('class="tema-bt" data-tema="' + t + '"'), 'sumiu o tema ' + t);
   assert.ok(html.includes('class="act" data-view="settings"'));
   assert.ok(html.includes('class="side-view hidden" data-view="settings"'));
   assert.ok((html.match(/<button class="act/g) || []).length >= 9, 'a barra precisa de 9+ botoes .act');
+});
+
+test('tema antigo motti continua legivel como Azul sem apagar a preferencia guardada', () => {
+  const cfg = { tema: 'motti' };
+  const botoes = ['escuro', 'azul', 'claro', 'jornal'].map(tema => ({ dataset: { tema }, classList: { toggle(_classe, on) { this.on = on; } } }));
+  let visual;
+  const ctx = vm.createContext({ cfg, document: { documentElement: { setAttribute(_nome, valor) { visual = valor; } } }, $$: () => botoes });
+  vm.runInContext(pegarBloco(app, 'function aplicarTema(', 'aplicarTema'), ctx);
+  ctx.aplicarTema(cfg.tema);
+  assert.equal(visual, 'azul');
+  assert.deepEqual(botoes.filter(b => b.classList.on).map(b => b.dataset.tema), ['azul']);
+  assert.equal(cfg.tema, 'motti', 'compatibilidade visual nao regrava a escolha');
 });
 
 /* ---------------- (b) rotulo normal, interruptor alinhado ---------------- */
@@ -376,7 +388,7 @@ test('debate: o Claude nasce no padrao dos paineis novos, nao num Opus fixo', ()
   assert.match(collab, /claude: \(\) => \(typeof catalogoClaude === 'function' \? catalogoClaude\(\) : MODELOS_CLAUDE\)/);
 });
 
-/* ---------------- painel novo em aba de servidor nasce Claude ---------------- */
+/* ---------------- motor escolhido + capacidade real do destino ---------------- */
 function motorNovo(cfg) {
   const ctx = { cfg, MOTORES: ['claude', 'codex', 'gemini', 'grok', 'acp'] };
   vm.createContext(ctx);
@@ -384,12 +396,12 @@ function motorNovo(cfg) {
   vm.runInContext(pegarBloco(app, 'function motorDoPainelNovo(', 'motorDoPainelNovo'), ctx);
   return ctx;
 }
-test('motorDoPainelNovo: aba de servidor = Claude; sem ultimo motor = Claude', () => {
+test('motorDoPainelNovo preserva pedido no PC e servidor; sem ultimo motor valido usa Claude', () => {
   const vps = { id: 'vps', tipo: 'ssh', host: 'h', usuario: 'u' };
   const pc = { id: 'pc', tipo: 'local' };
   let ctx = motorNovo({ lastEngine: 'codex' });
-  assert.equal(ctx.motorDoPainelNovo(undefined, vps), 'claude', 'Codex rodaria no PC com a tela dizendo VPS');
-  assert.equal(ctx.motorDoPainelNovo('gemini', vps), 'claude');
+  assert.equal(ctx.motorDoPainelNovo(undefined, vps), 'codex', 'destino remoto nao troca o motor silenciosamente');
+  for (const engine of ['claude', 'codex', 'gemini', 'grok', 'acp']) assert.equal(ctx.motorDoPainelNovo(engine, vps), engine);
   assert.equal(ctx.motorDoPainelNovo(undefined, pc), 'codex', 'numa aba local o ultimo motor continua valendo');
   assert.equal(ctx.motorDoPainelNovo('gemini', pc), 'gemini');
   ctx = motorNovo({});
@@ -398,35 +410,104 @@ test('motorDoPainelNovo: aba de servidor = Claude; sem ultimo motor = Claude', (
   assert.equal(ctx.motorDoPainelNovo(undefined, pc), 'claude');
 });
 
-test('newPane usa motorDoPainelNovo (nada de "|| \'codex\'"); pedido recusado vira nota', () => {
+test('newPane usa motorDoPainelNovo; trocar motor remoto exige capacidade antes de desmontar a conversa', async () => {
   // corte por marco: o "opts = {}" da assinatura engana o contador de chaves
   const np = app.slice(app.indexOf('function newPane('), app.indexOf('/* ===================== COLUNAS'));
   assert.ok(np.length > 1000, 'nao achei o corpo do newPane');
   assert.ok(!/cfg\.lastEngine \|\| 'codex'/.test(np), 'newPane ainda cai no Codex');
   assert.ok(np.includes('motorDoPainelNovo('));
-  assert.ok(/ainda não roda em servidor remoto/.test(np), 'pedido de outro motor numa aba de servidor some calado');
-  // mesma frase da guarda do trocarMotor
-  assert.ok(pegarBloco(app, 'async function trocarMotor(', 'trocarMotor').includes('ainda não roda em servidor remoto'));
+  const notas = [], chamadas = [];
+  const remoto = { host: 'servidor', usuario: 'qa' };
+  const ctx = vm.createContext({
+    window: { api: { motoresDisponiveis: async () => ({ codex: { disponivel: false } }), paneStop: async () => chamadas.push('parou'), paneSend: async () => chamadas.push('enviou') } },
+    remotoDoPane: () => remoto, note: (_p, texto, erro) => notas.push({ texto, erro }),
+    guardarEstadoDoMotor: () => chamadas.push('alterou'),
+  });
+  for (const nome of ['faltaConfigurarServidor', 'capacidadeRemota', 'trocarMotor']) {
+    const ass = app.includes('async function ' + nome + '(') ? 'async function ' : 'function ';
+    vm.runInContext(pegarBloco(app, ass + nome + '(', nome), ctx);
+  }
+  const p = { engine: 'claude', sessaoId: 'origem', hist: [{ texto: 'conversa preservada' }] };
+  await ctx.trocarMotor(p, 'codex');
+  assert.equal(p.engine, 'claude');
+  assert.equal(p.sessaoId, 'origem');
+  assert.deepEqual(chamadas, [], 'recusa antes de parar, alterar estado ou enviar');
+  assert.ok(notas.some(n => n.erro && /indisponível.*servidor/i.test(n.texto)));
 });
 
-test('conversa de outro motor numa aba de servidor: a lista recusa e a restauracao nao traz historico alheio', () => {
+test('motor indisponivel no servidor: a lista recusa e a restauracao nao mistura historicos', async () => {
   const os = pegarBloco(app, 'async function openSession(', 'openSession');
-  const guarda = os.search(/s\.engine !== 'claude' && remotoDoAba\(abaAtual\(\)\)/);
-  assert.ok(guarda > 0 && guarda < os.indexOf('newPane('), 'openSession abre Codex numa aba de servidor (e depois troca P.engine pra ele)');
+  const chamadas = [], avisos = [];
+  const ctx = vm.createContext({ panes: new Map(), panesFundo: new Map(),
+    abaAtual: () => ({ tipo: 'ssh', host: 'servidor', usuario: 'qa' }),
+    mostrarAviso: aviso => avisos.push(aviso),
+    newPane: () => chamadas.push('painel'),
+    window: { api: { motoresDisponiveis: async () => ({ codex: { disponivel: false } }), sessionHistory: async () => chamadas.push('historico-local'), sessionHistoryRemoto: async () => chamadas.push('historico-remoto') } },
+  });
+  for (const nome of ['painelDaConversa', 'remotoDoAba', 'faltaConfigurarServidor', 'capacidadeRemota']) {
+    const ass = app.includes('async function ' + nome + '(') ? 'async function ' : 'function ';
+    vm.runInContext(pegarBloco(app, ass + nome + '(', nome), ctx);
+  }
+  vm.runInContext(app.split('\n').find(line => line.startsWith('const chaveDoLugar = ')) + '\n' + os, ctx);
+  await ctx.openSession({ engine: 'codex', id: 'origem', cwd: '/srv/app', remoto: true });
+  assert.deepEqual(chamadas, []);
+  assert.ok(avisos.some(a => a.tipo === 'erro' && /indisponível.*servidor/i.test(a.texto)));
   // corte por marco: o "startsWith('{')" do corpo engana o contador de chaves
   const iniRest = app.indexOf('async function restaurarPaineisMiolo(');
   const rest = app.slice(iniRest, app.indexOf('/* ===================== RAMIFICAR', iniRest));
   assert.ok(iniRest > 0 && rest.length > 500, 'nao achei restaurarPaineisMiolo');
   assert.match(rest, /const mesmoMotor = P\.engine === s\.engine;/);
   assert.match(rest, /P\.forkPendente = mesmoMotor && !!s\.fork;/);
-  assert.ok(rest.indexOf('if (!mesmoMotor) msgs = [];') > 0 && rest.indexOf('if (!mesmoMotor) msgs = [];') < rest.indexOf('sessionHistoryRemoto'), 'ficha recusada ainda busca o historico do outro motor');
+  assert.ok(rest.indexOf('if (!mesmoMotor) msgs = [];') > 0 && rest.indexOf('if (!mesmoMotor) msgs = [];') < rest.indexOf('await window.api.sessionHistory('), 'ficha recusada ainda busca o historico do outro motor');
+  assert.match(rest, /else if \(remotoAqui\)[\s\S]*sessionHistory\(\{ engine: s\.engine, remoto: remotoAqui, id: s\.sessaoId \}\)/, 'historico remoto precisa preservar motor e destino');
 });
 
-test('novaConversa e a tela de abertura recusam motor que nao roda na aba de servidor', () => {
+test('novaConversa e a tela de abertura conferem capacidade do servidor antes de criar paineis', () => {
   const nc = pegarBloco(app, 'async function novaConversa(', 'novaConversa');
-  const guarda = nc.indexOf('remotoDoAba(abaAtual())');
+  const guarda = nc.indexOf('remotoDoAba(abaNova)');
   assert.ok(guarda > 0 && guarda < nc.indexOf('newPane('), 'novaConversa abre o painel antes de conferir a aba');
   const boot = app.slice(app.indexOf('(async function boot()'));
-  const comecar = boot.slice(boot.indexOf('const comecar = (quais) =>'), boot.indexOf('sairDaAbertura();', boot.indexOf('const comecar = (quais) =>')));
-  assert.ok(/remotoDoAba\(abaAtual\(\)\)/.test(comecar), 'a tela de abertura abre Codex numa aba de servidor');
+  const inicio = boot.indexOf('const comecar = async (quais) =>');
+  assert.ok(inicio >= 0);
+  const comecar = boot.slice(inicio, boot.indexOf('sairDaAbertura();', inicio));
+  assert.match(comecar, /remotoDoAba\(abaAtual\(\)\)/);
+  assert.match(comecar, /await Promise\.all\(quais\.map\(m => capacidadeRemota\(m, destinoRemoto\)\)\)/);
+});
+
+test('capacidadeRemota requer confirmacao positiva e nao consulta servidor incompleto', async () => {
+  let resposta, consultas = 0;
+  const ctx = vm.createContext({ window: { api: { motoresDisponiveis: async () => { consultas++; if (resposta instanceof Error) throw resposta; return resposta; } } } });
+  vm.runInContext(pegarBloco(app, 'function faltaConfigurarServidor(', 'faltaConfigurarServidor') + '\n' + pegarBloco(app, 'async function capacidadeRemota(', 'capacidadeRemota'), ctx);
+  const remoto = { host: 'servidor', usuario: 'qa' };
+  for (resposta of [null, {}, { codex: true }, { codex: { disponivel: false } }, new Error('SSH indisponivel')]) assert.equal(await ctx.capacidadeRemota('codex', remoto), false);
+  resposta = { codex: { disponivel: true } };
+  assert.equal(await ctx.capacidadeRemota('codex', remoto), true);
+  const antes = consultas;
+  assert.equal(await ctx.capacidadeRemota('codex', { host: 'servidor' }), false);
+  assert.equal(consultas, antes);
+});
+
+test('novaConversa com capacidade falsa nao cria nem envia; com positiva conserva o pedido remoto', async () => {
+  let disponivel = false;
+  const pedidos = [], execucoes = [];
+  const aviso = { textContent: '', classList: { remove() {} } };
+  const aba = { id: 'vps', tipo: 'ssh', host: 'servidor', usuario: 'qa', caminhoRemoto: '/srv/app' };
+  const ctx = vm.createContext({ cfg: { abaAtiva: 'vps' }, abaAtual: () => aba,
+    $: () => aviso, nomeDoMotor: e => e, cabeMaisPainel: () => true,
+    // Observa somente a fronteira de montagem do painel, apos a guarda real.
+    newPane: pedido => { pedidos.push({ ...pedido }); return null; },
+    window: { api: { motoresDisponiveis: async () => ({ codex: { disponivel } }),
+      paneStart: async () => execucoes.push('start'), paneSend: async () => execucoes.push('send'), paneStop: async () => execucoes.push('stop') } },
+  });
+  for (const nome of ['remotoDoAba', 'faltaConfigurarServidor', 'capacidadeRemota', 'cwdPadraoDaAba', 'novaConversa']) {
+    const ass = app.includes('async function ' + nome + '(') ? 'async function ' : 'function ';
+    vm.runInContext(pegarBloco(app, ass + nome + '(', nome), ctx);
+  }
+  await ctx.novaConversa('codex');
+  assert.deepEqual(pedidos, []);
+  assert.deepEqual(execucoes, []);
+  assert.match(aviso.textContent, /servidor/i);
+  disponivel = true;
+  await ctx.novaConversa('codex');
+  assert.deepEqual(pedidos, [{ engine: 'codex', cwd: '/srv/app', abaId: 'vps' }]);
 });

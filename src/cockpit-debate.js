@@ -13,7 +13,7 @@ const LIMITS = Object.freeze({ topic: 8000, context: 24000, answer: 16000, messa
 const PRAZO_TEXTO_MS = 10 * 60 * 1000, PRAZO_LEITURA_MS = 15 * 60 * 1000;
 const ESFORCOS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const MOTORES_DEBATE = ['codex', 'claude'];
-const NOME = { codex: 'Codex', claude: 'Claude', user: 'Hugo' };
+const NOME = { codex: 'Codex', claude: 'Claude', user: 'Usuário' };
 const outro = engine => MOTORES_DEBATE.find(e => e !== engine);
 const idOK = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -49,14 +49,14 @@ function buildPrompt(state, engine, last) {
     : (state.semLeitura === 'remoto'
       ? 'Este projeto está num servidor remoto e o debate roda neste computador: não há acesso aos arquivos. Discuta com base no problema e no contexto fornecido, e marque o que é hipótese.\n'
       : 'Não há acesso aos arquivos neste debate. Discuta com base no problema e no contexto fornecido, e marque o que é hipótese.\n');
-  return `Você é ${nome}, num debate com ${adversario} que Hugo acionou manualmente no Cockpit. Responda em português do Brasil.\n`
+  return `Você é ${nome}, num debate com ${adversario} que a pessoa usuária acionou manualmente no Cockpit. Responda em português do Brasil.\n`
     + projeto
     + (propoe
       ? `Seu papel: você PROPÕE. Traga uma proposta concreta para o problema e, nas falas seguintes, refine a proposta com as objeções de ${adversario} que fizerem sentido.\n`
       : `Seu papel: você CONTESTA. Procure falhas, riscos e o que falta na proposta de ${adversario}; diga o que manteria e proponha a alternativa concreta.\n`)
     + 'Avalie as razões do outro, concorde quando fizer sentido e aponte divergências concretas. Não invente a fala do outro. Não altere arquivos e não envie nada a terceiros.\n'
     + (last
-      ? 'Esta é a última fala desta rodada. Feche com três seções: "## Consenso", "## Divergências" e "## Próximos passos" (uma proposta para Hugo decidir). Não declare consenso quando houver discordância.\n'
+      ? 'Esta é a última fala desta rodada. Feche com três seções: "## Consenso", "## Divergências" e "## Próximos passos" (uma proposta para a pessoa usuária decidir). Não declare consenso quando houver discordância.\n'
       : 'Seja objetivo e termine com o ponto que o outro precisa responder.\n')
     + (state.review ? 'Revisão de código: para cada problema encontrado, informe arquivo, linha quando identificável, gravidade, evidência e correção sugerida. Não invente números de linha. As alterações não serão aplicadas aqui.\n' : '')
     + `Você tem até ${Math.round(state.limites.falaMs / 60000)} min nesta fala.\n`

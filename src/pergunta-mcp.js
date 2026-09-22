@@ -235,6 +235,7 @@ const rl = readline.createInterface({ input: process.stdin, terminal: false });
 rl.on('line', async (linha) => {
   let m;
   try { m = JSON.parse(linha); } catch { return; }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return;
 
   if (m.method === 'initialize') {
     return escrever({

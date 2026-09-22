@@ -174,6 +174,7 @@ if (require.main === module) {
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   rl.on('line', (linha) => {
     let m; try { m = JSON.parse(linha); } catch { return; }
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return;
     if (m.method === 'initialize') {
       return escrever({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: (m.params && m.params.protocolVersion) || '2025-06-18',
         capabilities: { tools: {} }, serverInfo: { name: 'cockpit-leitura', version: '1.0.0' } } });

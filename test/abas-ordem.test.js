@@ -206,16 +206,19 @@ test('"Mover para a esquerda/direita": uma casa por vez e nada nas pontas', () =
 
 test('no meio do arrasto a barra nao e repintada; repinta quando o arrasto acaba', () => {
   let apagou = 0;
+  let atualizouNavigator = 0;
   const box = { set innerHTML(v) { apagou++; }, get innerHTML() { return ''; } };
-  const c = vm.createContext({ $: (s) => (s === '#abasLocal' ? box : null), arrastandoAba: 'pc', abasRepintarDepois: false,
+  const c = vm.createContext({ window:{CockpitUI:{refresh(){atualizouNavigator++;}}}, $: (s) => (s === '#abasLocal' ? box : null), arrastandoAba: 'pc', abasRepintarDepois: false,
     pintarAbasLocalMiolo: () => { apagou++; } });
   vm.runInContext(funcao('pintarAbasLocal'), c);
   c.pintarAbasLocal();
   assert.equal(apagou, 0, 'com a aba na mao, nao troca os botoes');
+  assert.equal(atualizouNavigator, 0, 'Navigator também espera o fim do arrasto');
   assert.equal(c.abasRepintarDepois, true, 'fica devendo a pintura');
   c.arrastandoAba = null;
   c.pintarAbasLocal();
   assert.equal(apagou, 1);
+  assert.equal(atualizouNavigator, 1);
   assert.equal(c.abasRepintarDepois, false);
 });
 
@@ -225,7 +228,15 @@ test('arrasto de aba tem variavel propria e nao cai no soltar de arquivo nem no 
   const i = APP.indexOf("el.addEventListener('dragover', (e) => {");
   const trecho = APP.slice(i, APP.indexOf("$('.p-send', el)", i));
   assert.ok(i > 0 && trecho.includes('drop'), 'achei o soltar de arquivo do painel');
-  assert.equal((trecho.match(/if \(arrastandoAba\) return;/g) || []).length, 2, 'dragover e drop do painel ignoram aba');
+  /* 21/09/2026: a guarda cresceu. As pastas sairam da lateral e viraram a faixa
+     colada nos paineis, entao todo arrasto de pasta cruza a area de painel — e
+     o painel acendia o alvo de "solte o arquivo aqui" e aceitava o drop sem
+     fazer nada. Agora dragover e drop ignoram os DOIS: a aba de cima e a pasta
+     da faixa (pelo tipo no dataTransfer, via arrastaDePasta). */
+  assert.equal((trecho.match(/if \(arrastandoAba \|\| arrastaDePasta\(e\)\) return;/g) || []).length, 2,
+    'dragover e drop do painel ignoram aba e pasta');
+  assert.match(APP, /function arrastaDePasta\(e\) \{/, 'a guarda da pasta existe');
+  assert.match(funcao('arrastaDePasta'), /'application\/cockpit-place'/, 'reconhece a pasta pelo tipo do arrasto');
   // o arrasto de aba usa um tipo proprio (nao text/plain: o campo de escrever colaria o id)
   const ini = funcao('comecarArrastoDeAba');
   assert.ok(ini.includes("'application/x-cockpit-aba'"));

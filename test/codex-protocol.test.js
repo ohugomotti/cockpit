@@ -261,3 +261,16 @@ test('skills de outra pasta não vazam para o painel', () => {
   assert.equal(r[0].scope, 'project');
   assert.equal(r[0].source, 'native');
 });
+
+
+test('normaliza erro textual, TurnError, Error e objetos circulares sem expor campos arbitrários', () => {
+  const { normalizeError } = require('../src/codex-protocol');
+  assert.equal(normalizeError('Falhou'), 'Falhou');
+  assert.equal(normalizeError(new Error('Indisponível')), 'Indisponível');
+  assert.equal(normalizeError({ error: { message: 'Conexão interrompida', additionalDetails: 'HTTP 503' } }), 'Conexão interrompida\nHTTP 503');
+  assert.equal(normalizeError({ error: 'Falha legada' }), 'Falha legada');
+  const circular = { token: 'nao-exibir' }; circular.error = circular;
+  assert.equal(normalizeError(circular, 'Falha segura'), 'Falha segura');
+  assert.equal(normalizeError({ message: {}, arbitrary: 'nao-exibir' }, 'Falha segura'), 'Falha segura');
+  assert.equal(normalizeError('[object Object]', 'Falha segura'), 'Falha segura');
+});

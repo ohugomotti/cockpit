@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const proto = require('../src/codex-protocol');
+const { codexApprovalDetails } = require('../src/cockpit-approval');
 const { criarObservabilidade, resultadoFerramenta } = require('../src/cockpit-observability');
 
 // Funções de produção, isoladas do bootstrap Electron. Fixtures seguem o
@@ -12,7 +13,7 @@ const { criarObservabilidade, resultadoFerramenta } = require('../src/cockpit-ob
 function harness() {
   const source = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
   const events = [], replies = [];
-  const context = { proto, Buffer, events, replies, resultadoFerramenta,
+  const context = { proto, codexApprovalDetails, Buffer, events, replies, resultadoFerramenta,
     observabilidade: criarObservabilidade((pane, type, data) => events.push({ pane, type, ...data })),
     codex: { threadToPane: new Map([['t1', 0], ['t2', 2]]), paneMsgId: new Map(), paneTurn: new Map() },
     pendingApprovals: new Map(), perguntasCodex: new Map(),
@@ -136,4 +137,81 @@ test('erro MCP e turno com status failed não passam como conclusão bem-sucedid
   assert.match(h.events.at(-1).output, /Servidor indisponível/);
   h.codexNotification('turn/completed', { threadId: 't1', turn: { status: 'failed', error: { message: 'Falhou' } } });
   assert.equal(h.events.at(-1).status, 'failed'); assert.equal(h.events.at(-1).error, true);
+});
+
+
+test('aprovação local preserva comando longo, diff e permissões no evento da tela', () => {
+  const h = harness();
+  const command = 'echo ' + 'x'.repeat(2400) + 'FINAL';
+  const diff = '@@ -1 +1 @@\n-antigo\n+' + 'novo'.repeat(700) + 'FINAL_DIFF';
+  h.codexServerRequest({ id: 101, method: 'execCommandApproval', params: { conversationId: 't1', command: ['bash', '-lc', command] } });
+  h.codexServerRequest({ id: 102, method: 'applyPatchApproval', params: { conversationId: 't1', fileChanges: { 'a.txt': { type: 'update', unified_diff: diff } } } });
+  h.codexServerRequest({ id: 103, method: 'item/permissions/requestApproval', params: { threadId: 't1', permissions: { network: { enabled: true } }, reason: 'Verificar acesso' } });
+  const cards = h.events.filter(e => e.type === 'approval');
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].detail, 'bash -lc ' + command);
+  assert.ok(cards[1].detail.includes(diff));
+  assert.deepEqual(JSON.parse(cards[2].detail), { network: { enabled: true } });
+  assert.equal(cards[2].reason, 'Verificar acesso');
+  assert.equal(h.replies.length, 0, 'Apresentar pedido não o aprova');
+});
+
+
+test('Codex reconectando mantém turno e permissões até concluir com sucesso', () => {
+  const h = harness();
+  let cleared = 0; h.descartarPermissoes = () => cleared++;
+  h.codexNotification('turn/started', { threadId: 't1', turn: { id: 'r1' } });
+  for (let i = 0; i < 5; i++) h.codexNotification('error', { threadId: 't1', turnId: 'r1', willRetry: true,
+    error: { message: 'stream disconnected before completion', codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } } } });
+  assert.equal(h.codex.paneTurn.get(0), 'r1');
+  assert.equal(cleared, 0, 'a permissão ainda pertence a um turno ativo');
+  assert.equal(h.events.filter(e => e.type === 'turn-end').length, 0);
+  const notes = h.events.filter(e => e.type === 'note');
+  assert.equal(notes.length, 1, 'cinco retentativas produzem um aviso');
+  assert.equal(notes[0].error, false); assert.equal(notes[0].retrying, true);
+  assert.match(notes[0].text, /stream disconnected/); assert.doesNotMatch(notes[0].text, /object Object/);
+  h.codexNotification('turn/completed', { threadId: 't1', turn: { id: 'r1', status: 'completed', error: null } });
+  assert.equal(h.events.at(-1).error, false); assert.equal(h.events.at(-1).status, 'completed');
+  assert.equal(cleared, 1); assert.equal(h.codex.paneTurn.has(0), false);
+});
+
+test('erro Codex terminal fica legível e não duplica quando turn/completed confirma falha', () => {
+  const h = harness(); const error = { message: 'A conexão foi encerrada', additionalDetails: 'Servidor fechou o websocket.' };
+  h.codexNotification('turn/started', { threadId: 't1', turn: { id: 'f1' } });
+  h.codexNotification('error', { threadId: 't1', turnId: 'f1', willRetry: false, error });
+  h.codexNotification('turn/completed', { threadId: 't1', turn: { id: 'f1', status: 'failed', error } });
+  const notes = h.events.filter(e => e.type === 'note');
+  assert.equal(notes.length, 1); assert.equal(notes[0].text, 'A conexão foi encerrada\nServidor fechou o websocket.');
+  assert.equal(notes[0].error, true); assert.equal(h.events.filter(e => e.type === 'turn-end').length, 1);
+  h.codexNotification('turn/started', { threadId: 't1', turn: { id: 'f2' } });
+  h.codexNotification('turn/completed', { threadId: 't1', turn: { id: 'f2', status: 'failed', error } });
+  assert.equal(h.events.filter(e => e.type === 'note').length, 2, 'novo turno pode relatar o mesmo erro');
+});
+
+test('turn/completed sozinho explica falha e não mistura mensagem entre painéis', () => {
+  const h = harness();
+  h.codexNotification('turn/completed', { threadId: 't1', turn: { status: 'failed', error: { message: 'Contexto excedido' } } });
+  h.codexNotification('turn/completed', { threadId: 't2', turn: { status: 'failed', error: null } });
+  const notes = h.events.filter(e => e.type === 'note');
+  assert.equal(notes[0].pane, 0); assert.equal(notes[0].text, 'Contexto excedido');
+  assert.equal(notes[1].pane, 2); assert.match(notes[1].text, /não conseguiu concluir/);
+});
+
+
+test('status idle da thread não encerra turno antes de turn/completed nem duplica o fim', () => {
+  for (const status of ['completed', 'failed']) {
+    const h = harness();
+    h.codexNotification('thread/status/changed', { threadId: 't1', status: { type: 'idle' } });
+    assert.equal(h.events.length, 0, 'idle na abertura não é fim de resposta');
+    h.codexNotification('turn/started', { threadId: 't1', turn: { id: 't' } });
+    h.codexNotification('thread/status/changed', { threadId: 't1', status: { type: 'idle' } });
+    assert.equal(h.events.filter(e => e.type === 'turn-end').length, 0);
+    assert.equal(h.codex.paneTurn.get(0), 't', 'mantém turno até resultado oficial');
+    h.codexNotification('turn/completed', { threadId: 't1', turn: { id: 't', status,
+      error: status === 'failed' ? { message: 'Falha ao concluir' } : null } });
+    h.codexNotification('thread/status/changed', { threadId: 't1', status: { type: 'idle' } });
+    const ends = h.events.filter(e => e.type === 'turn-end');
+    assert.equal(ends.length, 1); assert.equal(ends[0].status, status);
+    assert.equal(ends[0].error, status === 'failed');
+  }
 });

@@ -4,6 +4,10 @@
   let current = null, healthGeneration = 0, agentsGeneration = 0;
   const DEBATEDORES = ['codex', 'claude'];
   const outroDebatedor = engine => DEBATEDORES.find(e => e !== engine);
+  function ensureAccountsAvailable() {
+    const changing = DEBATEDORES.find(engine => window.CockpitUI?.accountChanging?.(engine, null));
+    if (changing) throw new Error('Aguarde a troca de conta do ' + nome(changing) + ' neste computador antes de iniciar ou continuar o debate.');
+  }
   const labels = { ready: 'Pronto para começar', running: 'Em discussão', completed: 'Rodadas concluídas', interrupted: 'Interrompido', failed: 'Parou com erro' };
   const agentLabels = { running: 'Trabalhando', pending: 'Aguardando', completed: 'Concluído', failed: 'Falhou', interrupted: 'Interrompido', unknown: 'Sem estado confirmado', waiting: 'Aguardando' };
   const el = (tag, cls, text) => { const node = document.createElement(tag); if (cls) node.className = cls; if (text != null) node.textContent = text; return node; };
@@ -121,6 +125,23 @@
     if (partes.some((x, i) => ['.ssh', '.gnupg', '.aws', '.azure'].includes(x) || (x === '.config' && partes[i + 1] === 'gcloud'))) return true;
     return !!casa && (alvo === casa || casa.startsWith(alvo + '\\'));
   }
+  function progressoDoDebate(state) {
+    const falas = (state.messages || []).filter(m => DEBATEDORES.includes(m.speaker));
+    const faltam = state.status === 'running' && state.progress
+      ? Math.max(0, Number(state.progress.total || 0) - Number(state.progress.fala || 0)) : 0;
+    return [...falas.map(m => ({ id: m.id, status: m.status })), ...Array.from({ length: Math.min(faltam, 6) }, () => ({ status: 'pending' }))];
+  }
+  function pintarProgresso(box, state) {
+    const partes = progressoDoDebate(state);
+    box.hidden = !partes.length;
+    const prontas = partes.filter(p => p.status === 'completed').length;
+    box.setAttribute('aria-label', prontas + ' de ' + partes.length + ' falas concluídas');
+    box.replaceChildren(...partes.map((p, i) => {
+      const segmento = el('span', 'co-progress-step ' + p.status);
+      segmento.title = 'Fala ' + (i + 1) + ': ' + (p.status === 'pending' ? 'aguardando' : labels[p.status] || p.status);
+      segmento.setAttribute('aria-hidden', 'true'); return segmento;
+    }));
+  }
   async function open(P, options = {}) {
     if (!P || P.morto) return;
     const remoto = !!remotoDoPane(P);
@@ -134,6 +155,7 @@
     const d = dialog('Debater com Codex e Claude', (remoto || ampla)
       ? 'Os dois discutem o problema e respondem um ao outro. Nada roda até você clicar em Iniciar.'
       : 'Os dois leem o projeto deste painel (só leitura), discutem e respondem um ao outro. Nada roda até você clicar em Iniciar.');
+    d.classList.add('co-debate-dialog');
     const body = el('div', 'co-dialog-body'); d.append(body);
     const ui = { dialog: d, P, body, state: null, cards: new Map(), starting: false }; current = ui;
     const setup = el('section', 'co-setup'); body.append(setup);
@@ -147,7 +169,12 @@
       : ampla
         ? 'Esta pasta guarda chaves, senhas ou as contas dos motores (pasta pessoal, raiz do disco, .claude, .codex). Aqui os dois não leem arquivos. Escolha uma pasta de projeto pra eles lerem.'
         : 'Os dois podem ler os arquivos de ' + (pasta.split(/[\\/]/).filter(Boolean).pop() || 'esta pasta') + ' (só leitura, nada é alterado) · ' + pasta;
-    setup.append(leituraInfo);
+    leituraInfo.title = leituraInfo.textContent;
+    leituraInfo.textContent = remoto ? 'Servidor: debate local, sem leitura dos arquivos remotos'
+      : ampla ? 'Pasta sensível: leitura de arquivos desativada'
+      : (pasta.split(/[\\/]/).filter(Boolean).pop() || 'Projeto') + ' · só leitura';
+    leituraInfo.classList.add('co-reading-scope');
+    d.querySelector('.co-dialog-head').append(leituraInfo);
     // cartoes NA ORDEM DA FALA: a esquerda e' quem comeca
     const grid = el('div', 'co-model-grid'); setup.append(grid);
     const models = {}; const cards = {};
@@ -217,6 +244,7 @@
     const info = el('p', 'co-info co-nota'); info.hidden = true; body.append(info);
     if (remoto && options.review) errorIn(alert, 'A revisão de código só funciona em painel de pasta local.');
     const status = el('div', 'co-status', ''); status.setAttribute('aria-live', 'polite'); status.hidden = true; body.append(status);
+    const progress = el('div', 'co-progress'); progress.hidden = true; progress.setAttribute('role', 'img'); body.append(progress);
     const transcript = el('div', 'co-transcript'); transcript.setAttribute('aria-label', 'Conversa entre Codex e Claude'); body.append(transcript);
     const vazio = el('p', 'co-vazio', 'Nada roda até você clicar em Iniciar debate.'); transcript.append(vazio);
     const intervention = el('textarea'); intervention.rows = 2; intervention.maxLength = 8000; intervention.placeholder = 'Acrescente uma orientação ou responda aos dois…';
@@ -225,7 +253,7 @@
     const history = select([['', 'Debates salvos…']], ''); history.className = 'co-salvos'; history.setAttribute('aria-label', 'Debates salvos');
     const start = button('Iniciar debate', 'co-primary'); const stop = button('Interromper', 'co-danger'); stop.hidden = true;
     const resume = button('Continuar discussão', 'co-primary'); resume.hidden = true;
-    const use = button('Levar conclusão para o campo', 'co-secondary'); use.hidden = true;
+    const use = button('Levar conclusão para o campo', 'co-primary'); use.hidden = true;
     const fresh = button('Novo debate', 'co-secondary'); fresh.hidden = true;
     const verify = button('Conferir se o código mudou', 'co-secondary'); verify.hidden = true;
     footer.append(history, el('span', 'co-espaco'), stop, verify, fresh, use, resume, start);
@@ -241,7 +269,10 @@
       if (!d.isConnected) return; ui.state = state;
       if (state.paneId === P.id) P.debateId = state.id;   // debate de OUTRO painel aberto pelo seletor nao troca o deste
       const running = state.status === 'running';
-      status.hidden = false; status.textContent = statusDoDebate(state) + ' · ' + leituraDoDebate(state);
+      status.hidden = false; status.textContent = statusDoDebate(state); status.title = leituraDoDebate(state);
+      pintarProgresso(progress, state);
+      leituraInfo.textContent = state.leitura ? (String(state.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'Projeto') + ' · só leitura' : state.semLeitura === 'remoto' ? 'Servidor: debate local, sem leitura dos arquivos remotos' : 'Leitura de arquivos desativada';
+      leituraInfo.title = leituraDoDebate(state);
       vazio.remove(); d.classList.add('co-conversa');
       setup.hidden = true; start.hidden = true; stop.hidden = !running; resume.hidden = running; fresh.hidden = running; history.hidden = running;
       interventionField.hidden = running; verify.hidden = !state.review || running;
@@ -250,11 +281,14 @@
       if (state.error) errorIn(alert, state.error); else if (running) alert.hidden = true;
       if (state.saveError && !ui.avisouGravacao) { ui.avisouGravacao = true; info.textContent = state.saveError; info.hidden = false; }
       const nearBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
+      let numeroFala = 0;
       for (const message of state.messages) {
+        if (DEBATEDORES.includes(message.speaker)) numeroFala++;
         let card = ui.cards.get(message.id);
         if (!card) {
           card = el('article', 'co-message ' + message.speaker); const header = el('header');
           header.append(logo(message.speaker), el('strong', '', nome(message.speaker)), el('span', 'co-message-model', message.model || ''));
+          if (message.speaker !== 'user') header.append(el('span', 'co-message-round', 'Rodada ' + Math.ceil(numeroFala / 2)));
           if (message.speaker !== 'user') header.append(el('span', 'co-message-model', 'esforço ' + ((typeof EF_PT === 'object' && EF_PT[message.effort]) || message.effort || 'padrão do modelo').toLowerCase()));
           card.append(header, el('div', 'co-message-body'), el('p', 'co-leu'), el('p', 'co-hint co-message-aviso'), el('span', 'co-message-state')); ui.cards.set(message.id, card); transcript.append(card);
         }
@@ -275,11 +309,15 @@
       history.options[0] ? history.options[0].after(o) : history.append(o);
     }
     start.onclick = async () => {
-      if (ui.starting) return; ui.starting = true; start.disabled = true; alert.hidden = true;
+      if (ui.starting || ui.loadingHistory) return; ui.starting = true; start.disabled = true; alert.hidden = true;
       try {
         if (!topic.value.trim()) throw new Error('Descreva o problema para os dois discutirem.');
+        ensureAccountsAvailable();
         if (ui.carregandoCodex) await ui.carregandoCodex;
+        if (!d.open) return;
         const snapshot = review.checked && !remoto ? check(await window.api.debateReview({ cwd: cwdGitDoPainel(P) })) : null;
+        if (!d.open) return;
+        ensureAccountsAvailable();
         const state = check(await window.api.debateStart({ paneId: P.id, cwd: P.cwd, remoto, topic: topic.value.trim(), context: include.checked ? contexto : '',
           rounds: rodadas, first: ordem[0], paidApproved: paid.checked, review: snapshot,
           models: Object.fromEntries(Object.entries(models).map(([engine, c]) => [engine, { model: c.model.value, effort: c.effort.value }])) }));
@@ -288,9 +326,9 @@
       } catch (error) { errorIn(alert, error); } finally { ui.starting = false; start.disabled = false; }
     };
     stop.onclick = async () => { try { stop.disabled = true; render(check(await window.api.debateStop(ui.state.id))); } catch (error) { errorIn(alert, error); } finally { stop.disabled = false; } };
-    resume.onclick = async () => { try { resume.disabled = true; alert.hidden = true; const s = check(await window.api.debateContinue({ id: ui.state.id, message: intervention.value, rounds: ui.state.rounds })); intervention.value = ''; render(s); } catch (error) { errorIn(alert, error); } finally { resume.disabled = false; } };
+    resume.onclick = async () => { if (ui.loadingHistory) return; try { resume.disabled = true; alert.hidden = true; ensureAccountsAvailable(); const s = check(await window.api.debateContinue({ id: ui.state.id, message: intervention.value, rounds: ui.state.rounds })); intervention.value = ''; render(s); } catch (error) { errorIn(alert, error); } finally { resume.disabled = false; } };
     use.onclick = async () => {
-      if (ui.state.status === 'running') return;
+      if (ui.loadingHistory || ui.state.status === 'running') return;
       if (ui.state.review) {
         try {
           const snapshot = check(await window.api.debateReview({ cwd: ui.state.review.cwd }));
@@ -309,13 +347,38 @@
         status.textContent = snapshot.hash === ui.state.review.hash ? 'O código continua igual ao que foi revisado.' : 'O código mudou. Esta revisão está desatualizada; inicie outra.';
       } catch (error) { errorIn(alert, error); }
     };
-    history.onchange = async () => { if (!history.value) return; try { const s = check(await window.api.debateGet(history.value)); transcript.replaceChildren(); ui.cards.clear(); render(s); } catch (error) { errorIn(alert, error); } };
+    let historyGeneration = 0;
+    const initialDebateId = P.debateId;
+    async function loadSaved(id) {
+      const generation = ++historyGeneration;
+      ui.loadingHistory = !!id;
+      for (const action of [start, resume, use, verify, fresh]) action.disabled = !!id;
+      if (!id) return;
+      try {
+        const response = await window.api.debateGet(id);
+        if (!d.open || P.morto || generation !== historyGeneration || history.value !== id) return;
+        const state = check(response);
+        if (state.id !== id) throw new Error('A resposta não corresponde ao debate escolhido. Tente novamente.');
+        transcript.replaceChildren(); ui.cards.clear(); render(state);
+      } catch (error) {
+        if (d.open && generation === historyGeneration) errorIn(alert, error);
+      } finally {
+        if (generation === historyGeneration) {
+          ui.loadingHistory = false;
+          for (const action of [start, resume, use, verify, fresh]) action.disabled = false;
+        }
+      }
+    }
+    history.onchange = () => loadSaved(history.value);
     try {
       const saved = check(await window.api.debateList());
+      if (!d.open || P.morto) return;
       for (const item of saved) { const option = el('option', '', item.topic + ' · ' + (labels[item.status] || item.status)); option.value = item.id; history.append(option); }
-      if (P.debateId && !options.review) render(check(await window.api.debateGet(P.debateId)));
-    } catch (error) { errorIn(alert, error); }
-    topic.focus();
+      if (initialDebateId && !options.review && !historyGeneration && !ui.starting && !ui.state) {
+        history.value = initialDebateId; await loadSaved(initialDebateId);
+      }
+    } catch (error) { if (d.open) errorIn(alert, error); }
+    if (d.open) topic.focus();
   }
   const TITULO_DEBATER = 'Debater com Codex e Claude (os dois leem o projeto; só roda quando você iniciar)';
   function pintarBotao(P, rodando) {
@@ -324,27 +387,36 @@
     b.title = rodando ? 'Debate em andamento — clique para acompanhar' : TITULO_DEBATER;
   }
   window.api.onDebateEvent?.(state => {
-    if (current && (current.state?.id === state.id || (current.starting && state.paneId === current.P.id))) current.render(state);
+    if (current && !current.loadingHistory && (current.state?.id === state.id || (current.starting && state.paneId === current.P.id))) current.render(state);
     const P = acharPainel(state.paneId); if (P) { P.debateId = state.id; pintarBotao(P, state.status === 'running'); }
   });
   async function health(P) {
+    if (!P || P.morto) return;
     const engine = P.engine;
     if (!['codex', 'claude'].includes(engine)) { note(P, 'O diagnóstico por sessão está disponível para Codex e Claude.'); return; }
     const d = dialog('Diagnóstico dos conectores', 'Configurado → carregado → última chamada observada. ' + nomeDoMotor(engine));
+    d.className += ' co-health-dialog';
     const body = el('div', 'co-dialog-body co-health'); d.append(body);
     const actions = el('footer', 'co-actions'); d.append(actions);
     const refresh = button('Atualizar diagnóstico', 'co-primary', load);
     const reload = button('Recarregar conectores', 'co-secondary', async () => {
       const gen = ++healthGeneration; reload.disabled = true; refresh.disabled = true;
       try {
-        const r = check(await window.api.mcpRecarregar({ engine, paneId: P.id }));
+        const r = check(await window.api.mcpRecarregar({ engine, paneId: P.id, remoto: remotoDoPane(P) }));
         if (!d.isConnected || gen !== healthGeneration) return;
         if (r.diagnostico) render(check(r.diagnostico));
         body.prepend(el('p', 'co-hint', r.aviso || 'O Codex aceitou a recarga; o resultado de uma chamada ainda precisa ser observado.'));
       }
       catch (error) { if (d.isConnected) body.prepend(el('p', 'co-error', error.message)); }
       finally { reload.disabled = engine !== 'codex'; refresh.disabled = false; }
-    }); actions.append(refresh, reload);
+    });
+    const manage = button('Gerenciar conectores', 'co-secondary', () => {
+      if (typeof janelaConectores === 'function') { d.close(); janelaConectores(P); }
+    });
+    manage.disabled = typeof janelaConectores !== 'function';
+    actions.append(manage);
+    const headActions = el('div', 'co-health-actions'); headActions.append(refresh, reload);
+    d.querySelector('.co-dialog-head').append(headActions);
     reload.disabled = engine !== 'codex';
     if (engine !== 'codex') reload.title = 'Claude aplica configurações na próxima abertura da sessão.';
     function render(r) {
@@ -355,24 +427,48 @@
         authenticationRequired: 'Precisa entrar na conta', cancelled: 'Cancelado', disabled: 'Desativado', pending: 'Aguardando',
         'needs-auth': 'Precisa entrar na conta', sessao_encerrada: 'Sessão encerrada', desconhecido: 'Estado não confirmado' };
       const chamadas = { em_andamento: 'Em andamento', sucesso: 'Concluída sem erro', falhou: 'Falhou', interrompida: 'Interrompida' };
+      const legend = el('div', 'co-health-legend');
+      legend.append(el('span', '', 'Conector'), el('span', '', 'Configurado · Carregado · Usado'), el('span', '', 'Última chamada'));
+      if (r.itens?.length) body.append(legend);
       for (const m of r.itens || []) {
-        const card = el('article', 'co-health-card'); card.append(el('h3', '', m.nome));
+        const card = el('article', 'co-health-card');
+        const name = el('div', 'co-health-name'); name.append(el('h3', '', m.nome));
+        const estado = estados[m.estado] || 'Estado não confirmado';
+        const detail = el('span', 'co-health-state', estado); name.append(detail);
+        if (Number.isInteger(m.ferramentas)) name.title = m.ferramentas + ' ferramentas no inventário';
         const stages = el('div', 'co-health-stages');
-        for (const [label, value] of [['Configurado', m.configurado], ['Carregado na sessão', m.carregado]])
-          stages.append(el('span', value === true ? 'yes' : 'unknown', label + ': ' + (value === true ? 'sim' : value === false ? 'não' : 'não confirmado')));
-        card.append(stages, el('p', 'co-hint', estados[m.estado] || 'Estado não confirmado'));
-        if (Number.isInteger(m.ferramentas)) card.append(el('p', 'co-hint', 'Ferramentas no inventário: ' + m.ferramentas));
         const call = m.ultimaChamada;
-        card.append(el('p', '', call ? 'Última chamada: ' + (chamadas[call.estado] || 'Sem estado confirmado') + ' · '
-          + (call.ferramenta || '') + ' · ' + new Date(call.quando).toLocaleString('pt-BR') : 'Nenhuma chamada observada nesta sessão.'));
-        if (call?.erro) card.append(el('p', 'co-error', call.erro)); body.append(card);
+        const failed = ['failed', 'authenticationRequired', 'needs-auth'].includes(m.estado);
+        const dados = [
+          ['Configurado', m.configurado, false],
+          ['Carregado na sessão', m.carregado, failed],
+          ['Usado', call ? true : null, call?.estado === 'falhou'],
+        ];
+        for (const [label, value, fault] of dados) {
+          const texto = label + ': ' + (value === true ? 'sim' : value === false ? 'não' : 'não confirmado');
+          const station = el('span', 'co-health-station ' + (fault ? 'failed' : value === true ? 'yes' : 'unknown'));
+          station.title = texto + (fault ? ' · ' + (label === 'Usado' ? 'A última chamada falhou' : estado) : '');
+          station.setAttribute('aria-label', station.title);
+          station.append(el('span', 'co-visually-hidden', texto)); stages.append(station);
+        }
+        const last = el('div', 'co-health-last');
+        if (call) {
+          const date = new Date(call.quando);
+          last.append(el('span', '', chamadas[call.estado] || 'Sem estado confirmado'));
+          const time = el('time', '', Number.isNaN(date.getTime()) ? 'Horário não informado' : date.toLocaleString('pt-BR'));
+          if (!Number.isNaN(date.getTime())) time.setAttribute('datetime', date.toISOString());
+          last.append(time); last.title = call.ferramenta || '';
+        } else last.append(el('span', '', 'Nunca'), el('span', 'co-visually-hidden', 'Nenhuma chamada observada nesta sessão.'));
+        card.append(name, stages, last);
+        if (call?.erro) { const details = el('details', 'co-health-error'); details.append(el('summary', '', 'Ver erro da última chamada'), el('p', 'co-error', call.erro)); card.append(details); }
+        body.append(card);
       }
     }
     async function load() {
       const gen = ++healthGeneration; refresh.disabled = true; reload.disabled = true;
       body.replaceChildren(el('p', 'co-hint', 'Consultando os conectores…'));
       try {
-        const r = check(await window.api.mcpDiagnostico({ engine, paneId: P.id })); if (!d.isConnected || gen !== healthGeneration) return;
+        const r = check(await window.api.mcpDiagnostico({ engine, paneId: P.id, remoto: remotoDoPane(P) })); if (!d.isConnected || gen !== healthGeneration) return;
         render(r);
       } catch (error) { if (d.isConnected) body.replaceChildren(el('p', 'co-error', error.message)); }
       finally { refresh.disabled = false; reload.disabled = engine !== 'codex'; }

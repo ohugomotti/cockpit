@@ -509,7 +509,7 @@ test('tela: resumo cru na hora, depois o de 3 palavras; grava marcado como autom
   assert.equal(c.renomeados.length, 0, 'sem endereco da conversa ainda: espera');
   c.aoNascerSessao(P, { id: 'sess-1', file: 'x.jsonl' });
   await esperar(5);
-  assert.deepEqual(JSON.parse(JSON.stringify(c.renomeados[0])), { engine: 'claude', id: 'sess-1', nome: 'Campanha Remarketing Meta', auto: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(c.renomeados[0])), { engine: 'claude', id: 'sess-1', nome: 'Campanha Remarketing Meta', auto: true, remoto: null });
   c.aoNascerSessao(P, { id: 'sess-1', file: 'x.jsonl' });
   await esperar(5);
   assert.equal(c.renomeados.length, 1, 'nao regrava o mesmo nome');

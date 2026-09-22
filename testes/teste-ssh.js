@@ -9,7 +9,7 @@
      3. a mensagem que pega o motor caido e reenviada sozinha */
 const fs = require('fs');
 const path = require('path');
-const { RAIZ, versaoAnterior } = require('./raiz');
+const { RAIZ, versaoAnterior, pegarBloco } = require('./raiz');
 const NL = String.fromCharCode(10);
 
 let falhas = 0;
@@ -66,7 +66,8 @@ checa('e diz que foi o SERVIDOR quando for remoto', /ev\.remoto\s*\?\s*'A conex√
 
 console.log(NL + '3) a mensagem nao se perde quando o motor caiu calado');
 const j = app.indexOf('const foi = await window.api.paneSend(pacote());');
-const trechoEnvio = j < 0 ? '' : app.slice(j, j + 1400);
+const corpoEnvio = pegarBloco(app, 'async function send(', 'send');
+const trechoEnvio = j < 0 ? '' : corpoEnvio.slice(corpoEnvio.indexOf('const foi = await window.api.paneSend(pacote());'));
 checa('acha o ponto do envio', j > 0);
 checa('quando o motor esta morto, o painel religa sozinho',
   /paneStart\((opcoesDeStart\(P\)|\{[\s\S]{0,200}resumeId)/.test(trechoEnvio));

@@ -1,0 +1,13 @@
+{
+  "name": "cockpit-windows-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ferramentas locais para gerar e verificar o instalador do Cockpit",
+  "devDependencies": {
+    "@electron/asar": "4.3.0",
+    "electron-builder": "26.15.3"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}

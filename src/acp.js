@@ -28,6 +28,7 @@
         arquivo que nao existe devolve conteudo vazio (o Zed faz igual). */
 
 const fs = require('fs');
+const { StringDecoder } = require('node:string_decoder');
 const path = require('path');
 
 const COMANDO_PADRAO = 'gemini --acp';
@@ -90,7 +91,7 @@ const corta = (s, n) => { const t = String(s == null ? '' : s); return t.length 
 /* O conteudo de um passo pode ter texto, um diff (arquivo que muda) e imagem.
    O diff vira a mesma "mudanca" que a tela ja desenha pro Claude. Imagem tem
    o mesmo teto do Claude: e' pra ver o print, nao pra carregar um filme no IPC. */
-function conteudoDaFerramenta(itens) {
+function conteudoDaFerramenta(itens, completo = false) {
   let texto = '';
   let mudanca = null;
   const imagens = [];
@@ -105,8 +106,8 @@ function conteudoDaFerramenta(itens) {
     } else if (it.type === 'diff') {
       mudanca = {
         path: String(it.path || ''),
-        antes: it.oldText == null ? '' : corta(it.oldText, LIM_DIFF),
-        depois: corta(it.newText, LIM_DIFF),
+        antes: it.oldText == null ? '' : completo ? String(it.oldText) : corta(it.oldText, LIM_DIFF),
+        depois: completo ? String(it.newText == null ? '' : it.newText) : corta(it.newText, LIM_DIFF),
         tipo: it.oldText == null ? 'write-novo' : 'edit',
       };
     } else if (it.type === 'terminal') {
@@ -122,7 +123,7 @@ const NOME_POR_KIND = {
   read: 'Read', edit: 'Edit', delete: 'Excluindo', move: 'Movendo', search: 'Grep',
   execute: 'Bash', think: 'Pensando', fetch: 'WebFetch', switch_mode: 'Trocando o modo',
 };
-function passoDaFerramenta(tc) {
+function passoDaFerramenta(tc, completo = false) {
   const t = tc || {};
   const kind = String(t.kind || 'other');
   const loc = Array.isArray(t.locations) && t.locations[0] && t.locations[0].path;
@@ -130,14 +131,34 @@ function passoDaFerramenta(tc) {
   const doInput = raw.command || raw.cmd || raw.file_path || raw.path || raw.absolute_path || raw.pattern || raw.query || raw.url;
   const titulo = String(t.title || '').replace(/\s+/g, ' ').trim();
   const name = NOME_POR_KIND[kind] || titulo || 'Ferramenta';
-  let arg = String(loc || doInput || titulo || '').slice(0, 300);
+  let arg = String((kind === 'execute' ? doInput || loc : loc || doInput) || (completo ? t.title : titulo) || '');
+  if (!completo) arg = arg.slice(0, 300);
   if (arg === name) arg = '';   // senao a linha do passo repetia o mesmo texto duas vezes
   return { name, arg, kind, titulo };
 }
 /* do tool_call, so' o que o cartao de permissao pode precisar depois: guardar
-   o update inteiro segurava imagem base64/diff/rawOutput de cada passo ate' o
-   fim do turno (agente de navegador = centenas de MB) */
-const enxuto = (u) => ({ title: u && u.title, kind: u && u.kind, locations: u && u.locations, rawInput: u && u.rawInput });
+   o update inteiro segurava imagem base64/rawOutput de cada passo ate' o
+   fim do turno (agente de navegador = centenas de MB). Diffs ficam inteiros
+   porque podem ser a única fonte de um pedido posterior de aprovação. */
+const enxuto = (u) => {
+  const out = {};
+  for (const key of ['title', 'kind', 'locations', 'rawInput']) if (u && u[key] !== undefined) out[key] = u[key];
+  // Guarda só os diffs para um pedido posterior por ID, nunca imagens/rawOutput.
+  const diffs = u && Array.isArray(u.content) ? u.content.filter(it => it && it.type === 'diff') : [];
+  if (diffs.length) out.content = diffs;
+  return out;
+};
+function dadosDaPermissao(tc, anterior = {}) {
+  const merged = { ...(anterior.bruto || {}), ...enxuto(tc) };
+  const passo = passoDaFerramenta(merged, true);
+  const diffs = (merged.content || []).filter(it => it.type === 'diff');
+  const mudanca = conteudoDaFerramenta(diffs, true).mudanca || anterior.mudanca || null;
+  let detail = passo.arg;
+  // O comparador visual limita 400 linhas. O texto integral continua acessível.
+  const diffEmTexto = diffs.length > 1 || diffs.some(it => String(it.oldText ?? '').split('\n').length > 400 || String(it.newText ?? '').split('\n').length > 400);
+  if (diffEmTexto) detail += '\n\n' + diffs.map(it => String(it.path || '') + '\nAntes:\n' + String(it.oldText ?? '') + '\nDepois:\n' + String(it.newText ?? '')).join('\n\n');
+  return { passo, detail, mudanca, action: passo.kind, target: mudanca?.path || merged.locations?.[0]?.path || '' };
+}
 
 /* A chave do "sempre permitir". O kind do protocolo tem 9 valores e "other"
    cobre MCP, web, memoria... liberar "other" inteiro liberaria tudo isso de
@@ -213,6 +234,7 @@ function traduzirUpdate(st, upd) {
       f.temMudanca = true; f.mudanca = c.mudanca;
       out.push({ kind: 'tool-mudanca', id, mudanca: c.mudanca });
     }
+    f.bruto = { ...(f.bruto || {}), ...enxuto(upd) };
     const status = upd.status;
     if (status === 'completed' || status === 'failed') {
       let saida = c.texto;
@@ -427,9 +449,7 @@ function criarAcp(dep) {
     const opcoes = Array.isArray(p.options) ? p.options : [];
     // o pedido pode vir so' com o toolCallId: o resto ja veio no tool_call
     const antes = st.ferramentas.get(String(tc.toolCallId || '')) || {};
-    const passo = passoDaFerramenta({ ...(antes.bruto || {}), ...tc });
-    const c = conteudoDaFerramenta(tc.content);
-    const mudanca = c.mudanca || antes.mudanca || null;
+    const { passo, detail, mudanca, action, target } = dadosDaPermissao(tc, antes);
     const chave = chaveDePermissao(passo);
     const rotulo = rotuloDoPasso(passo);
     const porBypass = st.approval === 'bypass';
@@ -446,7 +466,7 @@ function criarAcp(dep) {
     st.pedidos.set(m.id, { opcoes });
     aoPedirPermissao(st.paneId, m.id, {
       title: (st.info.title || st.info.name || 'O agente') + ' quer: ' + (passo.titulo || rotulo),
-      detail: passo.arg, tool: chave, rotulo, mudanca,
+      detail, tool: chave, rotulo, mudanca, action, target,
     });
   }
 
@@ -595,10 +615,11 @@ function criarAcp(dep) {
     try { proc = spawnBin(bin, args, { cwd: st.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { throw new Error('Não consegui rodar "' + st.comando + '": ' + (e && e.message || e)); }
     st.proc = proc;
-    proc.stdin.on('error', () => {});
-    proc.stdout.on('data', (chunk) => {
+    const decoder = new StringDecoder('utf8');
+    let saidaFechada = false, quedaTratada = false;
+    const lerSaida = (texto, final = false) => {
       if (paineis.get(paneId) !== st) return;
-      st.buf += chunk.toString('utf8');
+      st.buf += texto;
       let i;
       while ((i = st.buf.indexOf('\n')) >= 0) {
         const linha = st.buf.slice(0, i).trim(); st.buf = st.buf.slice(i + 1);
@@ -606,9 +627,19 @@ function criarAcp(dep) {
         // formato inesperado de um agente novo nao pode derrubar o app inteiro
         try { tratarLinha(st, linha); } catch (e) { st.erro = (st.erro + ' ' + (e && e.message || e)).slice(-1500); }
       }
-    });
+      if (final && st.buf.trim()) {
+        const linha = st.buf.trim(); st.buf = '';
+        try { tratarLinha(st, linha); } catch (e) { st.erro = (st.erro + ' ' + (e && e.message || e)).slice(-1500); }
+      }
+    };
+    const fecharSaida = () => { if (!saidaFechada) { saidaFechada = true; lerSaida(decoder.end(), true); } };
+    proc.stdout.on('data', (chunk) => { if (!saidaFechada) lerSaida(decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); });
+    proc.stdout.on('end', fecharSaida);
     proc.stderr.on('data', (d) => { st.erro = (st.erro + d.toString('utf8')).slice(-1500); });
     const caiu = (codigo) => {
+      if (quedaTratada) return;
+      quedaTratada = true;
+      fecharSaida();
       const motivo = motivoDaQueda(st, codigo);
       // escrever num stdin morto nao lanca: sem isto um mandar() novo esperava o
       // prazo inteiro (ate' 240s) em silencio, em vez de falhar com o motivo
@@ -626,6 +657,11 @@ function criarAcp(dep) {
       try { aoCair && aoCair(paneId); } catch {}
       emit(paneId, 'engine-down', { motivo, codigo });
     };
+    proc.stdin.on('error', (e) => {
+      st.erro = (st.erro + ' ' + (e && e.message || e)).slice(-1500);
+      caiu(-1);
+      try { matarProcesso(proc); } catch {}
+    });
     proc.on('close', caiu);
     proc.on('error', (e) => { st.erro += ' ' + (e && e.message || e); caiu(-1); });
 
@@ -811,6 +847,10 @@ function criarAcp(dep) {
     paineis.delete(paneId);
   }
 
+  function pararTodos() {
+    for (const paneId of [...paineis.keys()]) parar(paneId);
+  }
+
   function responderPermissao(paneId, rpcId, allow) {
     const st = paineis.get(paneId);
     if (!st) return false;
@@ -840,7 +880,7 @@ function criarAcp(dep) {
   }
 
   return {
-    start, enviar, interromper, parar, responderPermissao, setModelo, comandos,
+    start, enviar, interromper, parar, pararTodos, responderPermissao, setModelo, comandos,
     sessoes: () => listarSessoes(pastaDados),
     historico: (id, file, max) => historicoDaSessao(file && fs.existsSync(file) ? file : arquivoDaSessao(pastaDados, id), max || 60),
     arquivoDe: (id) => arquivoDaSessao(pastaDados, id),
@@ -849,6 +889,6 @@ function criarAcp(dep) {
 
 module.exports = {
   criarAcp, traduzirUpdate, comandoEmPartes, modoDoAgente, escolherOpcao, passoDaFerramenta, chaveDePermissao,
-  conteudoDaFerramenta, lerChaveGemini, listarSessoes, historicoDaSessao, arquivoDaSessao, anotar,
+  conteudoDaFerramenta, dadosDaPermissao, lerChaveGemini, listarSessoes, historicoDaSessao, arquivoDaSessao, anotar,
   COMANDO_PADRAO, MODOS_EQUIVALENTES,
 };

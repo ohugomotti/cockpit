@@ -48,8 +48,10 @@ function achar(no, classe) {
 function montarCtx() {
   const cmp = new El('div'); cmp.className = 'pane-cmp';
   const painel = new El('div'); painel.appendChild(cmp);
+  const atualizacoes = [];
   const ctx = {
     ...globaisFalsos(), console,
+    window: { CockpitUI: { refresh: () => atualizacoes.push('refresh') } },
     document: { createElement: (t) => new El(t) },
     $: (sel, raiz) => {
       const classe = String(sel).replace(/^\./, '');
@@ -64,13 +66,13 @@ function montarCtx() {
   };
   vm.createContext(ctx);
   for (const f of ['function roboDoPainel(', 'function pintarRobos(']) vm.runInContext(pegarBloco(app, f, f), ctx);
-  return { ctx, painel };
+  return { ctx, painel, atualizacoes };
 }
 
 /* ---------- a tela espelhando a lista ---------- */
 console.log('1) a tela espelha a lista que chega');
 {
-  const { ctx, painel } = montarCtx();
+  const { ctx, painel, atualizacoes } = montarCtx();
   const P = { id: 'p1', el: painel };
   ctx.panes.set('p1', P);
 
@@ -88,6 +90,7 @@ console.log('1) a tela espelha a lista que chega');
 
   ctx.roboDoPainel(P, { tarefas: [] });
   checa('lista vazia = chip some da tela', achar(painel, 'p-robos') === null);
+  checa('cada lista notifica a navegacao nova, inclusive ao esvaziar', atualizacoes.length === 4, String(atualizacoes.length));
 }
 
 console.log('2) o relogio do robo que continua NAO reinicia quando outro entra');
@@ -124,6 +127,17 @@ console.log('4) o main le o evento oficial, nao adivinha por texto');
   // o que NAO pode voltar: o palpite por texto que nunca fechava o chip
   checa('nao adivinha mais pelo texto do resultado', !main.includes('LANCOU_ROBO') && !main.includes('Async agent launched successfully'));
   checa('nao depende mais da <task-notification> (ela nao sai no stdout)', !main.includes("content.includes('<task-notification>')"));
+}
+
+console.log('5) compatibilidade sem a camada nova de navegacao');
+{
+  const { ctx, painel } = montarCtx();
+  delete ctx.window.CockpitUI;
+  const P = { id: 'legado', el: painel };
+  ctx.roboDoPainel(P, { tarefas: [{ id: 'b1', desc: 'Revisar' }] });
+  checa('sem CockpitUI o estado e o chip continuam funcionando', P.robos.size === 1 && !!achar(painel, 'p-robos'));
+  ctx.roboDoPainel(P, { tarefas: [] });
+  checa('sem CockpitUI a lista vazia tambem remove o chip', P.robos.size === 0 && achar(painel, 'p-robos') === null);
 }
 
 console.log(falhas ? '\n' + falhas + ' FALHA(S)' : '\nteste-robos: tudo ok');

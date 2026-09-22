@@ -1,0 +1,84 @@
+/* Pop-ups do projeto: dados e handlers continuam nos componentes existentes. */
+.ck-app .co-dialog { --co-acao-fundo:var(--accent); --co-acao-texto:#fff; font-size:13px; box-shadow:0 16px 60px #0003; }
+.ck-app .co-dialog::backdrop { background:transparent; }
+.ck-app .co-dialog-head { padding:16px 20px 12px; gap:10px; align-items:flex-start; flex-wrap:wrap; }
+.ck-app .co-dialog h2 { font:600 16px/1.35 var(--font-ui); margin:0; }
+.ck-app .co-dialog-head>div:first-child { flex:1; min-width:0; }
+.ck-app .co-dialog-head p { font-size:11px; margin:5px 0 0; }
+.ck-app .co-close { min-height:28px; font-size:11px; }
+.ck-app .co-dialog-body { padding:16px 20px; }
+.ck-app .co-actions { padding:12px 20px; gap:8px; }
+.ck-app .co-actions button { padding:6px 10px; min-height:30px; font-size:12px; }
+.ck-app .co-debate-dialog { width:min(760px,calc(100vw - 24px)); height:min(680px,calc(100dvh - 24px)); }
+.ck-app .co-debate-dialog .co-dialog-head>div:first-child>p { display:none; }
+.ck-app .co-dialog .co-reading-scope { flex-basis:100%; padding:0; border:0; background:none; margin:0; font:11px/1.5 var(--mono); color:var(--fg-dim); overflow-wrap:anywhere; }
+.ck-app .co-dialog .co-reading-scope.co-aviso { color:var(--yellow); }
+.ck-app .co-participant { border:1px solid var(--line); padding:10px 12px 2px; }
+.ck-app .co-part-head .co-logo { width:24px;height:24px;align-items:center;justify-content:center; }
+.ck-app .co-part-head .co-logo svg { width:24px;height:24px; }
+.ck-app .co-field { gap:4px; margin-bottom:10px; }
+.ck-app .co-dialog input,.ck-app .co-dialog select,.ck-app .co-dialog textarea { padding:7px 8px; }
+.ck-app .co-check { font-size:12px; margin:8px 0; }
+.ck-app .co-vazio { padding:12px; border:0; font-size:11px; }
+.ck-app .co-message { border:1px solid var(--line); background:transparent; padding:12px 14px; }
+.ck-app .co-message-round { margin-left:auto; font:11px var(--mono); color:var(--fg-dim); }
+.ck-app .co-status { padding:4px 0 8px; font-size:12px; }
+.ck-app .co-progress { display:flex; flex:none; gap:4px; height:4px; margin:0 0 14px; }
+.ck-app .co-progress-step { flex:1; min-width:2px; border-radius:4px; background:var(--line); }
+.ck-app .co-progress-step.completed { background:var(--green); }
+.ck-app .co-progress-step.running { background:var(--accent); }
+.ck-app .co-progress-step.failed,.ck-app .co-progress-step.interrupted { background:var(--red); }
+.ck-app .co-health-dialog { width:min(640px,calc(100vw - 24px)); height:fit-content; max-height:calc(100dvh - 24px); }
+.ck-app .co-health-dialog .co-dialog-body { flex:0 1 auto; }
+.ck-app .co-health-actions { display:flex; gap:6px; width:100%; }
+.ck-app .co-health-actions button { padding:5px 8px; min-height:28px; border:1px solid var(--line); border-radius:5px; font-size:11px; }
+.ck-app .co-health-actions button:disabled { opacity:.55; }
+.ck-app .co-health-legend,.ck-app .co-health-card { display:grid; grid-template-columns:minmax(90px,1fr) 180px minmax(110px,1fr); align-items:center; gap:12px; }
+.ck-app .co-health-legend { color:var(--fg-dim); font-size:9px; padding:0 0 8px; }
+.ck-app .co-health-legend>:nth-child(2) { text-align:center; }
+.ck-app .co-health-legend>:last-child { text-align:right; }
+.ck-app .co-health-card { border:0; border-top:1px solid var(--line); border-radius:0; padding:12px 0; margin:0; }
+.ck-app .co-health-card h3 { font-size:12px; margin:0 0 2px; overflow-wrap:anywhere; }
+.ck-app .co-health-state { font-size:10px; color:var(--fg-dim); }
+.ck-app .co-health-stages { display:flex; flex-wrap:nowrap; justify-content:space-between; gap:0; position:relative; margin:0 17px; }
+.ck-app .co-health-stages:before { content:''; position:absolute; height:1px; background:var(--line); left:4px;right:4px;top:5px; }
+.ck-app .co-health-stages .co-health-station { position:relative; width:11px; height:11px; padding:0; border-radius:50%; border:1px solid var(--fg-dim); background:var(--raised); }
+.ck-app .co-health-station.yes { background:var(--green); border-color:var(--green); }
+.ck-app .co-health-station.failed { background:var(--red); border-color:var(--red); box-shadow:0 0 0 3px color-mix(in srgb,var(--red) 15%,transparent); }
+.ck-app .co-health-last { display:flex; flex-direction:column; gap:2px; font:10px/1.5 var(--mono); text-align:right; color:var(--fg-dim); overflow-wrap:anywhere; }
+.ck-app .co-health-error { grid-column:1/-1; font-size:11px; }
+.ck-app .co-health-error summary { cursor:pointer; color:var(--red); }
+.ck-app .co-health-error .co-error { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; }
+.co-visually-hidden { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip-path:inset(50%); white-space:nowrap; border:0!important; }
+.ck-app .quadro-top { min-height:44px; padding:8px 12px; flex-wrap:wrap; gap:8px; }
+.ck-app .quadro-dica { display:flex; gap:12px; font-size:11px; }
+.ck-app .quadro-dica>span { display:inline-flex; align-items:center; gap:4px; }
+.ck-app .quadro-dica svg { width:18px; height:18px; }
+.ck-app .quadro-icon { display:inline-flex; justify-content:center; align-items:center; width:30px; height:30px; padding:5px; flex:none; }
+.ck-app .quadro-icon svg { width:16px; height:16px; }
+.ck-app #quadroPrompt { margin-left:auto; min-height:30px; order:1; }
+.ck-app #quadroFechar { order:2; }
+@media(max-width:700px) {
+ .ck-app .co-debate-dialog .co-model-grid { grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:6px; }
+ .ck-app .co-dialog-head,.ck-app .co-dialog-body,.ck-app .co-actions { padding:12px; }
+ .ck-app .co-health-legend,.ck-app .co-health-card { grid-template-columns:minmax(75px,1fr) 140px minmax(85px,1fr); gap:8px; }
+ .ck-app .co-health-stages { margin:0 10px; }
+ .ck-app .co-inverter { padding:6px; font-size:11px; }
+ .ck-app .quadro-dica { gap:6px; }
+}
+@media(max-width:460px) {
+ .ck-app .co-health-legend>:nth-child(2) { font-size:8px; }
+ .ck-app .co-health-legend,.ck-app .co-health-card { grid-template-columns:minmax(70px,1fr) 122px; }
+ .ck-app .co-health-legend>:last-child { display:none; }
+ .ck-app .co-health-last { grid-column:1/-1; flex-direction:row; justify-content:space-between; }
+ .ck-app .co-debate-dialog .co-model-grid { grid-template-columns:1fr; }
+ .ck-app .quadro-dica { display:none; }
+}
+.ck-result-group { padding:12px 10px 5px; color:var(--fg-dim); font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+.ck-model-context { margin-left:auto; font:10px var(--mono); color:var(--fg-dim); }
+.ck-effort-bars { display:inline-flex; align-items:flex-end; gap:5px; }
+.ck-effort-level { min-width:28px; min-height:34px; display:flex; justify-content:center; align-items:flex-end; padding:5px 8px; border:1px solid transparent; border-radius:5px; }
+.ck-effort-level>span { width:7px; background:var(--fg-dim); border-radius:2px; }
+.ck-effort-level.ck-selected { border-color:var(--accent); }
+.ck-effort-level.ck-selected>span { background:var(--accent); }
+.ck-effort-name { font-size:11px; margin-left:10px; color:var(--fg-dim); }

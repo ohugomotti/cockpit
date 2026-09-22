@@ -213,6 +213,7 @@ def modo_teste(args):
         pass
     print("modelo carregado em %.1fs, aquecido em %.1fs no total | RAM %.0f MB"
           % (t_carga, time.time() - t0, rss_mb()), flush=True)
+    falhas = 0
     for arq in arquivos:
         try:
             dados = ler_pcm(arq) if eh_pcm else ler_wav(arq)
@@ -223,9 +224,10 @@ def modo_teste(args):
             print("%s | audio %.1fs | levou %.2fs (%.0fx tempo real) | %s"
                   % (os.path.basename(arq), dur, dt, (dur / dt) if dt > 0 else 0, texto or "(vazio)"), flush=True)
         except Exception as e:
+            falhas += 1
             print("%s | ERRO: %s" % (os.path.basename(arq), e), flush=True)
     print("RAM ao final %.0f MB" % rss_mb(), flush=True)
-    return 0
+    return 1 if falhas else 0
 
 
 def modo_ouvinte():
@@ -262,6 +264,8 @@ def modo_ouvinte():
         try:
             pedido = json.loads(linha)
         except Exception:
+            continue
+        if not isinstance(pedido, dict):
             continue
         ident = pedido.get("id")
         try:

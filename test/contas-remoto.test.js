@@ -66,9 +66,9 @@ function spawnFalso(bin, args, opts) {
     const i = lista.indexOf('--');
     // sonda de multiplexing (-V, -O check): sem resposta, o main fica no modo simples
     const script = i >= 0 ? lista[i + 1] : 'exit 0';
-    const env = { ...process.env, HOME: HOME_VPS, SHELL: SHELL_DO_SERVIDOR, PATH: BIN_VPS + path.delimiter + process.env.PATH };
+    const env = { ...process.env, HOME: HOME_VPS, SHELL: SHELL_DO_SERVIDOR, PATH: BIN_VPS + path.delimiter + path.dirname(SH) + path.delimiter + process.env.PATH };
     delete env.CLAUDE_CONFIG_DIR;
-    return cpReal.spawn(SH, ['-c', script], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    return cpReal.spawn(SH, ['-c', script], { env, stdio: opts?.stdio || ['ignore', 'pipe', 'pipe'] });
   }
   // nada de verdade roda neste PC (nem claude, nem codex): so' fica anotado
   return cpReal.spawn(SH, ['-c', 'exit 127'], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -165,7 +165,10 @@ function telaDeContas(extras) {
     mostrarAviso: (o) => ctx.avisos.push(o),
     setFocus: (P) => { ctx.focusPane = P; },
     contaAcao: (P, acao) => chamadas.push('contaAcao:' + P.id + ':' + acao),
-    destravarPainel: () => {}, setDot: () => {},
+    destravarPainel: () => {}, setDot: () => {}, devolverFilaAoCampo: () => {}, note: () => {},
+    pintarCartaoConta: () => {}, carregarUsoSidebar: () => {}, savePanes: () => {},
+    capacidadesDaConta: async () => ({login:true,logout:true}),
+    prepararMudancaDaConta: async (_engine,lugar,acao) => { if(acao === "logout" && !ctx.confirmar) return null; return {liberar() {}}; },
     window: { api: { paneStop: async ({ paneId }) => { chamadas.push('stop:' + paneId); return true; } } },
     chamadas,
     ...(extras || {}),
@@ -190,12 +193,14 @@ function telaDeContas(extras) {
   return { ctx, chamadas, painel };
 }
 
-test('a conta do Claude numa aba de servidor é a do servidor; a dos outros motores é sempre do PC', () => {
+test('a conta de cada motor numa aba de servidor pertence ao destino selecionado', () => {
   const { ctx } = telaDeContas();
   const vps = ctx.abaPorId('vps');
   assert.deepEqual(JSON.parse(JSON.stringify(ctx.lugarDaConta('claude', vps))),
     { remoto: { host: '203.0.113.10', usuario: 'hugo', chave: 'C:\\k', caminhoRemoto: '~' }, chave: 'hugo@203.0.113.10', rotulo: 'VPS · hugo@203.0.113.10' });
-  assert.equal(ctx.lugarDaConta('codex', vps).chave, 'pc');
+  assert.equal(ctx.lugarDaConta('codex', vps).chave, 'hugo@203.0.113.10');
+  assert.equal(ctx.lugarDaConta('gemini', vps).remoto.host, '203.0.113.10');
+  assert.equal(ctx.lugarDaConta('acp', vps).remoto.host, '203.0.113.10');
   assert.equal(ctx.lugarDaConta('claude', ctx.abaPorId('pc')).rotulo, 'PC');
   // a lateral segue a aba ATIVA
   assert.equal(ctx.lugarDaContaAtiva('claude').chave, 'pc');
@@ -324,9 +329,9 @@ test('lerConta separa status e token, e explica quando o claude não existe no s
 test('linha do login no servidor: Windows (cmd) e Mac (sh) não expandem o $SHELL aqui', () => {
   const r = { host: '203.0.113.10', usuario: 'hugo', chave: 'C:\\Users\\hugom\\.ssh\\chave_vps' };
   assert.equal(cr.linhaTerminal(r, 'login', true),
-    'ssh -t -i "C:\\Users\\hugom\\.ssh\\chave_vps" -o StrictHostKeyChecking=accept-new hugo@203.0.113.10 "exec ${SHELL:-/bin/sh} -lc \'claude auth login\'"');
+    'ssh -t -i "C:\\Users\\hugom\\.ssh\\chave_vps" -p 22 -o StrictHostKeyChecking=accept-new hugo@203.0.113.10 "exec ${SHELL:-/bin/sh} -lc \'claude auth login\'"');
   assert.equal(cr.linhaTerminal({ ...r, chave: '/Users/h/.ssh/k' }, 'logout', false),
-    "ssh -t -i '/Users/h/.ssh/k' -o StrictHostKeyChecking=accept-new hugo@203.0.113.10 'exec ${SHELL:-/bin/sh} -lc '\\''claude auth logout'\\'''");
+    "ssh -t -i '/Users/h/.ssh/k' -p 22 -o StrictHostKeyChecking=accept-new hugo@203.0.113.10 'exec ${SHELL:-/bin/sh} -lc '\\''claude auth logout'\\'''");
   assert.equal(cr.linhaTerminal(r, 'status', true), null, 'status nao e interativo');
   assert.equal(cr.linhaTerminal({ ...r, host: '-oProxyCommand=x' }, 'login', true), null);
   assert.equal(cr.linhaTerminal({ ...r, chave: 'C:\\%TEMP%\\k' }, 'login', true), null);
@@ -353,7 +358,8 @@ test('guardar e listar contas NO SERVIDOR, sem tocar no PC', { skip: pular }, as
   assert.ok(arquivos.every((f) => /^claude__[A-Za-z0-9%._~-]+\.json$/.test(f)), 'nome com caractere perigoso: ' + arquivos);
   assert.equal(fs.readFileSync(path.join(CONTAS_VPS, 'claude__trabalho.json'), 'utf8'), credVps('sk-vps-TRABALHO'));
   const lista = await chamar('contas:listar', { engine: 'claude', remoto: REMOTO });
-  assert.deepEqual(lista, [{ apelido: "d'avó (2)", atual: true }, { apelido: 'trabalho', atual: false }]);
+  assert.deepEqual(lista.map(({apelido,atual})=>({apelido,atual})), [{ apelido: "d'avó (2)", atual: true }, { apelido: 'trabalho', atual: false }]);
+  assert.ok(lista.every(p=>p.podeUsar && !p.precisaLogin && p.precisaRenovar));
   assert.ok(!fs.readdirSync(CONTAS_VPS).some((f) => f.startsWith('.')), 'sobrou temporario na pasta do servidor');
   pcIntacto();
   assert.deepEqual(spawnsDeClaudeLocal(), [], 'rodou claude local');
@@ -532,4 +538,82 @@ test('sem remoto, os canais continuam no PC (compatível com o formato antigo)',
   assert.deepEqual(await chamar('contas:listar', 'claude'), []);
   assert.deepEqual(await chamar('contas:listar', { engine: 'claude' }), []);
   assert.equal((await chamar('contas:disponivel', 'claude')).ok, process.platform === 'win32');
+});
+test('indicação remota falsy inválida nunca troca nem consulta conta local', async () => {
+  const before = spawnsDeClaudeLocal().length;
+  for (const remoto of [false, 0, '']) {
+    const change = await chamar('contas:trocar', { engine: 'codex', apelido: 'x', remoto });
+    assert.ok(change.error);
+    const read = await chamar('conta:ler', { engine: 'claude', remoto });
+    assert.equal(read.erro, true);
+  }
+  assert.equal(spawnsDeClaudeLocal().length, before);
+  pcIntacto();
+});
+test('contas Claude usam a porta selecionada no SSH e no terminal de autenticação', async () => {
+  const remote = { ...REMOTO, porta: 2222 };
+  const before = spawns.length;
+  await chamar('contas:listar', { engine: 'claude', remoto: remote });
+  const calls = spawns.slice(before).filter(s => /^ssh(\.exe)?$/i.test(path.basename(s.bin)) && s.args.includes('--'));
+  assert.ok(calls.length > 0);
+  for (const call of calls) assert.equal(call.args[call.args.indexOf('-p') + 1], '2222');
+  const login = await chamar('auth:acao', { engine: 'claude', acao: 'login', remoto: remote });
+  assert.match(login.terminal, /-p 2222 /);
+  pcIntacto();
+});
+
+test('server rejects truncated JSON, unrelated JSON and expired nonrenewable profiles', { skip: pular }, async () => {
+  const original = fs.readFileSync(CRED_VPS, 'utf8');
+  for (const [name, text] of [['truncated', '{"token":'], ['unrelated', '{"foo":1}'], ['array', '[1]'], ['expired', JSON.stringify({claudeAiOauth:{accessToken:'old',expiresAt:1}})]]) {
+    const file = path.join(CONTAS_VPS, cr.nomeDoArquivo(name)); fs.writeFileSync(file, text);
+    const response = await chamar('contas:trocar', {engine:'claude', apelido:name, remoto:REMOTO});
+    assert.ok(response.error, name); assert.equal(fs.readFileSync(CRED_VPS,'utf8'), original);
+    fs.unlinkSync(file);
+  }
+  pcIntacto();
+});
+
+test('remote command stays below Windows command limit with accented apostrophe nickname', () => {
+  const script = 'exec ${SHELL:-/bin/sh} -lc ' + cr.qLinux(cr.scriptSalvar("d'avó (2)"));
+  assert.ok(script.length < 7000, script.length);
+});
+test('IPv6 account targets are validated and preserve the explicit SSH port', async()=>{
+ const base={...REMOTO,host:'2001:db8::1',porta:2222};
+ for(const host of ['2001:db8::1','[2001:db8::1]']){
+  const remote={...base,host};const line=cr.linhaTerminal(remote,'login',true);assert.ok(line);assert.match(line,/-p 2222 /);assert.match(line,/hugo@2001:db8::1 /);
+  const response=await chamar('auth:acao',{engine:'claude',acao:'login',remoto:remote});assert.ok(response.terminal,JSON.stringify(response));
+ }
+ for(const host of ['2001::db8::1','2001:db8::zz','[::1','::1]','::1%25','::1 & calc','-oProxyCommand=calc']){
+  assert.equal(cr.linhaTerminal({...base,host},'login',true),null,host);
+  const response=await chamar('auth:acao',{engine:'claude',acao:'login',remoto:{...base,host}});assert.ok(response.error,host);
+ }
+});
+test('capabilities disable saving without active credentials while retaining saved-profile switching',async()=>{
+ const original=fs.readFileSync(CRED_PC,'utf8');try{fs.writeFileSync(CRED_PC,'');const caps=await chamar('contas:disponivel','claude');assert.equal(caps.ok,false);assert.equal(caps.salvar,false);assert.equal(caps.trocar,process.platform==='win32');assert.equal(caps.login,true);}finally{fs.writeFileSync(CRED_PC,original)}
+ const before=fs.readFileSync(CRED_VPS,'utf8');try{fs.writeFileSync(CRED_VPS,'');const caps=await chamar('contas:disponivel',{engine:'claude',remoto:REMOTO});assert.equal(caps.ok,false);assert.equal(caps.salvar,false);assert.equal(caps.trocar,true);assert.equal(caps.login,true);}finally{fs.writeFileSync(CRED_VPS,before)}
+});
+test('missing remote parser disables file operations but preserves official terminal login',async()=>{
+ let handle;
+ const source=fs.readFileSync(path.join(__dirname,'../src/main.js'),'utf8');
+ const start=source.indexOf("ipcMain.handle('contas:disponivel'"),end=source.indexOf('\n});',start)+4;
+ const ctx=vm.createContext({EH_WIN:true,motorDoPedido:o=>o.engine,remotoDaConta:o=>o.remoto,contasRemotas:async()=>({ok:false,error:'O servidor precisa de Node.js para validar perfis.'}),trocaDeContaDisponivel:()=>false,ipcMain:{handle:(_,fn)=>handle=fn}});
+ vm.runInContext(pegarBloco(source,'function capacidadesConta(','capacidadesConta'),ctx);vm.runInContext(source.slice(start,end),ctx);
+ const result=await handle({}, {engine:'claude',remoto:REMOTO});assert.equal(result.salvar,false);assert.equal(result.trocar,false);assert.equal(result.login,true);assert.equal(result.logout,true);assert.ok(result.error);
+});
+test('IPv6 host and port boundaries keep account caches separate',async()=>{
+ const first={...REMOTO,host:'2001:db8::1',porta:2222};
+ const second={...REMOTO,host:'2001:db8::1:2222',porta:22};
+ const original=fs.existsSync(CRED_VPS)?fs.readFileSync(CRED_VPS,'utf8'):null;
+ try{
+  fs.writeFileSync(CRED_VPS,credVps('ipv6-cache-fixture'));
+  statusVps({loggedIn:true,email:'first@example.test'});
+  const a=await chamar('conta:ler',{engine:'claude',remoto:first});assert.equal(a.email,'first@example.test');
+  statusVps({loggedIn:true,email:'second@example.test'});
+  const b=await chamar('conta:ler',{engine:'claude',remoto:second});assert.equal(b.email,'second@example.test');
+  assert.notEqual(a.lugar,b.lugar);assert.equal(a.lugar,'hugo@[2001:db8::1]:2222');assert.equal(b.lugar,'hugo@[2001:db8::1:2222]');
+  statusVps({loggedIn:true,email:'must-not-replace-cache@example.test'});
+  assert.equal((await chamar('conta:ler',{engine:'claude',remoto:first})).email,'first@example.test');
+  assert.equal((await chamar('conta:ler',{engine:'claude',remoto:second})).email,'second@example.test');
+ }finally{if(original===null)fs.unlinkSync(CRED_VPS);else fs.writeFileSync(CRED_VPS,original)}
+ pcIntacto();
 });

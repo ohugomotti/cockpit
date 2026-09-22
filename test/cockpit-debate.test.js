@@ -142,7 +142,7 @@ test('continuar depende de chamada explícita e inclui intervenção do usuário
   manager.continue({ id: state.id, rounds: 1, message: 'Considere equipe remota.' });
   const result = await complete(manager, state.id);
   assert.equal(calls.length, 4);
-  assert.match(calls[2].prompt, /### Hugo\nConsidere equipe remota/);
+  assert.match(calls[2].prompt, /### Usuário\nConsidere equipe remota/);
   assert.equal(result.messages.filter(m => m.speaker === 'user').length, 1);
 });
 

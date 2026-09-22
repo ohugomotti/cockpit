@@ -175,3 +175,18 @@ test('metadados assíncronos da mensagem não são descartados', () => {
     { delivery: 'async', questions, memoryCitation },
   );
 });
+
+test('catálogo vazio nunca quebra o painel e mantém modelo atual',()=>{
+ const ctx=carregar(['modelosDe','modeloAtual','esforcosDe'],{MODELOS_CODEX:[],EF_DESC_PT:{},remotoDoPane:()=>null});
+ const p={engine:'codex',model:'modelo-em-uso',effort:'high'};
+ assert.equal(ctx.modeloAtual(p).id,'modelo-em-uso');assert.equal(ctx.esforcosDe(p)[0].id,'medium');
+ assert.equal(p.model,'modelo-em-uso');
+});
+test('catálogo remoto pertence ao painel e destino, sem herdar modelos locais',()=>{
+ let remote={usuario:'qa',host:'vps-a',porta:22,chave:'key'};
+ const ctx=carregar(['modelosDe','modeloAtual'],{MODELOS_CODEX:[{id:'local',efforts:['high']}],remotoDoPane:()=>remote});
+ const p={engine:'codex',model:'servidor',uiCodexModels:[{id:'servidor',efforts:['low']}],uiCodexModelsScope:JSON.stringify(['qa','vps-a',22,'key'])};
+ assert.equal(ctx.modeloAtual(p).id,'servidor');assert.equal(ctx.modeloAtual(p).efforts[0],'low');
+ remote={...remote,host:'vps-b'};assert.equal(ctx.modeloAtual(p).efforts.length,0);
+ remote=null;assert.equal(ctx.modeloAtual(p).id,'local');
+});

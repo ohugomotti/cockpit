@@ -354,10 +354,14 @@ function funcao(nome) {
   throw new Error('funcao incompleta: ' + nome);
 }
 function tela(extras) {
-  const criados = [], faixas = [], notas = [], forks = [], salvou = { n: 0 };
+  const criados = [], faixas = [], notas = [], forks = [], historicos = [], consultas = [], avisos = [], salvou = { n: 0 };
+  const cfg = { abaAtiva: 'pc', abas: [
+    { id: 'pc', tipo: 'local' },
+    { id: 'vps', tipo: 'ssh', host: 'vps.test', usuario: 'qa', chave: 'chave-vps', caminhoRemoto: '~/projeto' },
+    { id: 'outro', tipo: 'ssh', host: 'outro.test', usuario: 'qa2', chave: 'chave-outro', caminhoRemoto: '~/outro' },
+  ], ...(extras?.cfg || {}) };
   const ctx = vm.createContext({
-    cfg: { abaAtiva: 'pc' },
-    criados, faixas, notas, forks, salvou,
+    criados, faixas, notas, forks, historicos, consultas, avisos, salvou,
     newPane: (o) => {
       const P = { id: 'n' + criados.length, engine: o.engine, cwd: o.cwd, model: o.model || '', mode: o.mode, effort: o.effort,
         abaId: o.abaId || 'pc', titulo: o.titulo || '', resumeId: o.resumeId || null, sessaoId: null,
@@ -368,23 +372,31 @@ function tela(extras) {
     pintarNome() {}, savePanes: () => { salvou.n++; },
     faixaDeRamo: (novo, origem, doFim, soResumo, extra) => faixas.push({ novo: novo.id, origem: origem && origem.titulo, doFim, soResumo: !!soResumo, extra }),
     note: (P, t, erro) => notas.push({ P: P && P.id, t, erro: !!erro }),
+    mostrarAviso: (aviso) => avisos.push(aviso),
     cabeMaisPainel: () => true,
     montarContexto: ({ hist }) => 'CONTEXTO:' + hist.map((h) => h.quem + '=' + h.texto).join('|'),
     nomeDoMotor: (e) => ({ claude: 'Claude', codex: 'Codex', gemini: 'Gemini', grok: 'Grok' })[e] || e,
-    remotoDoPane: (P) => (P && P.abaId === 'vps' ? { host: 'vps' } : null),
     guardarEstadoDoMotor() {},
     // auditoria 1: o ramo pela lista pergunta o modelo da origem (painel aberto ou historico)
     panes: new Map(), panesFundo: new Map(), modeloDoHistorico: () => '', listaOuErro: (x) => ({ itens: x || [] }),
     window: { api: {
       sessaoFork: async (o) => { forks.push(o); return (extras && extras.forkResp) ? extras.forkResp(o) : { id: 'fork-' + o.engine }; },
-      sessionHistory: async () => [{ role: 'user', text: 'oi' }, { role: 'bot', text: 'ola' }],
+      sessionHistory: async (o) => { historicos.push(o); return [{ role: 'user', text: 'oi' }, { role: 'bot', text: 'ola' }]; },
+      motoresDisponiveis: async (remoto) => {
+        consultas.push(remoto);
+        if (extras?.mapaResp) return extras.mapaResp(remoto);
+        return Object.fromEntries(['claude', 'codex', 'gemini', 'grok', 'acp'].map((engine) =>
+          [engine, { disponivel: true, capacidades: { fork: ['claude', 'codex', 'gemini'].includes(engine) } }]));
+      },
       retomarPegar: async () => { throw new Error('ramo pendente nao pode pedir retomada'); },
     } },
     ...(extras || {}),
+    cfg,
   });
   vm.runInContext(['tituloDeRamo', 'novoPainelRamo', 'forkClaude', 'abrirRamo', 'ramoPorContexto', 'ramificar', 'ramificarAte',
     'ramificarDaLista', 'painelDaConversa', 'retomarSeCaiu', 'aoNascerSessao', 'acaoCasa', 'fichaDoPainel',
     'guardarEnderecoAteASessao', 'religarEContinuar', 'modeloDaOrigem',
+    'abasLocais', 'abaPorId', 'abaAtual', 'remotoDoAba', 'remotoDoPane', 'faltaConfigurarServidor', 'capacidadeRemota', 'avisoRamoNoServidor',
     // B6: o aoNascerSessao passa o nome do painel pra lista (ramo sem nome seu/automatico nao grava nada)
     'gravarNomeDoPainel'].map(funcao).join('\n'), ctx);
   return ctx;
@@ -417,7 +429,7 @@ test('tela: pela lista, Claude do servidor tambem vira fork real; Codex usa thre
   const d = tela();
   await d.ramificarDaLista({ engine: 'codex', id: 'thr-1', title: 'Tarefa', cwd: 'C:\\proj' });
   // { ...x }: o objeto nasceu dentro do vm (outro Object.prototype)
-  assert.deepEqual({ ...d.forks[0] }, { engine: 'codex', id: 'thr-1' });
+  assert.deepEqual({ ...d.forks[0] }, { engine: 'codex', id: 'thr-1', remoto: undefined });
   assert.equal(d.criados[0].resumeId, 'fork-codex');
   assert.ok(!d.criados[0].forkPendente);
   assert.equal(d.criados[0].titulo, '(ramo) Tarefa');
@@ -427,6 +439,97 @@ test('tela: pela lista, Claude do servidor tambem vira fork real; Codex usa thre
   assert.equal(g.criados.length, 1);
   assert.equal(g.criados[0].passarContexto, 'CONTEXTO:Você=oi|Grok=ola');
   assert.equal(g.faixas[0].soResumo, true);
+});
+
+test('tela: Codex e Gemini da lista ramificam no destino capturado, mesmo com outra aba ativa', async () => {
+  for (const engine of ['codex', 'gemini']) {
+    for (const abaAtiva of ['pc', 'outro']) {
+      const c = tela({ cfg: { abaAtiva } });
+      const remoto = c.remotoDoAba(c.abaPorId('vps'));
+      await c.ramificarDaLista({ engine, id: 'sessao-igual', title: 'Remota', cwd: '~/projeto', remoto: true, remotoDestino: remoto });
+      assert.equal(c.forks.length, 1);
+      assert.deepEqual({ ...c.forks[0] }, { engine, id: 'sessao-igual', remoto });
+      assert.equal(c.consultas[0], remoto);
+      assert.equal(c.criados[0].engine, engine);
+      assert.equal(c.criados[0].abaId, 'vps');
+      assert.equal(c.criados[0].cwd, '~/projeto');
+      assert.equal(c.criados[0].resumeId, 'fork-' + engine);
+      assert.equal(c.historicos.length, 0, 'fork nativo não lê histórico local nem remoto');
+    }
+  }
+});
+
+test('tela: Claude herda modelo apenas da mesma sessão no mesmo servidor', async () => {
+  const c = tela();
+  c.panes.set('errado', { engine: 'claude', abaId: 'outro', sessaoId: ORIG, model: 'modelo-outro' });
+  c.panesFundo.set('certo', { engine: 'claude', abaId: 'vps', sessaoId: ORIG, model: 'modelo-certo', effort: 'high' });
+  const remoto = c.remotoDoAba(c.abaPorId('vps'));
+  await c.ramificarDaLista({ engine: 'claude', id: ORIG, remoto: true, remotoDestino: remoto });
+  assert.equal(c.criados[0].abaId, 'vps');
+  assert.equal(c.criados[0].model, 'modelo-certo');
+  assert.equal(c.criados[0].effort, 'high');
+  assert.equal(c.criados[0].forkPendente, true);
+  assert.equal(c.historicos.length, 0);
+});
+
+test('tela: motor remoto indisponível, fork recusado e falha de consulta não tocam o PC', async () => {
+  for (const engine of ['claude', 'codex', 'gemini', 'grok', 'acp']) {
+    const respostas = [() => ({ [engine]: { disponivel: false } }), () => { throw new Error('SSH indisponível'); }];
+    if (['claude', 'codex', 'gemini'].includes(engine)) {
+      respostas.push(() => ({ [engine]: { disponivel: true, capacidades: { fork: false } } }));
+    }
+    for (const mapaResp of respostas) {
+      const c = tela({ cfg: { abaAtiva: 'vps' }, mapaResp });
+      assert.equal(await c.ramificarDaLista({ engine, id: 's-remota', remoto: true }), null);
+      assert.equal(c.forks.length, 0, engine);
+      assert.equal(c.criados.length, 0, engine);
+      assert.equal(c.historicos.length, 0, engine);
+      assert.equal(c.avisos.length, 1, engine);
+    }
+  }
+});
+
+test('tela: destino remoto removido ou sem configuração recusa antes de consultar motores', async () => {
+  for (const remotoDestino of [{ host: 'ausente.test', usuario: 'qa' }, { host: '', usuario: '' }]) {
+    const c = tela();
+    assert.equal(await c.ramificarDaLista({ engine: 'codex', id: 's', remoto: true, remotoDestino }), null);
+    assert.equal(c.consultas.length, 0);
+    assert.equal(c.historicos.length, 0);
+    assert.equal(c.forks.length, 0);
+    assert.equal(c.criados.length, 0);
+  }
+});
+
+test('tela: Grok e ACP ramificam por resumo do mesmo servidor e falha de fork não consulta o PC', async () => {
+  for (const engine of ['grok', 'acp', 'codex', 'gemini']) {
+    const c = tela({ forkResp: () => ({ error: 'fork indisponível' }) });
+    const remoto = c.remotoDoAba(c.abaPorId('vps'));
+    await c.ramificarDaLista({ engine, id: 's', cwd: '~/projeto', remoto: true, remotoDestino: remoto });
+    assert.equal(c.criados[0].abaId, 'vps');
+    assert.equal(c.criados[0].engine, engine);
+    assert.ok(c.criados[0].passarContexto);
+    assert.deepEqual({ ...c.historicos[0] }, { engine, id: 's', remoto });
+    assert.equal(c.historicos.length, 1);
+    if (engine === 'codex' || engine === 'gemini') assert.match(c.notas[0].t, /resumo/);
+    else assert.equal(c.forks.length, 0);
+  }
+});
+
+test('tela: ramificar até ponto com Codex e Gemini remotos preserva motor e destino', async () => {
+  for (const engine of ['codex', 'gemini']) {
+    const c = tela();
+    const P = { id: 'p1', engine, abaId: 'vps', cwd: '~/projeto', sessaoId: 's', hist: [] };
+    await c.ramificarAte(P, 2);
+    assert.deepEqual(JSON.parse(JSON.stringify(c.forks[0])), { engine, id: 's', doFim: 2, remoto: { ...c.remotoDoPane(P) } });
+    assert.equal(c.criados[0].abaId, 'vps');
+    assert.equal(c.criados[0].engine, engine);
+    assert.equal(c.historicos.length, 0);
+    const indisponivel = tela({ mapaResp: () => ({ [engine]: { disponivel: false } }) });
+    assert.equal(await indisponivel.ramificarAte(P, 2), null);
+    assert.equal(indisponivel.forks.length, 0);
+    assert.equal(indisponivel.criados.length, 0);
+    assert.equal(indisponivel.historicos.length, 0);
+  }
 });
 
 test('tela: ramo de ramo nao empilha "(ramo) (ramo)"', () => {

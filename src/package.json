@@ -1,13 +1,14 @@
 {
   "name": "cockpit",
-  "version": "1.0.0",
-  "description": "Codex e Claude em um ambiente compartilhado, com debates e ferramentas integradas",
+  "version": "1.1.1",
+  "description": "Ambiente de trabalho para agentes de IA",
   "main": "main.js",
-  "author": "Homero Motti",
+  "author": "Cockpit",
   "license": "MIT",
   "dependencies": {
-    "@lydell/node-pty": "^1.2.0-beta.15",
-    "@xterm/xterm": "^5.5.0",
-    "marked": "^12.0.2"
-  }
+    "@lydell/node-pty": "1.2.0-beta.15",
+    "@xterm/xterm": "5.5.0",
+    "marked": "12.0.2"
+  },
+  "productName": "Cockpit"
 }

@@ -1,0 +1,2311 @@
+/* Cockpit: layout integrado, tokens semânticos e alvos de 28px. */
+.ck-app {
+  font-family: var(--font-ui);
+  background: var(--canvas);
+  color: var(--ink);
+}
+.ck-app #activitybar,
+.ck-app #sidebar,
+.ck-app #dragbar,
+.ck-app #abasLocal,
+.ck-app #titlebar {
+  display: none !important;
+}
+.ck-app #shell {
+  position: relative;
+  isolation: isolate;
+}
+.ck-app button {
+  min-height: 28px;
+}
+.ck-app :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.ck-app code,
+.ck-app pre,
+.ck-app .xterm {
+  font-family: var(--font-code);
+}
+.ck-app
+  :is(
+    .mi-d,
+    .side-head,
+    .p-tokens,
+    .p-model,
+    .tok-bar,
+    .pl-conta,
+    .trab-txt,
+    .modo-nome,
+    .pn-txt,
+    .pend-tipo,
+    .ta-n,
+    .ck-muted,
+    .ck-result small
+  ) {
+  font-size: max(11px, 1em);
+}
+.ck-navigator {
+  width: 272px;
+  flex: 0 0 272px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sunken);
+  border-right: 1px solid var(--line);
+  padding: 12px 10px;
+  gap: 8px;
+  z-index: 25;
+}
+.ck-nav-top {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+}
+.ck-brand {
+  font: 800 24px var(--font-display);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ink);
+  flex: none;
+}
+.ck-nav-search {
+  flex: 1;
+  justify-content: flex-start;
+  min-width: 0;
+  padding-left: 8px;
+}
+.ck-nav-top > .ck-button:not(.ck-nav-search) {
+  flex: none;
+}
+.ck-button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+.ck-button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.ck-button .ic {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+/* A linha vem ANTES do rótulo, igual ao HISTÓRICO (.ck-folder-heading): eram
+   dois cabeçalhos com a divisória em lados opostos e a lateral ficava torta.
+   Pedido do Hugo em 21/09/2026. */
+.ck-nav-grouping {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 8px 6px 2px;
+}
+.ck-nav-label {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  /* --ink-muted, não --ink-faint: em 11px com letter-spacing o faint media
+     4,39:1 no tema jornal (o que o Hugo usa) e 4,56 no claro — abaixo do
+     mínimo. Mexer no token global achatava a hierarquia em 88 outros lugares,
+     então a troca é só aqui. */
+  color: var(--ink-muted);
+  flex: 1;
+}
+.ck-attention-count {
+  color: var(--attention);
+  background: var(--attention-soft);
+  font-weight: 600;
+  padding: 3px 10px;
+}
+.ck-session-list {
+  flex: 1;
+  min-height: 80px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* ancora do esqueleto: na troca ele sai FLUTUANDO por cima (position
+     absolute), senao esqueleto e linhas reais ficariam empilhados por 180ms
+     e a lista pularia -- justo o que a caixa reservada existe pra evitar */
+  position: relative;
+}
+/* ESQUELETO DO HISTORICO. O loadPlaceHistory() varre as pastas de sessao dos
+   cinco motores e leva 1-2s; nesse intervalo a lista ficava VAZIA e depois
+   enchia de uma vez, empurrando tudo pra baixo. O ganho aqui nao e' o brilho,
+   e' a ALTURA RESERVADA: seis linhas fantasma no mesmo passo das de verdade
+   (32px + 2px de margem) seguram o lugar. */
+.ck-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+  min-height: 204px;
+}
+.ck-skeleton-row {
+  position: relative;
+  height: 32px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--high);
+  overflow: hidden;
+}
+/* o brilho e' uma faixa que ANDA por cima (translateX), nunca um gradiente
+   que muda de posicao: background-position redesenha a linha toda por quadro */
+.ck-skeleton-row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--hover), transparent);
+  transform: translateX(-100%);
+  animation: ck-brilho 1.15s linear infinite;
+}
+.ck-skeleton-row:nth-child(2)::after {
+  animation-delay: 0.08s;
+}
+.ck-skeleton-row:nth-child(3)::after {
+  animation-delay: 0.16s;
+}
+.ck-skeleton-row:nth-child(4)::after {
+  animation-delay: 0.24s;
+}
+.ck-skeleton-row:nth-child(5)::after {
+  animation-delay: 0.32s;
+}
+.ck-skeleton-row:nth-child(6)::after {
+  animation-delay: 0.4s;
+}
+/* chegaram os dados: o esqueleto sai por cima e as linhas entram no mesmo
+   intervalo de 180ms. O JS tira o esqueleto do DOM no fim -- nenhuma animacao
+   infinita fica rodando escondida. */
+.ck-skeleton[data-out] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: ck-sai 180ms ease-in forwards;
+}
+.ck-session-list[data-swap] > .ck-session {
+  animation: ck-entra 180ms ease-out;
+}
+.ck-group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  padding: 8px 6px;
+  text-align: left;
+}
+.ck-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-group-stats {
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--ink-faint);
+}
+.ck-session {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 7px 6px;
+  min-height: 34px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12px;
+  margin: 2px 0;
+}
+.ck-session:hover,
+.ck-session.ck-current {
+  background: var(--high);
+}
+.ck-session.ck-live .ck-session-title {
+  font-weight: 600;
+}
+.ck-session[data-state="attention"] {
+  background: var(--attention-soft);
+}
+.ck-state {
+  width: 14px;
+  text-align: center;
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 15px;
+}
+.ck-session-place {
+  display: none;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-faint);
+  flex: none;
+}
+.ck-session-place .ic {
+  width: 14px;
+  height: 14px;
+}
+.ck-navigator[data-grouping="state"]:is(:not(.ck-collapsed), .ck-peek)
+  .ck-session-place {
+  display: flex;
+}
+.ck-navigator[data-grouping="state"]:is(:not(.ck-collapsed), .ck-peek)
+  .ck-state {
+  display: none;
+}
+[data-state="attention"] > .ck-state,
+.ck-pane-status[data-state="attention"] {
+  color: var(--attention);
+}
+[data-state="working"] > .ck-state,
+.ck-pane-status[data-state="working"] {
+  color: var(--working);
+}
+[data-state="done"] > .ck-state,
+.ck-pane-status[data-state="done"] {
+  color: var(--done);
+}
+.ck-engine {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: flex;
+  color: var(--ink-muted);
+}
+.ck-engine svg,
+.ck-engine-option svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+.ck-session-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck-robots {
+  font-size: 11px;
+  color: var(--working);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ck-robots svg {
+  width: 12px;
+  height: 12px;
+}
+.ck-new-place,
+.ck-history {
+  justify-content: flex-start;
+  flex: none;
+}
+/* UMA linha só: só entram aqui os motores em que ele está logado (ver
+   loadAccounts), então não há o que quebrar. Com wrap, os motores sem conta
+   empurravam o medidor pra uma segunda fileira. Pedido do Hugo, 21/09/2026. */
+.ck-accounts {
+  display: flex;
+  /* flex:none é o que impede o bloco de ser ESMAGADO. A lateral é uma coluna
+     flex e todo filho encolhe por padrão: com o histórico cheio, os medidores
+     eram espremidos abaixo da própria altura e apareciam cortados ao meio na
+     borda de baixo. Quem cede espaço é a lista do histórico, mais ninguém. */
+  flex: none;
+  gap: 4px;
+  flex-wrap: nowrap;
+  /* rola em vez de cortar: com a lateral estreitada na alça, o `overflow:hidden`
+     comia o último medidor sem deixar pista nenhuma. Barra escondida, mesmo
+     truque da faixa de pastas. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.ck-accounts::-webkit-scrollbar { height: 0; display: none; }
+/* sem nenhum medidor visível, o bloco virava uma divisória solta na lateral */
+.ck-accounts:not(:has(> :not([hidden]))) { display: none; }
+.ck-account-button {
+  flex: 0 0 auto;
+  padding: 0;
+  min-width: 35px;
+}
+.ck-tools {
+  display: flex;
+  flex: none;   /* mesmo motivo do .ck-accounts: o rodapé não é o que cede */
+  flex-wrap: wrap;
+  gap: 5px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.ck-tools > .ck-button {
+  flex: 1;
+}
+.ck-empty-nav {
+  font-size: 12px;
+  color: var(--ink-faint);
+  padding: 12px;
+}
+.ck-navigator.ck-collapsed:not(.ck-peek) {
+  width: 56px;
+  flex-basis: 56px;
+  padding: 10px 7px;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-top {
+  flex-direction: column;
+}
+.ck-collapsed:not(.ck-peek) .ck-brand {
+  margin: 0;
+}
+.ck-collapsed:not(.ck-peek)
+  :is(
+    .ck-nav-label,
+    .ck-nav-search span,
+    .ck-session-title,
+    .ck-group-name,
+    .ck-group-stats,
+    .ck-new-place span,
+    .ck-history span,
+    .ck-robots
+  ) {
+  display: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-grouping {
+  flex-direction: column;
+}
+.ck-collapsed:not(.ck-peek) .ck-group-head {
+  min-height: 8px;
+  height: 8px;
+  border-top: 1px solid var(--line);
+  padding: 0;
+}
+.ck-collapsed:not(.ck-peek) .ck-session {
+  position: relative;
+  justify-content: center;
+  padding: 8px;
+}
+.ck-collapsed:not(.ck-peek) .ck-state {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  font-size: 12px;
+  width: 12px;
+}
+.ck-collapsed:not(.ck-peek) :is(.ck-accounts, .ck-tools) {
+  flex-direction: column;
+}
+.ck-collapsed:not(.ck-peek) .ck-account-button {
+  min-width: 28px;
+}
+.ck-collapsed:not(.ck-peek) .ck-usage-number {
+  display: none;
+}
+.ck-navigator.ck-peek {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 272px;
+  box-shadow: var(--shadow-float);
+  /* acima do cartão de permissão do painel (.pane-perm é z-index 71, no mesmo
+     contexto do #shell): a lateral flutuante ficava POR BAIXO dele e as últimas
+     linhas do histórico não recebiam clique — o clique caía em Permitir/Negar */
+  z-index: 80;
+}
+#shell:has(.ck-peek)::before {
+  content: "";
+  width: 56px;
+  flex: none;
+}
+.ck-app #panes {
+  min-width: 0;
+  background: var(--canvas);
+}
+.ck-app .pane {
+  min-width: 280px;
+  container-type: inline-size;
+}
+.ck-app .pane-hd {
+  height: var(--layout-pane-head);
+  min-height: var(--layout-pane-head);
+  background: var(--surface);
+  padding: 4px 8px;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.ck-app .pane.focus .pane-hd,
+.ck-app .pane.focused .pane-hd {
+  background: var(--raised);
+}
+.ck-app .pane-nome,
+.ck-app .pm-nome,
+.ck-app .pm-seta,
+.ck-app .p-dot,
+.ck-app .p-spacer {
+  display: none !important;
+}
+.ck-pane-title {
+  flex: 1;
+  min-width: 40px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  display: block;
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ck-app .p-cwd {
+  width: 28px;
+  max-width: 28px;
+  min-width: 28px;
+  font-size: 0;
+  padding: 4px;
+}
+.ck-app .p-cwd::before {
+  content: "⌁";
+  font-size: 18px;
+  color: var(--ink-faint);
+}
+.ck-app .p-motor,
+.ck-app .p-close,
+.ck-pane-status {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+.ck-app .p-motor .logo-lugar {
+  width: 16px;
+  height: 16px;
+}
+.ck-app .p-tokens b {
+  display: none;
+}
+.ck-app .p-tokens {
+  width: 28px;
+  flex: none;
+  padding: 0;
+}
+.ck-app .tok-bar {
+  width: 24px;
+  height: 10px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 2px;
+  background: transparent;
+  position: relative;
+  display: block;
+}
+.ck-app .tok-bar::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 2px;
+  width: 2px;
+  height: 4px;
+  background: var(--ink-faint);
+}
+.ck-app .tok-fill {
+  display: block;
+  height: 100%;
+  background: var(--working);
+}
+.ck-app .pane-chat {
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  background: var(--canvas);
+  font-family: var(--font-ui);
+}
+.ck-app .pane-cmp {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  margin: 8px;
+  padding: 0;
+  overflow: visible;
+  flex: none;
+}
+.ck-app .cmp-top {
+  padding: 10px 12px;
+}
+.ck-app .p-input {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.55;
+  min-height: 40px;
+  color: var(--ink);
+}
+.ck-app .cmp-bar {
+  gap: 2px;
+  flex-wrap: nowrap;
+  padding: 4px 6px 6px;
+  min-height: 36px;
+}
+.ck-app .cmp-gap {
+  min-width: 0;
+  flex: 1;
+}
+.ck-app .cmp-bar button {
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  flex-shrink: 0;
+}
+/* O Quadro vive AQUI, ao lado do microfone (pedido do Hugo, 21/09): saiu do
+   rodape da lateral, onde era um icone longe da conversa. Ficava escondido
+   desde o redesenho. */
+.ck-app .cmp-bar .p-fluxo {
+  background: transparent;
+  border-color: transparent;
+  width: 28px;
+  padding: 4px;
+  justify-content: center;
+}
+.ck-app .cmp-bar .p-fluxo:hover {
+  background: var(--hover);
+}
+.ck-app .cmp-bar :is(.p-slash, .p-modoenvio, .cont-chip, .sug-chip) {
+  background: transparent;
+  border-color: transparent;
+  width: 28px;
+  padding: 4px;
+  justify-content: center;
+}
+.ck-app .cmp-bar :is(.p-slash, .p-modoenvio, .cont-chip, .sug-chip):hover {
+  background: var(--hover);
+}
+/* O Continuar é a ação sugerida do momento, então é azul — mas em --focus, não
+   em --primary: medido, --primary dá 3,0:1 no tema Azul (o ícone MAIS apagado da
+   barra, o oposto da intenção); --focus dá 8:1 e continua azul nos 4 temas. */
+.ck-app .cmp-bar .cont-chip {
+  color: var(--focus);
+}
+/* O hover muda só o FUNDO (regra do :is lá em cima), nunca a cor do ícone:
+   pôr --primary aqui derrubava o contraste de 8,8:1 para 2,65:1 no tema Azul —
+   passar o mouse deixava o ícone MENOS visível. O ✨ tem o mesmo cuidado no
+   style.css. */
+.ck-app .cmp-bar .cont-chip:hover {
+  color: var(--focus);
+}
+.ck-app .cmp-bar .p-model {
+  flex: 0 1 auto;
+  min-width: 28px;
+  border: 0;
+  background: transparent;
+}
+.ck-app .p-model span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.ck-app .modo-nome,
+.ck-app .p-modoenvio span:not(.ic),
+.ck-app .cp-txt {
+  display: none !important;
+}
+.ck-app .modo-btn {
+  width: 28px;
+  padding: 5px;
+}
+.ck-app .p-model {
+  font-size: 11px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px;
+}
+.ck-app .p-send,
+.ck-app .p-stop {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: 5px;
+  width: 28px;
+  flex: none;
+}
+.ck-danger-mode {
+  color: var(--attention) !important;
+}
+.ck-app .pane-perm,
+.ck-app .pane-perg {
+  background: var(--attention-soft);
+  color: var(--ink);
+  border-top: 1px solid var(--attention);
+  max-height: 42vh;
+  overflow: auto;
+  padding: 12px;
+  font-family: var(--font-ui);
+}
+.ck-app .pp-txt {
+  white-space: pre-wrap;
+  overflow: visible;
+  max-height: none;
+  font-size: 12px;
+  user-select: text;
+}
+.ck-app .pp-btns {
+  position: sticky;
+  bottom: 0;
+  background: var(--attention-soft);
+  padding-top: 8px;
+}
+.ck-app .pp-yes {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.ck-app .ck-queued-behind {
+  display: none;
+}
+.ck-app .pane-plano {
+  margin: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-muted);
+}
+.ck-app .pl-corpo {
+  max-height: 140px;
+  overflow: auto;
+}
+.ck-app .pl-cheio {
+  background: var(--done);
+}
+.ck-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.ck-layer {
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  overflow: hidden;
+}
+.ck-layer-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.ck-layer-head h2 {
+  flex: 1;
+  font: 600 16px var(--font-display);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-layer-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overscroll-behavior: contain;
+}
+.ck-layer-body h3 {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ck-layer-body > .ck-button {
+  justify-content: flex-start;
+}
+.ck-small {
+  width: min(380px, 100%);
+}
+.ck-layer .side-view {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.ck-layer .side-head {
+  display: none;
+}
+.ck-layer .settings {
+  padding: 0;
+  overflow: visible;
+}
+.ck-layer .hist {
+  min-height: 200px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.ck-layer .rot {
+  overflow: visible;
+}
+.ck-search {
+  background: var(--surface);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  color: var(--ink);
+  padding: 12px;
+  font: 14px var(--font-ui);
+  width: 100%;
+}
+/* era o único input do app sem ::placeholder: caía no cinza padrão do Chrome
+   (3,5 a 4,3:1 nos quatro temas) — e é justo esse texto que ensina a sintaxe
+   @agente · /arquivo · >comando */
+.ck-search::placeholder {
+  color: var(--ink-muted);
+  opacity: 1;
+}
+.ck-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 55vh;
+  overflow: auto;
+}
+/* flex:none é o conserto do texto sobreposto: .ck-results é uma coluna flex, e
+   com 40 resultados os itens encolhiam (shrink é 1 por padrão) até ficarem mais
+   baixos que o próprio conteúdo — o título de um caía por cima do de baixo.
+   Quem rola é a lista, não o item. */
+.ck-result {
+  width: 100%;
+  padding: 8px;
+  justify-content: flex-start;
+  flex: none;
+  min-height: 0;
+  align-items: center;
+}
+.ck-result[aria-selected="true"] {
+  background: var(--high);
+}
+.ck-result-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+/* uma linha cada, cortando com reticências: o resumo do resultado vinha com a
+   frase inteira e embolava duas ou três linhas por item */
+.ck-result strong,
+.ck-result small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-result strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.ck-result small {
+  font-size: 11px;
+  /* mesmo motivo do .ck-nav-label: em 11px o faint ficava em 4,18:1 no jornal.
+     O título continua em --ink-muted com peso 500, então a hierarquia entre
+     título e resumo segue por tamanho e peso. */
+  color: var(--ink-muted);
+  line-height: 1.35;
+}
+.ck-search-status {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.ck-engine-options,
+.ck-mode-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ck-engine-option {
+  width: 40px;
+  height: 40px;
+  padding: 10px;
+}
+.ck-selected {
+  background: var(--high);
+  color: var(--ink);
+  outline: 1px solid var(--control-border);
+}
+.ck-choice {
+  justify-content: flex-start !important;
+}
+.ck-mode-description {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding-top: 8px;
+}
+.ck-layer button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ck-preference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 16px;
+  align-items: start;
+  font-size: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.ck-preference input {
+  appearance: none;
+  position: relative;
+  width: 28px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: var(--high);
+  cursor: pointer;
+}
+.ck-preference input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+.ck-preference input:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.ck-preference input:checked::after {
+  transform: translateX(12px);
+  background: var(--on-primary);
+}
+.ck-shortcut {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 12px;
+}
+.ck-shortcut kbd {
+  white-space: nowrap;
+  color: var(--ink);
+}
+.ck-account-card {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ck-usage-window {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+  font-size: 12px;
+}
+.ck-usage-window progress {
+  grid-column: 1/-1;
+  width: 100%;
+  height: 5px;
+  accent-color: var(--primary);
+}
+.ck-usage-window small {
+  grid-column: 1/-1;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.ck-muted {
+  color: var(--ink-faint);
+}
+.ck-attention {
+  color: var(--attention);
+}
+.ck-resume {
+  margin: 4px 8px;
+  padding: 8px;
+  border: 1px solid var(--attention);
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--attention);
+}
+.ck-app .modal.p-modal:not(.como-menu) {
+  position: fixed;
+  inset: 5vh 5vw;
+  z-index: 500;
+  background: var(--scrim);
+  padding: 20px;
+}
+.ck-app .p-modal:not(.como-menu) .modal-cx {
+  max-width: 100%;
+  width: min(1000px, 100%);
+  max-height: 100%;
+  background: var(--raised);
+}
+.ck-app .p-modal.como-menu {
+  z-index: 550;
+}
+.ck-app #modalGrupo,
+.ck-app #popGrupo {
+  z-index: 800;
+}
+.ck-app #quadroFluxo {
+  z-index: 550;
+}
+.ck-logos-neutral .logo-motor,
+.ck-logos-neutral .marca-motor,
+.ck-logos-neutral .ck-engine-option {
+  color: var(--ink-muted) !important;
+}
+@media (max-width: 1024px) {
+  .ck-app .pane-chat {
+    padding: 12px;
+  }
+  .ck-overlay {
+    padding: 12px;
+  }
+  .ck-layer {
+    max-height: calc(100dvh - 24px);
+  }
+}
+@media (max-width: 800px) {
+  .ck-app .pane {
+    min-width: 280px;
+  }
+  .ck-app .p-model {
+    max-width: 115px;
+  }
+}
+@media (max-width: 600px) {
+  .ck-layer-head {
+    padding: 8px 12px;
+  }
+  .ck-layer-body {
+    padding: 12px;
+  }
+  .ck-app #panes {
+    overflow-x: auto;
+  }
+  .ck-app .pane-chat {
+    display: block !important;
+  }
+  .ck-tools {
+    gap: 2px;
+  }
+}
+@container (max-width:360px) {
+  .ck-app .p-model {
+    max-width: 105px;
+  }
+  .ck-app .cmp-bar {
+    row-gap: 4px;
+  }
+  .ck-app .p-model > .ic {
+    display: none;
+  }
+  .ck-app .p-model {
+    max-width: 110px;
+  }
+  .ck-app .p-cwd {
+    display: none;
+  }
+  .ck-app .p-git {
+    display: none;
+  }
+  .ck-app .pane-chat {
+    display: block !important;
+  }
+}
+
+.ck-g {
+  width: var(--layout-glyph);
+  height: var(--layout-glyph);
+  flex: none;
+  display: inline-block;
+  position: relative;
+  border-radius: var(--radius-round);
+}
+/* SELO DE ESTADO -- so' o que esta' ACONTECENDO se mexe.
+   Sao quatro estados e apenas DOIS animam: "sua vez" respira e "trabalhando"
+   pulsa. "Terminou" e "guardada" ficam parados de proposito -- com 20+ linhas
+   na lateral, animar os quatro viraria festa e nenhuma chamaria atencao.
+   Tudo em transform/opacity, que o compositor resolve sem repintar. A versao
+   anterior animava box-shadow (ver @keyframes ck-halo antigo): box-shadow
+   repinta o selo a cada quadro, e com a Torre cheia isso era repintura em 20
+   lugares 60 vezes por segundo. */
+.ck-g.attention {
+  background: var(--attention);
+  transform: scale(0.8);
+}
+/* O halo e' uma COPIA do selo que cresce e some, nao uma sombra. Escala 2.6
+   sobre o selo ja' encolhido (0.8) da' ~25px de diametro: cabe dentro dos
+   32px da linha, entao nao encosta na vizinha nem cria barra de rolagem. */
+.ck-g.attention::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-round);
+  background: var(--attention);
+  opacity: 0;
+  animation: ck-halo 2.25s ease-out infinite;
+}
+/* "trabalhando" = ANEL FINO GIRANDO, o circulo de carregar que todo mundo ja'
+   conhece. Os tres pontinhos ficaram na versao anterior e o Hugo recusou: ele
+   quer o padrao de carregamento, e minimalista. O anel e' uma borda de 1.5px
+   com tres lados transparentes -- uma so' propriedade animada (rotate), que e'
+   compositor puro e nao repinta nada.
+   Os 12px sao os mesmos do selo cheio: mudar de estado nao desloca o logo. */
+.ck-g.working {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-top-color: var(--working);
+  border-right-color: var(--working);
+  animation: ck-anel 0.75s linear infinite;
+}
+/* os <i> ficam de fora: o anel e' a propria borda do selo. Eles continuam no
+   DOM (trocar de estado nao mexe na arvore), so' nao aparecem. */
+.ck-g > i {
+  display: none;
+}
+/* TETO DE MOVIMENTO. Quem conta e' o renderNavigator, POR ESTADO: os quatro
+   primeiros "sua vez" e os quatro primeiros "trabalhando" se mexem, o resto
+   fica parado com a mesma forma. Contar por posicao na lista nao servia --
+   a Torre poe "sua vez" na frente, entao uma fila de pendencias empurrava
+   todos os "trabalhando" pra fora do teto e os pontinhos sumiam.
+   Medido na previa (54 linhas, CPU 6x): 136 selos animando = 6,6 quadros por
+   segundo; com teto = 31. */
+.ck-session[data-quieto] .ck-g.attention::after,
+.ck-session[data-quieto] .ck-g.working {
+  animation: none;
+}
+/* Selo miudo (8px) do contador e das estatisticas do grupo: nao cabe tres
+   pontinhos nem halo. Fica cheio e parado -- e' contagem, nao sessao viva. */
+.ck-attention-count .ck-g.working,
+.ck-group-stats .ck-g.working {
+  display: inline-block;
+  width: var(--layout-glyph);
+  margin-inline: 0;
+  background: var(--working);
+}
+.ck-attention-count .ck-g > i,
+.ck-group-stats .ck-g > i {
+  display: none;
+}
+.ck-attention-count .ck-g.attention::after,
+.ck-group-stats .ck-g.attention::after {
+  animation: none;
+}
+.ck-g.done {
+  background: var(--done);
+}
+.ck-g.done::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 2px;
+  width: 3px;
+  height: 6px;
+  border: solid var(--canvas);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.ck-g.stored {
+  border: 1.5px solid var(--ink-faint);
+}
+/* Minimalista: o halo vai a 2.0 (era 2.6) e comeca em 0.3 (era 0.45). Continua
+   puxando o olho de longe, mas nao vira bolha em cima da linha -- o Hugo pediu
+   tudo mais enxuto em 21/09/2026. */
+@keyframes ck-halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+/* O anel de "trabalhando". Uma propriedade so' (rotate) e linear: e' o circulo
+   de carregar que todo software usa, sem enfeite. Substituiu o ck-dots. */
+@keyframes ck-anel {
+  to { transform: rotate(360deg); }
+}
+/* varredura do esqueleto: o brilho ANDA (translateX), o fundo fica parado.
+   Mexer em background-position redesenharia a faixa inteira a cada quadro. */
+@keyframes ck-brilho {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* troca do esqueleto pelo conteudo real: some e aparece no mesmo intervalo,
+   sem deslizar (o guia de marca proibe entrada deslizando) */
+@keyframes ck-entra {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ck-sai {
+  to {
+    opacity: 0;
+  }
+}
+/* Caret do texto que esta' chegando: pisca em degrau, sem meio-tom. */
+@keyframes ck-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+/* A guarda de prefers-reduced-motion mora no FIM deste arquivo, depois de toda
+   regra que anima. @media nao soma especificidade: quando ela ficava aqui no
+   meio, o caret (que e' declarado la' embaixo, com o mesmo peso) ganhava no
+   desempate por ordem e continuava piscando com movimento reduzido ligado --
+   pego na previa pelo Emulation.setEmulatedMedia. */
+
+.ck-dial {
+  width: 28px;
+  height: 28px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+.ck-dial > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+}
+.ck-dial .ck-bg {
+  stroke: var(--line-strong);
+  stroke-width: 2.5;
+}
+.ck-dial .ck-fill {
+  stroke: var(--ink-muted);
+  stroke-width: 2.5;
+}
+.ck-dial.hot .ck-fill {
+  stroke: var(--attention);
+}
+.ck-tick {
+  stroke: var(--ink);
+  stroke-width: 1.6;
+}
+.ck-dial.off .ck-bg {
+  stroke-dasharray: 3 3;
+  stroke: var(--control-border);
+}
+.ck-dial .ck-logo {
+  width: 12px;
+  height: 12px;
+  z-index: 1;
+  display: flex;
+}
+.ck-logo svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+.ck-acct {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 3px;
+}
+.ck-number {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.ck-number.hot {
+  color: var(--attention);
+}
+.ck-number small {
+  font-size: 11px;
+}
+.ck-server {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  font-size: 11px;
+}
+.ck-collapsed:not(.ck-peek) .ck-number {
+  display: none;
+}
+.ck-brand img {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+.ck-brand .ck-brand-light {
+  display: none;
+}
+html[data-tema="claro"] .ck-brand .ck-brand-light,
+html[data-tema="jornal"] .ck-brand .ck-brand-light {
+  display: block;
+}
+html[data-tema="claro"] .ck-brand .ck-brand-dark,
+html[data-tema="jornal"] .ck-brand .ck-brand-dark {
+  display: none;
+}
+.ck-app .p-motor,
+.ck-app .p-motor:hover {
+  background: transparent !important;
+  border: 0;
+  color: var(--ink-muted);
+  border-radius: 4px;
+  box-shadow: none !important;
+}
+.ck-meter {
+  --p: 0;
+  --c: var(--ink-muted);
+  width: 20px;
+  height: 8px;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--control-border);
+  padding: 2px;
+  display: inline-block;
+  position: relative;
+}
+.ck-meter::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(var(--p) * 1%);
+  background: var(--c);
+  border-radius: 1px;
+}
+.ck-meter::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  top: 2px;
+  width: 2px;
+  height: 4px;
+  background: var(--control-border);
+}
+.ck-meter.full {
+  --c: var(--attention);
+}
+.ck-settings-sheet {
+  width: min(840px, 100%);
+  height: min(580px, calc(100dvh - 48px));
+}
+.ck-settings-sheet > .ck-layer-body {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+.ck-layer .ck-settings-view {
+  flex: 1;
+  min-height: 0;
+  flex-direction: row;
+  overflow: hidden;
+}
+.ck-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 196px;
+  gap: 3px;
+  padding: 12px 8px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow: auto;
+}
+.ck-settings-tabs .ck-button {
+  width: 100%;
+  justify-content: flex-start;
+  flex: none;
+  padding: 8px;
+  color: var(--ink);
+}
+.ck-settings-tabs .ck-button .ic {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+.ck-settings-tabs [aria-selected="true"] {
+  background: var(--high);
+}
+.ck-layer .ck-settings-view .settings {
+  min-width: 0;
+  overflow: auto;
+  padding: 20px 24px;
+  overscroll-behavior: contain;
+}
+.ck-settings-view .aj-grupo {
+  padding: 0;
+  border: 0;
+}
+.ck-settings-view .aj-grupo[hidden] {
+  display: none;
+}
+.ck-settings-view .aj-titulo {
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.ck-settings-view .aj-grupo:first-child > .aj-titulo {
+  display: none;
+}
+.ck-settings-view .aj-campo {
+  margin-bottom: 16px;
+}
+.ck-settings-view .aj-nome {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.ck-settings-view .aj-desc {
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+.ck-settings-view .settings .chave {
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 16px;
+  margin: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.ck-settings-view .chave > input {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ck-settings-view .chave > span {
+  grid-column: 1;
+  grid-row: 1;
+}
+.ck-settings-view .chave > input:checked {
+  background: var(--primary);
+}
+.ck-settings-view .temas {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.ck-settings-view .tema-bt {
+  --sample-canvas: #000;
+  --sample-surface: #0c0c0d;
+  --sample-raised: #141416;
+  --sample-line: #29292e;
+  --sample-ink: #f1f1f3;
+  min-width: 0;
+  align-items: stretch;
+  text-align: left;
+  gap: 8px;
+  padding: 12px;
+  border-color: var(--sample-line);
+  background: var(--sample-surface);
+  color: var(--sample-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ck-settings-view .tema-bt[data-tema="azul"] {
+  --sample-canvas: #061527;
+  --sample-surface: #0a203b;
+  --sample-raised: #102e53;
+  --sample-line: #23466b;
+}
+.ck-settings-view .tema-bt[data-tema="claro"] {
+  --sample-canvas: #edf1f7;
+  --sample-surface: #f7f9fc;
+  --sample-raised: #fff;
+  --sample-line: #d1daea;
+  --sample-ink: #111827;
+}
+.ck-settings-view .tema-bt[data-tema="jornal"] {
+  --sample-canvas: #f0ece2;
+  --sample-surface: #f8f4eb;
+  --sample-raised: #fffdf8;
+  --sample-line: #ded4c1;
+  --sample-ink: #282116;
+}
+.ck-settings-view .tema-bt.on {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ck-settings-view .tema-bt:hover {
+  border-color: var(--ink-muted);
+}
+.ck-settings-view .tema-am {
+  display: flex;
+  position: relative;
+  width: 100%;
+  height: 44px;
+  gap: 4px;
+  padding: 6px;
+  background: var(--sample-canvas);
+  border: 1px solid var(--sample-line);
+}
+.ck-settings-view .tema-am::before,
+.ck-settings-view .tema-am::after {
+  content: "";
+  position: static;
+  inset: auto;
+  height: auto;
+  transform: none;
+  border-radius: 3px;
+  background: var(--sample-surface);
+}
+.ck-settings-view .tema-am::before {
+  width: 28%;
+  flex: none;
+}
+.ck-settings-view .tema-am::after {
+  width: auto;
+  flex: 1;
+  background: var(--sample-raised);
+  border: 1px solid var(--sample-line);
+}
+.ck-settings-view .ck-preferences {
+  margin-bottom: 16px;
+}
+.ck-settings-view .foto-linha {
+  align-items: center;
+}
+.ck-settings-view .foto-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ck-settings-view .foto-btns .btn-wide {
+  width: auto;
+  margin-top: 0;
+  padding: 6px 12px;
+}
+.ck-settings-view .ck-shortcut {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+.ck-settings-view .ck-shortcut kbd {
+  flex: none;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font: 11px var(--font-code);
+}
+.ck-settings-view .ck-shortcut > span {
+  text-align: right;
+  color: var(--ink-muted);
+}
+@media (max-width: 720px) {
+  .ck-settings-tabs {
+    flex-basis: 168px;
+  }
+  .ck-layer .ck-settings-view .settings {
+    padding: 16px;
+  }
+  .ck-settings-view .temas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  .ck-settings-tabs {
+    flex-basis: 44px;
+    padding: 8px 4px;
+  }
+  .ck-settings-tabs .ck-button {
+    justify-content: center;
+  }
+  .ck-settings-tabs .ck-button > span {
+    display: none;
+  }
+  .ck-settings-view .ck-shortcut {
+    gap: 8px;
+  }
+}
+@container (max-width: 290px) {
+  .ck-app .cmp-bar {
+    flex-wrap: wrap;
+  }
+  .ck-app .p-model {
+    max-width: 70px;
+  }
+}
+.ck-engine-availability {
+  font: 11px var(--font-ui);
+  color: var(--ink-faint);
+  display: block;
+}
+.ck-app .bv-bt {
+  flex-wrap: wrap;
+}
+.ck-app .bv-bt small {
+  width: 100%;
+  text-align: center;
+}
+.ck-app .p-robos {
+  display: none;
+}
+.ck-header-robots {
+  padding: 3px;
+  min-width: 28px;
+  font-size: 11px;
+  gap: 2px;
+}
+.ck-header-robots svg {
+  width: 14px;
+  height: 14px;
+}
+.ck-app .p-git {
+  max-width: 68px;
+  padding: 2px;
+  font: 11px var(--font-ui);
+}
+.ck-plan {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 66px;
+  width: 100%;
+}
+.ck-plan-segments {
+  display: flex;
+  gap: 3px;
+  width: 100%;
+  height: 4px;
+}
+.ck-plan-segment {
+  flex: 1;
+  background: var(--high);
+  border-radius: 2px;
+}
+.ck-plan-segment.done {
+  background: var(--working);
+}
+.ck-plan-segment.current {
+  background: var(--primary);
+}
+.ck-plan-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  width: 100%;
+}
+.ck-plan-current {
+  flex: 1;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-plan-total {
+  color: var(--ink-faint);
+}
+.ck-plan-item {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+.ck-plan-item.done {
+  color: var(--ink-faint);
+}
+.ck-app .p-debate {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 4px;
+  justify-content: center;
+}
+.ck-app .p-debate .pd-rot {
+  display: none !important;
+}
+.ck-app .co-dialog {
+  background: var(--raised);
+  color: var(--ink);
+  border-color: var(--line-strong);
+  font-family: var(--font-ui);
+}
+.ck-app #avisoPaineis {
+  display: none !important;
+}
+.ck-app .pane-nome:has(.pn-input) {
+  display: flex !important;
+  background: var(--raised);
+}
+.ck-saved-list > summary {
+  padding: 6px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.ck-header-robots[hidden] {
+  display: none !important;
+}
+.ck-plan-segments progress {
+  width: 100%;
+  height: 4px;
+  accent-color: var(--primary);
+}
+
+/* Revisão visual: rail com sessões e três destinos, como no Navigator. */
+.ck-navigator {
+  /* o min() é o freio pra janela estreita: com a lateral arrastada pra 420px e
+     a janela em 390px, o documento inteiro passava a rolar na horizontal */
+  width: min(var(--layout-sidebar), 45vw);
+  flex-basis: min(var(--layout-sidebar), 45vw);
+  overflow: hidden;
+}
+.ck-brand img {
+  width: 24px;
+  height: 24px;
+}
+.ck-session {
+  min-height: 32px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.ck-group-head {
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 30px;
+}
+/* O "Ferramentas" era um atalho escondido, que so' aparecia no rail. Desde
+   21/09 ele e' um dos 4 botoes fixos do rodape: guarda Automacoes, Terminal e
+   Conectores, que sairam de la'. */
+.ck-tools-menu {
+  display: inline-flex;
+}
+.ck-navigator.ck-collapsed:not(.ck-peek) {
+  width: var(--layout-rail);
+  flex-basis: var(--layout-rail);
+  align-items: center;
+  padding: var(--space-2) 0;
+  gap: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-top {
+  gap: var(--space-1);
+  width: 36px;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-top > * {
+  flex: none;
+  width: 32px;
+  height: 28px;
+  justify-content: center;
+  padding: var(--space-1);
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-top > .ck-brand {
+  order: -2;
+  height: 32px;
+}
+.ck-collapsed:not(.ck-peek) .ck-toggle {
+  order: -1;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-grouping {
+  padding: var(--space-1) 0;
+  border: 0;
+  flex: none;
+}
+.ck-collapsed:not(.ck-peek)
+  :is(.ck-nav-grouping > .ck-button:not(.ck-attention-count),
+      .ck-new-place, .ck-history, .ck-tool-expanded, .ck-group-head,
+      .ck-saved-list, .ck-empty-nav) {
+  display: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-attention-count {
+  min-width: 32px;
+  min-height: var(--layout-hit);
+  padding: var(--space-1) 6px;
+  border-radius: var(--radius-pill);
+}
+.ck-collapsed:not(.ck-peek) .ck-session-list {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 10px;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-group:not(:has(.ck-live)) {
+  display: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-group:has(.ck-live) {
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line-strong);
+}
+.ck-collapsed:not(.ck-peek) .ck-nav-group:has(.ck-live):first-child {
+  border-top: 0;
+}
+/* O rail mantém visíveis as sessões vivas mesmo se o grupo estava fechado. */
+.ck-collapsed:not(.ck-peek) .ck-group-body[hidden]:has(> .ck-live) {
+  display: block;
+}
+.ck-collapsed:not(.ck-peek) .ck-session {
+  width: 36px;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: var(--space-2);
+  justify-content: center;
+}
+.ck-collapsed:not(.ck-peek) .ck-state.ck-g {
+  --layout-glyph: 8px;
+  width: var(--layout-glyph);
+  height: var(--layout-glyph);
+  top: 2px;
+  right: 2px;
+  bottom: auto;
+  box-shadow: 0 0 0 2px var(--sunken);
+}
+/* O RAIL RECOLHIDO NAO ANIMA. O selo tem 8px aqui: um anel de 1.5px nesse
+   tamanho vira uma mancha e o halo passa por cima do logo do motor. E o rail
+   e' o pior caso de custo -- 20 linhas empilhadas num canto que voce so' olha
+   de relance. A forma ja' separa os quatro estados (cheio ambar / cheio cinza
+   / com visto / so' contorno), entao aqui ela trabalha sozinha. */
+.ck-collapsed:not(.ck-peek) .ck-state.ck-g.working {
+  display: inline-block;
+  margin-inline: 0;
+  background: var(--working);
+  border-color: transparent;
+  animation: none;
+  box-shadow: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-state.ck-g.attention::after {
+  animation: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-state.ck-g.done::after {
+  left: 2.5px;
+  top: 1px;
+  width: 2px;
+  height: 4px;
+  border-width: 0 1.3px 1.3px 0;
+}
+.ck-collapsed:not(.ck-peek) .ck-accounts {
+  flex: none;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: 100%;
+  padding: 6px 0 2px;
+  gap: 2px;
+}
+.ck-collapsed:not(.ck-peek) .ck-account-button {
+  min-width: 36px;
+  min-height: 32px;
+  display: flex;
+  justify-content: center;
+}
+.ck-collapsed:not(.ck-peek) .ck-account-button[hidden] {
+  display: none;
+}
+.ck-collapsed:not(.ck-peek) .ck-acct {
+  padding: 2px;
+  min-height: 32px;
+}
+.ck-collapsed:not(.ck-peek) .ck-tools {
+  flex: none;
+  align-items: center;
+  width: 100%;
+  gap: 2px;
+  border: 0;
+  padding: 2px 0 var(--space-1);
+}
+.ck-collapsed:not(.ck-peek) .ck-tools > .ck-button {
+  flex: none;
+  width: 32px;
+  height: 28px;
+  padding: 6px;
+}
+.ck-collapsed:not(.ck-peek) .ck-tools-menu {
+  display: inline-flex;
+}
+@media (max-height: 620px) {
+  .ck-collapsed:not(.ck-peek) .ck-accounts {
+    max-height: 96px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .ck-collapsed:not(.ck-peek) .ck-account-button {
+    flex-shrink: 0;
+  }
+}
+
+/* A identidade da ação é do Cockpit; a cor do motor fica somente no logo. */
+.ck-app .pane {
+  --accent: var(--primary) !important;
+}
+.ck-app .pane.eng-claude { --ck-engine-ink: var(--engine-claude); }
+.ck-app .pane.eng-codex { --ck-engine-ink: var(--engine-codex); }
+.ck-app .pane.eng-gemini { --ck-engine-ink: var(--engine-gemini); }
+.ck-app .pane.eng-grok { --ck-engine-ink: var(--engine-grok); }
+.ck-app .pane.eng-acp { --ck-engine-ink: var(--engine-acp); }
+.ck-app .msg.bot .av,
+.ck-app .pe-logo {
+  color: var(--ck-engine-ink, var(--ink-muted));
+}
+.ck-app .recibo {
+  border-left-color: var(--line-strong);
+  background: var(--surface);
+}
+/* O padding do chat é único; o legado somava mais 18px em cada mensagem. */
+.ck-app .pane-chat > :is(.msg, .tool) {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ck-app .msg-body {
+  font-size: 14px;
+  line-height: 22px;
+}
+/* CARET DO TEXTO QUE ESTA' CHEGANDO. Nao ha' efeito de digitacao: o texto do
+   modelo ja' chega em streaming de verdade (textDelta, app.js:3183). O que
+   faltava era o tracinho dizendo "ainda nao acabou".
+   A marca e' a que o app JA' usa pra isso: a classe .ocupado no painel, que o
+   setDot() liga quando P.busy vira true e desliga no turn-end (app.js:2568 e
+   4176). Nao existe segundo caminho de estado -- acabou o turno, some o caret.
+   :not(:has(~ .msg)) escolhe a ULTIMA fala do chat, que e' onde as letras
+   estao caindo; o bloco de passos e o "trabalhando..." nao sao .msg, entao
+   nao atrapalham. E o ::after vai no ULTIMO filho do corpo (o <p> final do
+   markdown), pra ficar na mesma linha do texto em vez de cair embaixo.
+   Lista e' o caso a parte: num <ul> o ::after cai DEPOIS do ultimo item, numa
+   linha sozinha -- visto na previa. Por isso a segunda regra entra no ultimo
+   <li>, que e' onde o texto realmente termina. */
+.ck-app .pane.ocupado .msg.bot:not(:has(~ .msg)) .msg-body > :last-child:not(ul, ol)::after,
+.ck-app .pane.ocupado .msg.bot:not(:has(~ .msg)) .msg-body > :is(ul, ol):last-child li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5ch;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: ck-caret 1s step-end infinite;
+}
+.ck-app .msg-role {
+  font-size: 11px;
+}
+.ck-app .tool-in {
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+}
+.ck-app .tool-hd {
+  padding: var(--space-1) 0;
+  min-height: var(--layout-hit);
+}
+.ck-app .tool-hd:hover {
+  background: var(--hover);
+}
+.ck-app .tool-ico,
+.ck-app .tool-st.run {
+  color: var(--working);
+}
+.ck-app .tool-bd {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+/* Motor indisponível mantém contraste e explica o estado pelo contorno. */
+.ck-app .bv-bt.fora {
+  opacity: 1;
+  border-style: dashed;
+  background: transparent;
+}
+.ck-app .bv-bt.fora .bv-ico {
+  color: var(--ink-faint);
+}
+
+/* A busca é leve e fica acima do trabalho, sem apagar a conversa ao fundo. */
+.ck-overlay:has(> .ck-palette) {
+  align-items: flex-start;
+  padding-top: clamp(24px, 16vh, 144px);
+  background: transparent;
+}
+.ck-palette {
+  width: min(560px, 100%);
+  max-height: min(640px, 76dvh);
+}
+.ck-agent {
+  width: min(380px, 100%);
+}
+.ck-agent .ck-engine-options,
+.ck-agent .ck-mode-options {
+  gap: var(--space-2);
+  padding: var(--space-1) 0 var(--space-2);
+}
+.ck-app .pane-perm {
+  border-top: 0;
+}
+/* Enviar continua disponível enquanto o motor trabalha: fila ou entrada. */
+.ck-app .p-stop {
+  background: var(--high);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+}
+@container (max-width: 360px) {
+  .ck-app .cmp-bar:has(.p-stop:not(.hidden)) {
+    flex-wrap: wrap;
+  }
+  .ck-app .cmp-bar:has(.p-stop:not(.hidden)) .p-model {
+    max-width: 96px;
+  }
+}
+/* Painel estreito: a barra tem que quebrar em duas linhas antes de estourar,
+   senao o Enviar sai pela borda (o .pane e' overflow:hidden e o clique nem
+   chega no botao). O Continuar e a Sugestao somam ~60px fixos: medido, a barra
+   com os dois estoura abaixo de 323px (com o Compactar na tela) -- 330 da'
+   folga. Acima disso ela cabe em UMA linha, e quebrar ali roubaria 32px de
+   conversa a toa. */
+@container (max-width: 330px) {
+  .ck-app .cmp-bar:has(.p-cont),
+  .ck-app .cmp-bar:has(.p-sugs) {
+    flex-wrap: wrap;
+  }
+  .ck-app .cmp-bar:has(.p-cont) .p-model,
+  .ck-app .cmp-bar:has(.p-sugs) .p-model {
+    max-width: 96px;
+  }
+}
+
+.ck-attention-count[data-count="0"] {
+  display: none;
+}
+
+/* Todas as sessões continuam lado a lado; só a faixa de painéis rola. */
+.ck-app #panes {
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  scroll-padding-inline: var(--space-2);
+  overscroll-behavior-x: contain;
+}
+.ck-app #panes > .coluna {
+  min-width: var(--layout-pane-min);
+  width: max(var(--layout-pane-min), calc((100% - 26px) / 5));
+  flex-shrink: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ck-app #panes > .coluna > .pane {
+  width: 100%;
+  min-width: 0;
+}
+.ck-app .pane.empilhado {
+  min-height: 280px;
+}
+.ck-app #panes::-webkit-scrollbar {
+  height: 12px;
+}
+.ck-app #panes::-webkit-scrollbar-thumb {
+  background: var(--control-border);
+  border: 3px solid var(--canvas);
+  border-radius: var(--radius-pill);
+}
+/* O foco fica em volta da CAIXA DE ESCREVER, não da sessão inteira: a borda no
+   painel todo desalinhava quando a sessão tinha rolagem e brigava com a coluna
+   vizinha. Estas são as ÚNICAS regras de borda da .pane-cmp no tema ck-app —
+   as três que competiam (uma em :450, duas em :1056) foram apagadas nesta leva,
+   porque tinham especificidade MAIOR e pintavam a borda de cinza. */
+.ck-app .pane-cmp {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+.ck-app .pane.focus .pane-cmp,
+.ck-app .pane-cmp:focus-within,
+.ck-app .pane.focus .pane-cmp:focus-within {
+  border-color: var(--focus);
+  box-shadow: none;
+}
+/* 22/09/2026, a pedido do Hugo: a linha azul volta a circundar a SESSAO
+   inteira — mas como OUTLINE, não como border. O comentário acima conta por
+   que a tentativa anterior saiu, e os dois motivos eram da border: ela ocupa
+   espaço (a sessão com rolagem desalinhava) e desenha para FORA (brigava com a
+   coluna vizinha). O outline com offset negativo não ocupa espaço nenhum e
+   desenha POR DENTRO da caixa — os dois problemas somem. Mesma espessura e
+   mesma cor da caixa de escrever: 1px var(--focus), em todos os 4 temas. */
+.ck-app .pane.focus,
+.ck-app .pane.focused {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
+.ck-app .p-input:focus-visible {
+  outline: none;
+}
+.ck-group-head {
+  border-radius: var(--radius-md);
+  padding: var(--space-2) 6px;
+  color: var(--ink-muted);
+  gap: var(--space-2);
+}
+.ck-navigator:not(.ck-collapsed) .ck-nav-group + .ck-nav-group,
+.ck-navigator.ck-peek .ck-nav-group + .ck-nav-group {
+  margin-top: var(--space-2);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+.ck-group-head > .ic,
+.ck-group-head > .ck-group-icon .ic {
+  width: var(--layout-logo);
+  height: var(--layout-logo);
+  flex: none;
+  color: var(--ink-faint);
+}
+.ck-group-head[aria-current='true'],
+.ck-nav-group[data-current='true'] > .ck-group-head {
+  color: var(--ink);
+  background: var(--raised);
+}
+.ck-group-head .ck-group-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--ink-faint);
+  flex: none;
+}
+.ck-group-head[aria-expanded='false'] .ck-group-chevron {
+  transform: rotate(-90deg);
+}
+
+.ck-group-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+.ck-group-stats > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ck-group-stats .ck-g {
+  --layout-glyph: 8px;
+  border-width: 1.5px;
+}
+.ck-attention-count .ck-g {
+  --layout-glyph: 8px;
+  animation: none;
+  box-shadow: none;
+}
+.ck-group-head .ck-group-icon,
+.ck-group-head .ck-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ck-group-head .ck-group-chevron > .ic {
+  width: 12px;
+  height: 12px;
+}
+
+/* Torre acionável em cima, histórico da pasta embaixo. */
+/* position: a alça de largura é absoluta e se pendura nesta borda direita */
+.ck-navigator { --layout-sidebar: 224px; gap: 4px; padding: 8px 6px; position: relative; }
+/* Desenho do Hugo (21/09/2026), medido para monitor Full HD: a Torre tem altura
+   FIXA — cabem 7 conversas — e o HISTÓRICO fica com todo o resto. Em tela maior
+   quem cresce é o histórico, sozinho, porque ele é o flex:1; a Torre não muda,
+   e é isso que ele quer: o bloco de cima sempre do mesmo tamanho, no mesmo
+   lugar. (Era `max-height: 44%`, que em 1080px dava quase o dobro disto e
+   espremia o histórico.) */
+/* A Torre ocupa só o que o conteúdo precisa, com TETO de 200px (7 conversas).
+   Com `height: 200px` fixo ela reservava o bloco inteiro mesmo com 2 linhas, e
+   sobrava um vazio enorme enquanto o histórico e o rodapé disputavam o resto.
+   Passando de 7, ela para no teto e rola por dentro. */
+.ck-control-list { flex: 0 0 auto; height: auto; max-height: 200px; min-height: 30px; overflow-y: auto; overflow-x: hidden; }
+/* ===== as duas medidas ajustadas na mão (cfg.uiTorreAltura / cfg.uiSidebarLargura)
+   Sem valor gravado NADA daqui vale: a Torre fica no max-height: 44% da regra
+   acima e a barra nos 224px da variável. O atributo e a variável só aparecem
+   quando o dono arrasta — por isso config antigo abre exatamente igual. */
+/* 0 0 + height: a Torre NAO encolhe, senão o histórico cheio roubava metade do
+   que o dono acabou de arrastar. O min() é o freio: os 320px reservam cabeçalho,
+   um pedaço de histórico, contas e rodapé, pra Torre grande não empurrar os
+   botões de baixo pra fora da lateral. */
+.ck-navigator[data-torre="manual"] .ck-control-list { flex: 0 0 auto; height: min(var(--ck-torre), calc(100% - 320px)); max-height: none; }
+.ck-torre-divisor { flex: none; height: 9px; margin: -3px 0; position: relative; cursor: row-resize; }
+/* a linha fina no meio é o que se vê; a área de pegar é maior que ela */
+.ck-torre-divisor::after { content: ""; position: absolute; left: 8px; right: 8px; top: 4px; height: 1px; background: var(--line); border-radius: 1px; }
+.ck-torre-divisor:is(:hover, :focus-visible, .ck-arrastando)::after { background: var(--primary); height: 3px; top: 3px; }
+.ck-torre-divisor:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+.ck-largura-alca { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; }
+.ck-largura-alca:is(:hover, .ck-arrastando) { background: var(--primary); opacity: 0.5; }
+.ck-largura-alca:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+/* rail e peek têm largura própria: lá as alças não servem pra nada */
+.ck-collapsed:not(.ck-peek) :is(.ck-torre-divisor, .ck-largura-alca),
+.ck-peek .ck-largura-alca { display: none; }
+.ck-folder-heading { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line); padding: 8px 6px 2px; }
+.ck-folder-heading > svg { width: 14px; height: 14px; }
+/* o "+" de nova conversa vive no fim deste cabeçalho (abre na pasta aberta) */
+.ck-folder-heading .ck-nav-label { flex: 1; }
+.ck-new-chat { flex: none; width: 24px; min-width: 24px; min-height: 24px; padding: 3px; margin: -3px 0; }
+.ck-collapsed:not(.ck-peek) .ck-new-chat { display: none; }
+/* as duas listas usam a MESMA linha e por isso a mesma medida: se elas
+   divergirem aqui, a de baixo deixa de parecer a torre */
+:is(.ck-control-list, .ck-session-list) .ck-session { min-height: 28px; padding: 4px 6px; gap: 5px; font-size: 12px; }
+:is(.ck-control-list, .ck-session-list) .ck-session-place { display: none; }
+.ck-session-list { flex: 1 1 auto; min-height: 60px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.ck-place-only .ck-group-head { min-height: 28px; height: 28px; padding: 3px 6px; gap: 6px; }
+.ck-place-only .ck-group-body, .ck-place-only .ck-group-chevron { display: none !important; }
+.ck-collapsed:not(.ck-peek) .ck-control-list { width: 100%; padding: 0 10px; scrollbar-width: none; }
+.ck-collapsed:not(.ck-peek) :is(.ck-control-list, .ck-session-list) .ck-session { width: 36px; min-height: 28px; padding: 4px; }
+.ck-collapsed:not(.ck-peek) .ck-folder-heading { justify-content: center; }
+
+/* ===== faixa horizontal de pastas, acima dos painéis =====
+   O dono pediu "apenas o nome": nada de contador, estado ou ícone repetido.
+   Quem precisa agir olha a TORRE; esta faixa só diz onde você está. */
+.ck-app .ck-work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* sem min-height:0 o painel empurra a coluna e a faixa some pra fora da janela */
+.ck-app .ck-work > :is(#panes, #boasvindas) { min-height: 0; }
+.ck-place-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 2px var(--space-2);
+  border-bottom: 1px solid var(--line);
+  /* min-width:0 é o que impede a faixa de empurrar a janela: sem ele o flex
+     deixa a coluna crescer até caber todas as pastas e a tela inteira rola */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* barrinha escondida porque ela somava 10px de altura numa faixa de 33px e
+     fazia a faixa engordar só por existirem pastas demais. A pista de que rola
+     é a mesma do #activitybar, deitada: a sombra é 'scroll' (presa na borda
+     direita) e a tampa da cor da faixa é 'local' (anda com as pastas), então a
+     sombra some sozinha ao chegar na última pasta e nem aparece se tudo coube. */
+  scrollbar-width: none;
+  background-color: var(--sunken);
+  background-image: linear-gradient(var(--sunken), var(--sunken)),
+    linear-gradient(to left, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0));
+  background-repeat: no-repeat;
+  background-size: 16px 100%, 14px 100%;
+  background-position: right, right;
+  background-attachment: local, scroll;
+}
+.ck-place-bar::-webkit-scrollbar { height: 0; display: none; }
+.ck-place-bar .ck-place-only { flex: 0 0 auto; max-width: 180px; margin: 0; padding: 0; border: 0; }
+.ck-place-bar .ck-group-head {
+  width: auto;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ck-place-bar .ck-group-stats { display: none; }
+/* O icone fica: o Hugo pediu o de pasta de volta (21/09). Local = pasta,
+   remoto = servidor -- da' pra ver de que tipo e' o lugar sem ler o nome. */
+.ck-place-bar .ck-group-icon { display: flex; flex: none; }
+.ck-place-bar .ck-group-icon .ic { width: 13px; height: 13px; }
+.ck-place-bar .ck-place-only[data-current="true"] .ck-group-head {
+  background: var(--high);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--focus);
+}
+.ck-place-bar .ck-new-place { flex: none; padding: var(--space-1); min-width: 28px; justify-content: center; }
+.ck-place-bar .ck-new-place span { display: none; }
+.term-code-form { margin-top: 10px; }
+.term-code-form label { display: block; margin-bottom: 4px; font-size: 12px; }
+.term-code-form > div { display: flex; gap: 6px; }
+.term-code-input { flex: 1; min-width: 0; width: 100%; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--ink); padding: 7px; user-select: text; }
+.ck-app .cx-term .term-wrap { min-height: 100px; }
+.ck-app .cx-term .term-tela { height: clamp(120px, 32vh, 300px); }
+
+/* as pastas saíram da lateral: nenhuma regra de separador entre grupos pode
+   alcançar os chips da faixa, senão cada um ganha uma linha em cima */
+.ck-place-bar .ck-place-only + .ck-place-only { margin-top: 0; padding-top: 0; border-top: 0; }
+
+/* ===== Tela baixa: o histórico sai e a Torre fica com tudo =====
+   Pedido do Hugo em 21/09/2026: o desenho vale para Full HD; em tela menor
+   oculta o histórico, em tela maior ele é quem cresce (já cresce, é o flex:1).
+   Este bloco mora no FIM do arquivo de propósito: precisa vencer também o
+   `[data-torre="manual"]`, que tem a mesma especificidade e vem antes — sem
+   isso, quem tivesse arrastado a alça ficaria com a Torre pequena numa tela
+   onde o histórico nem aparece. O cabeçalho do histórico fica, encolhido, só
+   para o "+" de nova conversa não sumir junto. */
+@media (max-height: 620px) {
+  .ck-navigator:not(.ck-peek) .ck-session-list,
+  .ck-navigator:not(.ck-peek) .ck-torre-divisor,
+  .ck-navigator:not(.ck-peek) .ck-folder-heading .ck-nav-label,
+  .ck-navigator:not(.ck-peek) .ck-folder-heading > svg {
+    display: none;
+  }
+  .ck-navigator:not(.ck-peek) .ck-folder-heading {
+    justify-content: flex-end;
+    padding: 4px 6px 0;
+    border-top: 0;
+  }
+  .ck-navigator:not(.ck-peek) .ck-control-list,
+  .ck-navigator[data-torre="manual"]:not(.ck-peek) .ck-control-list {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+  }
+}
+
+/* ===================================================================
+   MOVIMENTO REDUZIDO -- ultima regra do arquivo, de proposito.
+   @media NAO soma especificidade: se este bloco ficar antes de alguma
+   regra que anima, a regra de baixo ganha no desempate por ordem e a
+   animacao continua rodando. Foi o que aconteceu com o caret ate' a
+   medicao na previa (Emulation.setEmulatedMedia). Regra nova que anime
+   entra ACIMA daqui.
+   Parado, cada forma continua dizendo o mesmo: "sua vez" segue cheio de
+   ambar (o halo nasce em opacity 0 e simplesmente nao aparece), os tres
+   pontinhos seguem tres pontinhos cinza, o esqueleto segue caixa
+   reservada e o caret fica ACESO -- apagado ele mentiria que o turno
+   acabou.
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .ck-g.attention::after,
+  .ck-g.working,
+  .ck-skeleton-row::after,
+  .ck-skeleton[data-out],
+  .ck-session-list[data-swap] > .ck-session,
+  .ck-app .pane.ocupado .msg.bot:not(:has(~ .msg)) .msg-body > :last-child:not(ul, ol)::after,
+  .ck-app
+    .pane.ocupado
+    .msg.bot:not(:has(~ .msg))
+    .msg-body
+    > :is(ul, ol):last-child
+    li:last-child::after,
+  /* os tres pontinhos do chat (.trab-pts, style.css:419) falam a MESMA
+     lingua do selo de "trabalhando" e nasceram sem guarda nenhuma: parar
+     um e deixar o outro pulando seria o pior dos dois mundos */
+  .ck-app .trab-pts i {
+    animation: none;
+  }
+}

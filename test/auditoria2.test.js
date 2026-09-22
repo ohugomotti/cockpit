@@ -282,14 +282,14 @@ function ctxTela(nomes, extra) {
    2) renomear pela LISTA chega no painel aberto e na ficha (savePanes)
    ===================================================================== */
 test('achado 2: renomear pela lista muda o painel aberto (e o do fundo), a ficha de outra aba e grava; o ramo pendente da origem nao muda', () => {
-  const c = ctxTela(['renomearPaineisDaConversa', 'painelDaConversa', 'esquecerTituloAuto']);
+  const c = ctxTela(['renomearPaineisDaConversa', 'painelDaConversa', 'esquecerTituloAuto', 'abaPorId', 'remotoDoAba', 'remotoDoPane']);
   const A = { id: 'a', engine: 'claude', sessaoId: 'S', titulo: 'Velho', el: {} };
   const F = { id: 'f', engine: 'claude', resumeAnterior: 'S', titulo: 'Velho', el: {} };
   const R = { id: 'r', engine: 'claude', forkPendente: true, resumeId: 'S', titulo: '(ramo) Velho', el: {} };
   c.panes.set('a', A); c.panes.set('r', R); c.panesFundo.set('f', F);
   const ficha = { sessaoId: 'S', engine: 'claude', titulo: 'Velho' };
   const fichaRamo = { sessaoId: 'S', engine: 'claude', titulo: '(ramo) Velho', fork: true };
-  c.cfg.abas = [{ id: 'outra', paineis: [ficha, fichaRamo] }];
+  c.cfg.abas = [{ id: 'pc', tipo: 'local' }, { id: 'outra', tipo: 'local', paineis: [ficha, fichaRamo] }];
   c.fichasPendentes.set('pc', [{ sessaoId: 'S', engine: 'claude', titulo: 'Velho' }]);
   assert.equal(c.renomearPaineisDaConversa({ id: 'S', engine: 'claude' }, 'Nome Novo'), 2);
   for (const P of [A, F]) { assert.equal(P.titulo, 'Nome Novo'); assert.equal(P.nomeManual, true); assert.equal(P.tituloAuto, false); assert.equal(P._nomeGravadoEm, 'S|Nome Novo'); }
@@ -300,7 +300,7 @@ test('achado 2: renomear pela lista muda o painel aberto (e o do fundo), a ficha
   assert.ok(c.chamadas.includes('savePanes'), 'a ficha e gravada: reabrir o app traz o nome novo');
   // a lista usa isto no fim da edicao
   const lc = recorte('linhaConversa');
-  assert.match(lc, /renomearPaineisDaConversa\(s, novo\)/);
+  assert.match(lc, /renomearPaineisDaConversa\(\{ \.\.\.s, remotoDestino: destinoDaLinha \}, novo\)/);
 });
 
 /* =====================================================================
@@ -332,7 +332,7 @@ test('achado 3: trocar a pasta do painel zera o nome (e o seu nao vai pro id nov
    ===================================================================== */
 test('achado 4: trocar modo/modelo/pasta no "Religo em N s" diz que cancelou a religacao (nao "resposta interrompida") e o chip Continuar volta', async () => {
   const c2 = ctxTela(['destravarPainel', 'cancelarReligar', 'devolverFilaAoCampo', 'devolverAoCampo', 'antesDaTroca', 'avisarTroca',
-    'guardarConversaPraVoltar', 'trocarModeloDoPainel', 'trocarEsforco', 'trocarPastaDoPainel', 'zerarNomeDaConversa', 'esquecerTituloAuto'], {
+    'guardarConversaPraVoltar', 'trocarModeloDoPainel', 'mudarModoDoPainel', 'trocarEsforco', 'trocarPastaDoPainel', 'zerarNomeDaConversa', 'esquecerTituloAuto'], {
     esforcosDe: () => [{ id: 'low' }, { id: 'medium' }, { id: 'high' }], mostrarContinuar: (P) => { P._chip = true; },
     limparSessoesDeTodosMotores() {}, limparPlano() {}, limparAuditoria() {}, mostrarPastaNoPainel() {},
     nomePasta: (p) => p, shortPath: (p) => p, atualizarGit() {}, loadTree() {}, focusPane: null,
@@ -354,8 +354,23 @@ test('achado 4: trocar modo/modelo/pasta no "Religo em N s" diz que cancelou a r
   await c2.trocarPastaDoPainel(C, 'C:\\nova');
   const deC = c2.notas.filter((n) => n.id === 'c').map((n) => n.t).join(' | ');
   assert.match(deC, /Cancelei a religação automática \(você trocou a pasta\)\. Pasta nova começa conversa nova\./);
+  // Menu e janela nova usam a mesma funcao real; o cancelamento segue funcional.
+  const D = religando('d');
+  D.mode = 'manual'; D.modoReal = 'manual'; D._avisouModo = true;
+  await c2.mudarModoDoPainel(D, { id: 'plan', nome: 'Plano', desc: 'Planeja antes de editar' });
+  assert.equal(D.mode, 'plan');
+  assert.equal(D.modoReal, null);
+  assert.equal(D._avisouModo, false);
+  assert.equal(D._religar, null);
+  assert.equal(D._chip, true);
+  assert.equal(c2.cfg.defMode, 'plan');
+  const deD = c2.notas.filter(n => n.id === 'd').map(n => n.t).join(' | ');
+  assert.match(deD, /Cancelei a religação automática \(você trocou o modo\)/);
+  assert.doesNotMatch(deD, /interrompida/);
   // as outras trocas usam o mesmo aviso (modo, reserva, motor, conta)
-  for (const f of ['girarModo', 'menuModos', 'menuModelos']) assert.match(recorte(f), /avisarTroca\(P, antes/, f);
+  for (const f of ['girarModo', 'mudarModoDoPainel', 'alternarFallbackClaude']) assert.match(recorte(f), /avisarTroca\(P, antes/, f);
+  assert.match(recorte('menuModelos'), /alternarFallbackClaude\(P\)/);
+  assert.match(recorte('menuModos'), /await mudarModoDoPainel\(P, mo\)/);
   assert.match(recorte('trocarMotor'), /Cancelei a religação automática \(você trocou o motor\)/);
   assert.match(recorte('pararPaineisDaConta'), /avisarTroca\(Q, antes, 'a conta'/);
 });
@@ -598,7 +613,7 @@ test('achado 16: trocar a conta do PC com debate rodando avisa, pede ok e para o
   c.window.api.debateList = async () => [{ id: 'd1', status: 'running' }, { id: 'd0', status: 'completed' }];
   c.window.api.debateStop = async (id) => { parados.push(id); return {}; };
   assert.equal(await c.pararPaineisDaConta('claude', { remoto: null, chave: 'pc' }), 0);
-  assert.equal(perguntas.length, 1); assert.match(perguntas[0], /1 debate em andamento usa esta conta e vai parar agora/);
+  assert.equal(perguntas.length, 1); assert.match(perguntas[0], /1 debate em andamento será parado/);
   assert.deepEqual(parados, ['d1']);
   // desistiu: nada para
   c.confirm = () => false;

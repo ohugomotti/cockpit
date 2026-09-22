@@ -205,7 +205,8 @@ test('rodadas 1 · 2 · 3 lado a lado; o tamanho do contexto aparece ao lado da 
 test('painel remoto: aviso claro, revisão de código desmarcada e escondida, start vai como remoto', async () => {
   const h = montar({ remoto: { host: 'vps' } }); await h.CC.open(h.P, { review: true });
   const d = dialogo(h);
-  assert.match(d.querySelector('.co-aviso').textContent, /servidor \(VPS\).*não lê os arquivos/);
+  assert.match(d.querySelector('.co-aviso').textContent, /Servidor: debate local, sem leitura dos arquivos remotos/);
+  assert.match(d.querySelector('.co-aviso').title, /servidor \(VPS\).*não lê os arquivos/);
   const rev = d.querySelectorAll('input').find(i => i.parentNode.textContent.includes('Git'));
   assert.equal(rev.checked, false);
   assert.equal(rev.parentNode.hidden, true);
@@ -223,7 +224,11 @@ test('rodando: status "Rodada 1 de 2 · Codex respondendo", só Interromper; con
   h.evento({ ...base, status: 'running', progress: { fala: 1, total: 4 }, messages: [
     { id: 'm1', speaker: 'codex', model: 'gpt-6-astra', effort: 'high', status: 'running', at: new Date().toISOString(), text: '', activity: { kind: 'lendo', alvo: 'src/app.js' }, reads: ['src/app.js'] }] });
   const d = dialogo(h);
-  assert.match(d.querySelector('.co-status').textContent, /^Rodada 1 de 2 · Codex respondendo · Os dois leem os arquivos de prev-ia/);
+  assert.equal(d.querySelector('.co-status').textContent, 'Rodada 1 de 2 · Codex respondendo');
+  assert.match(d.querySelector('.co-reading-scope').textContent, /prev-ia · só leitura/);
+  assert.match(d.querySelector('.co-reading-scope').title, /Os dois leem os arquivos de prev-ia/);
+  assert.equal(d.querySelector('.co-progress').children.length, 4);
+  assert.equal(d.querySelector('.co-progress').getAttribute('aria-label'), '0 de 4 falas concluídas');
   assert.match(d.querySelector('.co-message-state').textContent, /^Codex lendo src\/app\.js · 0:0\d$/);
   assert.equal(d.querySelector('.co-leu').textContent, 'Leu: src/app.js');
   const visiveis = () => d.querySelector('.co-actions').querySelectorAll('button').filter(b => !b.hidden).map(b => b.textContent);
@@ -298,4 +303,66 @@ test('botão só com ícone em painel estreito (@container no fim do style.css, 
 test('sem ternário de dois motores e sem a linha "Motti.IA · Cockpit" no topo', () => {
   assert.doesNotMatch(FONTE, /=== 'codex' \? 'Codex' : 'Claude'|=== 'claude' \? 'claude' : 'codex'/);
   assert.doesNotMatch(FONTE, /Motti\.IA · Cockpit/);
+});
+
+
+test('progresso conserva falas anteriores, ignora intervenção e não avança pelo relógio', async () => {
+  const h=montar(); await h.CC.open(h.P); dialogo(h).querySelector('textarea').value='Tema'; await botao(h,'Iniciar debate').onclick();
+  const m=(id,speaker,status)=>({id,speaker,status,text:'Texto',at:new Date().toISOString()});
+  const state={id:'d1',paneId:'p1',status:'running',rounds:1,progress:{fala:1,total:2},messages:[m('1','codex','completed'),m('2','claude','completed'),m('3','user','completed'),m('4','codex','running')]};
+  h.evento(state); const bar=dialogo(h).querySelector('.co-progress');
+  assert.equal(bar.children.length,4); assert.equal(bar.getAttribute('aria-label'),'2 de 4 falas concluídas');
+  h.evento({...state,progress:undefined,status:'interrupted',messages:state.messages.map(x=>x.id==='4'?{...x,status:'interrupted'}:x)});
+  assert.equal(bar.children.length,3); assert.equal(bar.getAttribute('aria-label'),'2 de 3 falas concluídas');
+  assert.equal(bar.children[2].classList.contains('interrupted'),true);
+});
+
+test('conclusão acrescenta ao rascunho sem disparar prompt e reabre pelo debate salvo', async () => {
+  const saved={id:'d1',paneId:'p1',status:'completed',rounds:1,topic:'Tema',messages:[{id:'m1',speaker:'codex',status:'completed',text:'Conclusão final',at:new Date().toISOString()}]};
+  const h=montar({painel:{debateId:'d1'},api:{debateGet:async()=>saved,debateList:async()=>[saved]}});
+  h.P.el.querySelector('.p-input').value='Rascunho anterior'; await h.CC.open(h.P);
+  await botao(h,'Levar conclusão para o campo').onclick();
+  assert.match(h.P.el.querySelector('.p-input').value,/^Rascunho anterior\n\nConclusão do debate/);
+  assert.match(h.P.el.querySelector('.p-input').value,/Conclusão final$/); assert.equal(h.chamadas.start.length,0);
+  await h.CC.open(h.P); assert.equal(dialogo(h).querySelector('.co-message-body').textContent,'Conclusão final');
+});
+
+test('troca de conta local bloqueia início de debate, inclusive quando o projeto é SSH', async () => {
+  for(const remoto of [null,{host:'fixture-server'}]){
+    const h=montar({remoto});let locked=true;const scopes=[];
+    h.ctx.window.CockpitUI={accountChanging:(engine,remote)=>{scopes.push([engine,remote]);return locked&&engine==='codex';}};
+    await h.CC.open(h.P);dialogo(h).querySelector('textarea').value='Tema preservado';
+    await botao(h,'Iniciar debate').onclick();assert.equal(h.chamadas.start.length,0);
+    assert.equal(dialogo(h).querySelector('textarea').value,'Tema preservado');assert.ok(scopes.every(([,remote])=>remote===null));
+    locked=false;await botao(h,'Iniciar debate').onclick();assert.equal(h.chamadas.start.length,1);
+  }
+});
+test('troca de conta bloqueia continuação de debate sem apagar intervenção', async () => {
+  let resumed=0;const saved={id:'d1',paneId:'p1',status:'interrupted',rounds:1,topic:'Tema',messages:[]};
+  const h=montar({painel:{debateId:'d1'},api:{debateGet:async()=>saved,debateList:async()=>[saved],debateContinue:async()=>{resumed++;return{...saved,status:'running'};}}});
+  let locked=true;h.ctx.window.CockpitUI={accountChanging:engine=>locked&&engine==='claude'};
+  await h.CC.open(h.P);const textareas=dialogo(h).querySelectorAll('textarea'),intervention=textareas[textareas.length-1];intervention.value='Minha orientação';
+  await botao(h,'Continuar ·').onclick();assert.equal(resumed,0);assert.equal(intervention.value,'Minha orientação');
+  locked=false;await botao(h,'Continuar ·').onclick();assert.equal(resumed,1);assert.equal(intervention.value,'');
+});
+
+test('fechar debate durante carregamento de modelos cancela início pendente', async () => {
+  let resolveModels;const h=montar({codex:null,api:{codexModels:()=>new Promise(resolve=>{resolveModels=resolve;})}});
+  await h.CC.open(h.P);dialogo(h).querySelector('textarea').value='Tema';const pending=botao(h,'Iniciar debate').onclick();
+  dialogo(h).close();resolveModels(CODEX);await pending;assert.equal(h.chamadas.start.length,0);
+});
+
+const savedDebate=id=>({id,paneId:'p1',topic:'Topic '+id,status:'completed',rounds:1,messages:[{id:'m'+id,speaker:'codex',status:'completed',text:'Resposta '+id}],cwd:'fixture'});
+test('respostas atrasadas dos debates salvos não substituem a seleção mais recente',async()=>{
+ const pending={};const h=montar({api:{debateList:async()=>[savedDebate('A'),savedDebate('B')],debateGet:id=>new Promise(r=>pending[id]=r)}});
+ await h.CC.open(h.P);const select=dialogo(h).querySelector('.co-salvos');select.value='A';const a=select.onchange();select.value='B';const b=select.onchange();pending.B(savedDebate('B'));await b;pending.A(savedDebate('A'));await a;
+ assert.equal(select.value,'B');assert.equal(h.P.debateId,'B');assert.equal(dialogo(h).querySelector('.co-message-body').textContent,'Resposta B');
+});
+test('carregamento inicial atrasado não sobrescreve debate escolhido pelo usuário',async()=>{
+ const pending={};const h=montar({painel:{debateId:'A'},api:{debateList:async()=>[savedDebate('A'),savedDebate('B')],debateGet:id=>new Promise(r=>pending[id]=r)}});
+ const opening=h.CC.open(h.P);for(let i=0;i<4&&!pending.A;i++)await tick();assert.equal(typeof pending.A,'function');const select=dialogo(h).querySelector('.co-salvos');select.value='B';const b=select.onchange();pending.B(savedDebate('B'));await b;pending.A(savedDebate('A'));await opening;
+ assert.equal(select.value,'B');assert.equal(h.P.debateId,'B');assert.equal(dialogo(h).querySelector('.co-message-body').textContent,'Resposta B');
+});
+test('debate carregado depois de fechar não altera o painel nem a conclusão',async()=>{
+ let resolve;const h=montar({api:{debateList:async()=>[savedDebate('A')],debateGet:()=>new Promise(r=>resolve=r)}});await h.CC.open(h.P);const d=dialogo(h),select=d.querySelector('.co-salvos');select.value='A';const loading=select.onchange();d.close();resolve(savedDebate('A'));await loading;assert.equal(h.P.debateId,undefined);assert.equal(h.P.el.querySelector('.p-input').value,'');
 });

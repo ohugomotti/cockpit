@@ -88,6 +88,36 @@ function normalizeAgentMessage(item = {}) {
   return { text, phase: item.phase || '', delivery: item.delivery ?? null, questions: item.questions ?? null, memoryCitation: item.memoryCitation ?? null };
 }
 
+// O app-server envia TurnError como objeto; nunca o converta com String().
+// Leia apenas campos públicos conhecidos, sem despejar payloads de ferramentas.
+function normalizeError(value, fallback = 'O Codex não conseguiu concluir a resposta.') {
+  const seen = new Set();
+  function read(item, depth = 0) {
+    if (typeof item === 'string') return item.trim() === '[object Object]' ? '' : item.trim();
+    if (!item || typeof item !== 'object' || depth > 5 || seen.has(item)) return '';
+    seen.add(item);
+    for (const key of ['message', 'error', 'cause', 'detail']) {
+      const text = read(item[key], depth + 1);
+      if (text) {
+        const detail = typeof item.additionalDetails === 'string' ? item.additionalDetails.trim() : '';
+        return detail && !text.includes(detail) ? text + '\n' + detail : text;
+      }
+    }
+    return '';
+  }
+  return read(value) || fallback;
+}
+
+function normalizeErrorNotification(params = {}, state = {}) {
+  const retrying = params.willRetry === true;
+  const message = normalizeError(params);
+  const duplicate = retrying ? !!state.retryShown : state.finalText === message;
+  if (retrying) state.retryShown = true;
+  else state.finalText = message;
+  return { text: (retrying ? 'O Codex está tentando novamente. ' : '') + message,
+    error: !retrying, retrying, duplicate };
+}
+
 function normalizeCommandOutput(method, params = {}) {
   if (method === 'command/exec/outputDelta') {
     return { id: params.processId, text: typeof params.deltaBase64 === 'string' ? Buffer.from(params.deltaBase64, 'base64').toString('utf8') : '' };
@@ -184,6 +214,8 @@ module.exports = {
   normalizeUserInputRequest,
   normalizeAgentMessage,
   normalizeCommandOutput,
+  normalizeError,
+  normalizeErrorNotification,
   buildUserInputResponse,
   normalizeSkillsResponse,
   mergeApps,

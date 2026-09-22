@@ -1,0 +1,31 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('fs');
+const {connect}=require('./cdp');
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{const c=await connect();const results=[];try{
+await c.send('Page.bringToFront');await c.send('Page.reload',{ignoreCache:true});await c.ready();await c.send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});await wait(150);
+const before=await c.evaluate(`(()=>{const s=document.querySelector('.pane-split'),r=s.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+100,widths:[...document.querySelectorAll('.coluna')].map(n=>n.getBoundingClientRect().width)};})()`);
+await c.send('Input.dispatchMouseEvent',{type:'mousePressed',x:before.x,y:before.y,button:'left',clickCount:1});
+await c.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:before.x+75,y:before.y,button:'left',buttons:1});
+await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:before.x+75,y:before.y,button:'left',clickCount:1});
+const after=await c.evaluate(`({widths:[...document.querySelectorAll('.coluna')].map(n=>n.getBoundingClientRect().width),bands:[...document.querySelectorAll('.faixa-nova')].map(n=>n.getBoundingClientRect().width)})`);
+assert.ok(Math.abs(after.widths[0]-before.widths[0]-75)<2);assert.ok(Math.abs(after.widths[0]+after.widths[1]-before.widths[0]-before.widths[1])<2);assert.ok(after.bands.every(w=>w<12));results.push({test:'arraste redimensiona colunas, conserva soma e não amplia faixas',passed:true});
+await c.evaluate(`montarColunas()`);assert.ok((await c.evaluate(`[...document.querySelectorAll('.faixa-nova')].every(n=>n.getBoundingClientRect().width<12)`))); 
+// redesenho 1.2: as pastas mudaram de casa (faixa horizontal) e a lista da lateral virou o HISTORICO da pasta, entao ela deixou de ser vazia
+assert.equal(await c.evaluate(`document.querySelectorAll('.ck-place-bar .ck-place-only').length`),3);assert.equal(await c.evaluate(`document.querySelectorAll('.ck-session-list .ck-place-only').length`),0);
+await c.evaluate(`(()=>{const ps=[...panes.values()];setFocus(ps[0]);window.__finishedId=ps[1].id;__qa.emit('onPaneEvent',{paneId:ps[1].id,kind:'turn-end'});})()`);await wait(180);
+assert.equal(await c.evaluate(`panes.get(__finishedId).uiUnread`),true);assert.equal(await c.evaluate(`document.querySelector('.ck-control-list [data-key="'+__finishedId+'"]').dataset.state`),'done');
+assert.equal(await c.evaluate(`fichaDoPainel(panes.get(__finishedId)).uiUnread`),true);
+await c.evaluate(`document.querySelector('.ck-control-list [data-key="'+__finishedId+'"]').click()`);for(let i=0;i<50&&await c.evaluate(`!!document.querySelector('.ck-control-list [data-key="'+__finishedId+'"]')`);i++)await wait(100);assert.equal(await c.evaluate(`panes.get(__finishedId).uiUnread`),false);assert.equal(await c.evaluate(`!!document.querySelector('.ck-control-list [data-key="'+__finishedId+'"]')`),false);results.push({test:'conclusão não lida persiste e só sai ao abrir a sessão',passed:true});
+await c.evaluate(`(()=>{const p=[...panes.values()][1];p.uiUnread=true;CockpitUI.refresh();cfg.uiCollapsed=false;CockpitUI.toggleNavigator();CockpitUI.toggleNavigator();})()`);await wait(120);await c.screenshot('lateral-e-colunas.png');
+await c.evaluate(`(()=>{window.__codes=[];window.api.termInput=async o=>{__codes.push(o.data);return{ok:true}};window.api.textoCopiado=async()=>({texto:' CODIGO-QA#estado\\n'});janelaTerminal([...panes.values()][2],'echo QA','Login — teste isolado',null,{login:true});})()`);await wait(100);
+await c.evaluate(`document.querySelector('.term-colar').click()`);await wait(80);assert.equal(await c.evaluate(`document.querySelector('.term-code-input').value`),'CODIGO-QA#estado');assert.equal(await c.evaluate(`__codes.length`),0);
+await c.evaluate(`document.querySelector('.term-code-form').requestSubmit()`);await wait(80);assert.deepEqual(await c.evaluate(`__codes`),['CODIGO-QA#estado\r']);assert.equal(await c.evaluate(`document.querySelector('.term-code-input').value`),'');
+await c.evaluate(`(()=>{const i=document.querySelector('.term-code-input');i.value='linha 1';document.querySelector('.term-code-form').requestSubmit()})()`);await wait(80);assert.equal(await c.evaluate(`__codes.length`),1);
+await c.evaluate(`(()=>{const i=document.querySelector('.term-code-input');i.value='SEGUNDO';window.api.termInput=async()=>({error:'fechado'});document.querySelector('.term-code-form').requestSubmit()})()`);await wait(80);assert.equal(await c.evaluate(`document.querySelector('.term-code-input').value`),'SEGUNDO');assert.match(await c.evaluate(`document.querySelector('.term-aviso').textContent`),/não recebeu/);results.push({test:'colar, enviar uma vez, recusar espaços e manter código se falhar',passed:true});
+await c.screenshot('login-campo-codigo.png');await c.evaluate(`document.querySelector('#tmFecha').click()`);
+await c.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await wait(180);
+assert.ok(await c.evaluate(`document.documentElement.scrollWidth<=innerWidth`));assert.ok(await c.evaluate(`[...document.querySelectorAll('.ck-place-only .ck-group-head')].every(n=>n.getBoundingClientRect().height>=28)`));await c.screenshot('lateral-mobile.png');results.push({test:'tela de 390 px sem transbordamento global e pastas acessíveis',passed:true});
+assert.deepEqual(await c.evaluate(`__qa.errors`),[]);
+fs.writeFileSync('artifacts/ajustes-qa.json',JSON.stringify({status:'passed',results},null,2));console.log(JSON.stringify(results));
+}finally{await c.send('Emulation.clearDeviceMetricsOverride');await c.close();}})().catch(e=>{console.error(e);process.exitCode=1});
