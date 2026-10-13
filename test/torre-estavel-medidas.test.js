@@ -292,8 +292,10 @@ test('o CSS so muda de tamanho quando ha valor gravado; rail e peek ficam de for
   // e o ajuste e' uma regra a parte, presa ao atributo que so' o arrasto liga
   const manual = css.match(/\.ck-navigator\[data-torre="manual"\] \.ck-control-list\s*\{([^}]*)\}/);
   assert.ok(manual, 'falta a regra da Torre ajustada na mao');
-  assert.match(manual[1], /height:\s*min\(var\(--ck-torre\),/, 'o min() e o freio que segura o rodape na tela');
-  assert.match(manual[1], /flex:\s*0 0 auto/, 'a Torre ajustada nao pode encolher: o dono decidiu o tamanho');
+  // leva 5 (UI 5.6): o valor da alça virou o TETO; a altura é a do conteúdo (com 2 itens sobrava um buraco)
+  assert.match(manual[1], /height:\s*auto;\s*max-height:\s*min\(var\(--ck-torre\),/, 'o min() continua segurando o rodape na tela');
+  assert.match(manual[1], /flex:\s*0 0 auto/, 'a Torre ajustada nao estica');
+  assert.match(css, /\.ck-navigator\[data-torre="manual"\]:has\(\.ck-torre-divisor\.ck-arrastando\) \.ck-control-list \{ height: min\(var\(--ck-torre\),/, 'arrastando, mostra o tamanho escolhido');
   // as alcas somem onde a largura nao e' escolha do dono
   assert.match(css, /\.ck-collapsed:not\(\.ck-peek\) :is\(\.ck-torre-divisor, \.ck-largura-alca\),\s*\n\.ck-peek \.ck-largura-alca \{ display: none; \}/);
   assert.match(css, /\.ck-largura-alca \{[^}]*cursor: col-resize/);
@@ -316,4 +318,154 @@ test('as alcas tem nome em portugues, sao focaveis e se anunciam como divisoria'
   // e e' uma funcao so' pros dois ajustes, nao duas copias do mesmo arrasto
   assert.equal((ui.match(/function medidaArrastavel\(/g) || []).length, 1);
   assert.equal((ui.match(/medidaArrastavel\(/g) || []).length, 3);
+});
+
+/* ---------- leva 5, onda 2 (revisao a7b73e53ce0f88fc7): o `atual` da Torre ----------
+   Desde a T5 a Torre desenhada tem a altura do CONTEUDO, e o valor da alca e' so' o
+   TETO. Se o `atual` medisse a Torre desenhada, com teto salvo de 58% e 2 conversas
+   (62 px) as setas e o 1o movimento do arrasto partiriam de ~8% e cairiam no minimo
+   (15%): mexer na alca REBAIXAVA o teto que o dono tinha escolhido.
+   Roda o bloco `ajustarTorre = medidaArrastavel(divisorTorre, {...})` do initialize,
+   com o codigo real, junto com o medidaArrastavel real. */
+function torreDoInitialize({ cfg, alturaDoConteudo, alturaDaLateral }) {
+  const ini = ui.indexOf('ajustarTorre = medidaArrastavel(divisorTorre, {');
+  const fim = ui.indexOf('ajustarLargura = medidaArrastavel(', ini);
+  assert.ok(ini > 0 && fim > ini, 'bloco do ajustarTorre nao encontrado no initialize');
+  const { alca, eventos } = bancadaDaAlca();
+  const nav = {
+    clientHeight: alturaDaLateral, dataset: {},
+    removeAttribute(k) { delete nav.dataset[k.replace('data-', '')]; },
+    style: { setProperty() {}, removeProperty() {} },
+  };
+  let gravados = 0;
+  const ctx = {
+    cfg, nav, divisorTorre: alca,
+    controlList: { getBoundingClientRect: () => ({ height: alturaDoConteudo }) },
+    persist() { gravados++; }, stopEvent() {},
+  };
+  vm.runInNewContext(daUi('medidaArrastavel') + '\nvar ajustarTorre;\n' + ui.slice(ini, fim), ctx);
+  return { alca, eventos, gravados: () => gravados };
+}
+const teclaDaAlca = (t, key, extra = {}) =>
+  t.eventos.keydown({ key, preventDefault() {}, stopImmediatePropagation() {}, ...extra });
+
+// lateral de 784 px, teto salvo em 58% (454,7 px), mas so' 2 conversas: a Torre desenhada tem 62 px (~7,9%)
+const comTetoSalvoEPoucasConversas = () => {
+  const cfg = { uiTorreAltura: 58 };
+  return { cfg, t: torreDoInitialize({ cfg, alturaDoConteudo: 62, alturaDaLateral: 784 }) };
+};
+
+test('as setas da alca da Torre partem do TETO salvo, nao da altura desenhada', () => {
+  const { cfg, t } = comTetoSalvoEPoucasConversas();
+  teclaDaAlca(t, 'ArrowDown');
+  assert.equal(cfg.uiTorreAltura, 61, 'seta pra baixo = teto + 1 passo (3), nao o minimo de 15%');
+  teclaDaAlca(t, 'ArrowUp');
+  teclaDaAlca(t, 'ArrowUp');
+  assert.equal(cfg.uiTorreAltura, 55, 'duas setas pra cima = teto - 2 passos');
+  teclaDaAlca(t, 'ArrowDown', { shiftKey: true });
+  assert.equal(cfg.uiTorreAltura, 67, 'com Shift o passo vale 4x (12 pontos)');
+});
+
+/* Rodada final da leva 5 (item 2): o ARRASTO deixou de partir do teto salvo. Partindo dele, a classe do arrasto levava a Torre
+   ao teto e a alca ficava ~415 px longe do ponteiro; agora ele parte da altura DESENHADA (onde o Hugo ve a alca), so' depois
+   de 3 px. O que a onda 2 protegia continua valendo: o gesto sem movimento nao rebaixa o teto. As setas seguem no teto. */
+test('o 1o movimento do arrasto da alca da Torre (menos de 3 px) nao rebaixa o teto salvo; depois, anda a partir da altura desenhada', () => {
+  const { cfg, t } = comTetoSalvoEPoucasConversas();
+  t.eventos.pointerdown({ button: 0, clientY: 300, pointerId: 1, preventDefault() {} });
+  // o ponteiro ainda nao andou: o teto fica exatamente onde estava
+  t.eventos.pointermove({ clientY: 300, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 58, 'o 1o movimento nao pode rebaixar o teto para a altura do conteudo');
+  t.eventos.pointermove({ clientY: 400, pointerId: 1 });   // 62 + 100 px = 162 px de 784 = ~20,7%
+  assert.equal(cfg.uiTorreAltura, 21, 'o arrasto anda a partir da altura desenhada, nao do teto (58% + 100 px = 71%, preso nos 70%)');
+  t.eventos.pointerup({ pointerId: 1 });
+  assert.equal(t.alca.getAttribute('aria-valuenow'), '21');
+});
+
+test('sem teto salvo a alca da Torre parte da medida real, e o duplo clique volta a medir', () => {
+  // 200 px numa lateral de 800 px = 25%: sem valor gravado esta' e' a unica medida que existe
+  const cfg = {};
+  const t = torreDoInitialize({ cfg, alturaDoConteudo: 200, alturaDaLateral: 800 });
+  teclaDaAlca(t, 'ArrowDown');
+  assert.equal(cfg.uiTorreAltura, 28, 'sem teto salvo a 1a seta parte dos 25% medidos');
+  t.eventos.dblclick();
+  assert.equal('uiTorreAltura' in cfg, false, 'duplo clique apaga o teto');
+  assert.equal(t.alca.getAttribute('aria-valuenow'), '25', 'e a alca volta a mostrar a medida real');
+});
+
+/* ---------- rodada final da leva 5 (revisao final ac9040bba93ba3a12, item 2): apertar a alca nao salta ----------
+   Com teto salvo maior que o conteudo (58% e 3 conversas = 92 px), o pointerdown ligava `.ck-arrastando` e a regra
+   `:has(.ck-arrastando)` do CSS levava a Torre ao teto: a alca ficava ~415 px longe do ponteiro o arrasto todo e voltava
+   ao soltar. Agora: arrasto a partir da altura DESENHADA, classe so' depois de 3 px e ja' com "desenhado + deslocamento". */
+function vigiarClasse(t, cfg) {
+  const ligou = [];
+  const add = t.alca.classList.add;
+  t.alca.classList.add = (c) => { ligou.push([c, cfg.uiTorreAltura]); add(c); };
+  return ligou;
+}
+
+test('arrastar a alca da Torre parte da altura desenhada: 92 px + 10 px = (92+10)/lateral, nao o teto + 10 px, e a classe liga sem salto', () => {
+  const cfg = { uiTorreAltura: 58 };
+  const t = torreDoInitialize({ cfg, alturaDoConteudo: 92, alturaDaLateral: 600 });
+  const ligou = vigiarClasse(t, cfg);
+  t.eventos.pointerdown({ button: 0, clientY: 300, pointerId: 1, preventDefault() {} });
+  assert.deepEqual(ligou, [], 'apertar nao liga a classe: com ela a Torre mostra o teto (o salto)');
+  t.eventos.pointermove({ clientY: 302, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 58, 'com menos de 3 px ainda e clique');
+  assert.deepEqual(ligou, []);
+  t.eventos.pointermove({ clientY: 310, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 17, '(92 + 10) / 600 = 17%, nao 58% + 10 px (60%)');
+  assert.deepEqual(ligou, [['ck-arrastando', 17]], 'a classe liga ja com o desenhado + deslocamento aplicado');
+  t.eventos.pointermove({ clientY: 340, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 22, '(92 + 40) / 600 = 22%');
+  t.eventos.pointerup({ pointerId: 1 });
+  assert.equal(t.alca.classes.has('ck-arrastando'), false, 'soltar desliga a classe');
+  assert.equal(t.gravados(), 1, 'grava uma vez, ao soltar');
+  assert.equal(t.alca.getAttribute('aria-valuenow'), '22');
+});
+
+test('Torre menor que o minimo da alca (92 px numa lateral de 884 px = 10%): o arrasto para no minimo de 15%, nunca no teto salvo', () => {
+  const cfg = { uiTorreAltura: 58 };
+  const t = torreDoInitialize({ cfg, alturaDoConteudo: 92, alturaDaLateral: 884 });
+  t.eventos.pointerdown({ button: 0, clientY: 300, pointerId: 1, preventDefault() {} });
+  t.eventos.pointermove({ clientY: 310, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 15, '(92 + 10) / 884 = 11,5% fica no minimo (15%), e nao em 58% + 10 px (59%)');
+  t.eventos.pointermove({ clientY: 350, pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 16, '(92 + 50) / 884 = 16%: passado o minimo, acompanha o ponteiro');
+  t.eventos.pointerup({ pointerId: 1 });
+});
+
+test('clique na alca da Torre sem mover (menos de 3 px): o teto nao muda, nada e gravado e a classe nunca liga; setas e duplo clique seguem', () => {
+  const cfg = { uiTorreAltura: 58 };
+  const t = torreDoInitialize({ cfg, alturaDoConteudo: 92, alturaDaLateral: 600 });
+  const ligou = vigiarClasse(t, cfg);
+  t.eventos.pointerdown({ button: 0, clientY: 300, pointerId: 1, preventDefault() {} });
+  t.eventos.pointerup({ pointerId: 1 });
+  t.eventos.pointerdown({ button: 0, clientY: 300, pointerId: 1, preventDefault() {} });
+  t.eventos.pointermove({ clientY: 302, pointerId: 1 });   // a mao treme 2 px
+  t.eventos.pointercancel({ pointerId: 1 });
+  assert.equal(cfg.uiTorreAltura, 58, 'o teto continua 58%');
+  assert.deepEqual(ligou, [], 'a classe nunca ligou');
+  assert.equal(t.gravados(), 0, 'nada mudou, nada a gravar');
+  teclaDaAlca(t, 'ArrowDown');
+  assert.equal(cfg.uiTorreAltura, 61, 'as setas continuam partindo do teto salvo (58% + 3)');
+  t.eventos.dblclick();
+  assert.equal('uiTorreAltura' in cfg, false, 'o duplo clique continua voltando ao padrao');
+});
+
+test('a alca da largura (sem limiar nem inicioArrasto) continua como antes: a classe liga ao apertar, 1 px ja anda e soltar grava', () => {
+  const cfg = {};
+  const b = medida({
+    eixo: 'x', min: 168, max: 420, padrao: 224, passo: 8,
+    gravado: () => cfg.uiSidebarLargura ?? null,
+    porPixel: () => 1,
+    atual: () => (cfg.uiSidebarLargura ?? 224),
+    aplicar: (v) => { if (v == null) delete cfg.uiSidebarLargura; else cfg.uiSidebarLargura = v; },
+  });
+  b.eventos.pointerdown({ button: 0, clientX: 200, pointerId: 1, preventDefault() {} });
+  assert.equal(b.alca.classes.has('ck-arrastando'), true, 'liga ao apertar, como sempre');
+  b.eventos.pointermove({ clientX: 201, pointerId: 1 });
+  assert.equal(cfg.uiSidebarLargura, 225, '1 px ja conta');
+  b.eventos.pointerup({ pointerId: 1 });
+  assert.equal(b.gravados.length, 1, 'soltar grava');
+  assert.equal(b.alca.classes.has('ck-arrastando'), false);
 });

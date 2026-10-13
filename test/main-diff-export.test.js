@@ -15,8 +15,10 @@ function exporter(h,engine,withPath=true){
  const file=path.join(h.dir,engine+'-session.jsonl'),out=path.join(h.dir,engine+'-export.md');
  fs.writeFileSync(file,[{sessionId:engine+'-id'},{id:'user',type:'user',content:'Pergunta com ação'},{id:'bot',type:engine,content:'Resposta '+engine},{id:'tool',type:engine,toolCalls:[{name:'Read',args:{path:'fixture.txt'}}]}].map(JSON.stringify).join('\n'));
  const extras={fs,path,CLAUDE_PROJ:path.join(h.dir,'claude'),CODEX_SESS:path.join(h.dir,'codex'),app:{getPath:()=>h.dir},win:null,dialog:{showSaveDialog:async()=>({filePath:out})},ehCli:e=>['gemini','grok'].includes(e),CLIS:{gemini:{nome:'Gemini'},grok:{nome:'Grok'}},acharArquivoSessao:(e,id)=>{assert.equal(e,engine);assert.equal(id,engine+'-id');return file},codexHistory:()=>{throw Error('wrong Codex reader')},claudeHistory:()=>{throw Error('wrong Claude reader')},varrerConversas:()=>{throw Error('wrong history root')},remoteEngines:{history:async()=>{throw Error('remote unavailable')}}};
+ // Tarefa 5 (26/09): o leitor do CLI le o arquivo em blocos (varrerLinhas, async) e o exportar conta o corte (cortarHistorico): as pecas novas entram no contexto
+ const {varrerLinhas,cortarHistorico}=require('../src/historico-leitura');Object.assign(extras,{varrerLinhas,cortarHistorico});
  const loaded=handler('sessao:exportar',extras),ctx=loaded.ctx;
- for(const fn of ['function cliFalaDeGente(','function cliLerConversa(','function cliHistory('])vm.runInContext(pegarBloco(source,fn,fn),ctx);
+ for(const fn of ['function cliFalaDeGente(','function cliMontador(','async function cliLerConversa(','async function cliHistory('])vm.runInContext(pegarBloco(source,fn,fn),ctx);
  const a=source.indexOf('const cliTexto = '),b=source.indexOf(';',a)+1;vm.runInContext(source.slice(a,b),ctx);
  return{...loaded,file,out,request:{engine,id:engine+'-id',...(withPath?{file}:{})}};
 }

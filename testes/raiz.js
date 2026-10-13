@@ -43,7 +43,8 @@ function pegarBloco(txt, assinatura, nome) {
   throw new Error('nao fechei ' + (nome || assinatura));
 }
 
-const lerFonte = (...partes) => fs.readFileSync(path.join(RAIZ, 'src', ...partes), 'utf8');
+// Os recortes de teste usam LF; autocrlf do Windows não deve mudar a semântica.
+const lerFonte = (...partes) => fs.readFileSync(path.join(RAIZ, 'src', ...partes), 'utf8').replace(/\r\n/g, '\n');
 
 /* O vm.createContext nasce sem timers e sem os globais que o app.js declara
    fora das funcoes. Como os testes extraem funcoes soltas, esses nomes ficam
@@ -78,6 +79,14 @@ function globaisFalsos() {
     anexarMudancaAoPasso: () => {},
     limparContinuar: () => {},
     mostrarContinuar: () => {},
+    /* leva 5h: o newPane liga os atalhos da barra (enviar arquivo e desenhar; na leva 5i tambem o ⚖ debater e o 👥 workflow, com o pintarAgentes dentro),
+       pinta o anel do contexto e liga o encaixe da linha do menu (que devolve o desligar) na criacao do painel */
+    ligarBotoesDaBarra: () => {},
+    pintarAnel: () => {},
+    ligarEncaixeDaBarra: () => () => {},
+    /* rodada 2 da leva 5i: o newPane passa o pedido pelo painelSemGrokNativo (Grok nativo vira o ACP); aqui o pedido segue como veio.
+       test/grok-vira-acp.test.js carrega a funcao de verdade. */
+    painelSemGrokNativo: (opts) => opts,
     /* leva 35: recibo no fim da fala e perfis de conectores da aba */
     marcarRecibo: () => {},
     conectoresForaDaAba: () => undefined,

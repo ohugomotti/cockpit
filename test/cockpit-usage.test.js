@@ -44,8 +44,10 @@ test('atenção de uma janela não some quando outra janela vence o arco', () =>
   assert.equal(s.pct, 79, 'a sessão é o arco mais apertado pelo ritmo');
   assert.equal(s.windows.find((w) => w.id === 'semana').attention, true);
   assert.equal(s.attention, true, 'o alerta agrega todas as janelas');
-  assert.match(s.title, /sessão 79%/i);
-  assert.match(s.title, /semana 80%/i);
+  // Task 16 (UI 5.1): o hover mudou de "sessão 79% · zera ...Z" (UTC) para
+  // "janela de 5 h: 79 % (zera HH:MM) · semana: 80 % (zera seg)" (hora do PC).
+  assert.match(s.title, /janela de 5 h: 79 %/);
+  assert.match(s.title, /semana: 80 %/);
   assert.equal((s.title.match(/zera/g) || []).length, 2);
 });
 
@@ -162,6 +164,36 @@ test('marca consulta antiga sem misturar o local da conta', () => {
   assert.match(pc.title, /Este PC/);
   assert.doesNotMatch(pc.title, /VPS produção/);
   assert.match(servidor.title, /VPS produção/);
+});
+
+test('hover do anel (UI 5.1): janela de 5 h e semana, com o reset na hora e no dia de quem olha', () => {
+  // NOW = sábado 19/09/2026 12:00 UTC. O fuso entra por opts.timeZone para o teste não depender da máquina.
+  const dados = {
+    sessao: { pct: 42, reseta: NOW + 2 * H },
+    semana: { pct: 18, reseta: Date.parse('2026-09-21T01:00:00Z') },
+  };
+  const utc = Usage.accountSummary('claude', dados, { now: NOW, timeZone: 'UTC' });
+  assert.equal(utc.title, 'Claude · janela de 5 h: 42 % (zera 14:00) · semana: 18 % (zera seg)');
+  // 01:00 UTC de segunda ainda é domingo à noite em São Paulo (UTC-3): hora e dia são os do PC, não os de Londres
+  const brasil = Usage.accountSummary('claude', dados, { now: NOW, timeZone: 'America/Sao_Paulo' });
+  assert.equal(brasil.title, 'Claude · janela de 5 h: 42 % (zera 11:00) · semana: 18 % (zera dom)');
+  assert.doesNotMatch(utc.title, /\dZ\b/, 'o hover não mostra mais hora UTC');
+});
+
+test('hover: lugar, duração informada pelo Codex, vírgula decimal, reset ausente e dado antigo', () => {
+  const s = Usage.accountSummary('codex', {
+    sessao: { pct: 72.5, mins: 300, reseta: NOW + 3 * H },
+    semana: { pct: 3 },
+    updatedAt: NOW - 61000,
+  }, { now: NOW, timeZone: 'UTC', where: 'VPS produção', staleAfterMs: 60000 });
+  assert.equal(s.title, 'Codex · VPS produção · janela de 5 h: 72,5 % (zera 15:00) · semana: 3 % (reset indisponível) · dados desatualizados');
+  // sem a duração da janela o hover não inventa "5 h"
+  const semMinutos = Usage.accountSummary('codex', { sessao: { pct: 60, reseta: NOW + 4 * H } }, { now: NOW, timeZone: 'UTC' });
+  assert.equal(semMinutos.title, 'Codex · sessão: 60 % (zera 16:00)');
+  const curta = Usage.accountSummary('codex', { sessao: { pct: 10, reseta: NOW + 9 * 60000, mins: 90 } }, { now: NOW, timeZone: 'UTC' });
+  assert.equal(curta.title, 'Codex · janela de 90 min: 10 % (zera 12:09)');
+  // sem janela nenhuma, o texto de sempre
+  assert.equal(Usage.accountSummary('gemini', {}, { now: NOW, where: 'Este PC' }).title, 'Gemini · Este PC: sem dados de limite');
 });
 
 test('HTML escapa metadados, mantém logo confiável e sempre informa data-motor', () => {

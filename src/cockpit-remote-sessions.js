@@ -23,15 +23,21 @@ function createStore(folder) {
     const file = path.join(dir, hash(st.session) + '.json'),
       temp = file + '.' + crypto.randomUUID() + '.tmp';
     const previous = read(st.remoto, st.engine, st.session);
+    /* Tarefa 6 (27/09): o nome tem dono. nomeCustomizado = o nome que VOCE deu
+       (fica pra sempre); nomeAuto = o que o Cockpit deu (nome automatico, que
+       acompanha o trabalho e nunca passa por cima do seu). O registro do fim
+       de cada turno (save sem titulo) guarda os dois como estavam. */
+    const nomeCustomizado = !!(st.nomeCustomizado || previous?.nomeCustomizado);
     const data = {
-      nomeCustomizado: !!(st.nomeCustomizado || previous?.nomeCustomizado),
+      nomeCustomizado,
+      nomeAuto: !nomeCustomizado && !!(st.nomeAuto || previous?.nomeAuto),
       id: st.session,
       engine: st.engine,
       cwd: st.cwd,
       model: st.model,
       title:
         st.title ||
-        (previous?.nomeCustomizado ? previous.title : '') ||
+        (previous?.nomeCustomizado || previous?.nomeAuto ? previous.title : '') ||
         st.history?.find((m) => m.role === 'user')?.text?.slice(0, 120) ||
         'Conversa remota',
       when: Date.now(),
@@ -59,9 +65,16 @@ function createStore(folder) {
     }
     return rows.sort((a, b) => b.when - a.when);
   }
-  function rename(remote, engine, id, title) {
+  /* opcoes.auto: o nome automatico do Cockpit. Grava a marca de automatico e
+     NAO vira nome seu (antes todo rename virava nomeCustomizado: o automatico
+     ficava parecendo nome dado a mao). Com nome seu ja' gravado, o automatico
+     e' recusado (devolve false) e nada muda. */
+  function rename(remote, engine, id, title, opcoes) {
+    const auto = !!(opcoes && opcoes.auto);
     const row = read(remote, engine, id) || { engine, msgs: [] };
-    save({ ...row, remoto: remote, session: id, history: row.msgs, title, nomeCustomizado: true });
+    if (auto && row.nomeCustomizado) return false;
+    save({ ...row, remoto: remote, session: id, history: row.msgs, title, nomeCustomizado: !auto, nomeAuto: auto });
+    return true;
   }
   function remove(remote, engine, id) {
     const file = path.join(location(remote, engine), hash(id) + '.json');

@@ -79,11 +79,24 @@ test('Claude debate waits for buffered stdout after the process exit event', asy
   assert.equal((await h.promise).text, 'resposta final');
 });
 test('Automatic titles preserve UTF-8 characters split across output chunks', async () => {
+  /* Tarefa 6 (27/09), mudado de proposito: o nome automatico passou pro executor
+     unico do claude -p rapido (src/claude-rapido.js), que confere a conta ("claude
+     auth status") antes do -p; o gerador recebe esse executor no dep. O que se
+     prova e' o mesmo: acento partido entre os pedacos da saida chega inteiro. */
   const { gerarTitulo } = require('../src/titulo-auto');
-  const p=processFake();p.stdin.end=()=>{};
-  const result=gerarTitulo('test',{spawn:()=>p,bin:()=> 'fake',arqSettings:()=> 'fake.json',env:()=>({}),prazoMs:1000});
-  fragmented(p.stdout,{type:'result',result:'Ação Página Revisão'});p.emit('close',0);
-  assert.equal((await result).titulo,'Ação Página Revisão');
+  const { criarClaudeRapido } = require('../src/claude-rapido');
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-audit-titulo-'));
+  try {
+    const spawn = (bin, args) => { const p = processFake(); p.stdin.end = () => {};
+      queueMicrotask(() => {
+        if (args[0] === 'auth') p.stdout.write(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' }));
+        else fragmented(p.stdout, { type: 'result', subtype: 'success', is_error: false, result: 'Ação Página Revisão' });
+        p.emit('close', 0);
+      });
+      return p; };
+    const claudeRapido = criarClaudeRapido({ acharBin: () => 'fake', buildEnv: () => ({}), pastaDados: () => pasta, spawn, ehWindows: false });
+    assert.equal((await gerarTitulo('revisa a página de ação', { claudeRapido, prazoMs: 1000 })).titulo, 'Ação Página Revisão');
+  } finally { fs.rmSync(pasta, { recursive: true, force: true }); }
 });
 test('Claude debate consumes its final JSON without a newline', async () => {
   const h=debateHarness();h.p.stdout.end(JSON.stringify({type:'result',result:'final sem newline'}));await tick();h.p.emit('close',0);

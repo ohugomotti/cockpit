@@ -268,6 +268,7 @@ function spawnFalso(bin, args, opts) {
 }
 
 const handlers = new Map();
+const ipcConfiavel = require('../testes/ipc-confiavel').criarIpcConfiavel();
 const enviados = [];
 const telaOuve = {};
 const janelaOuve = {};
@@ -303,7 +304,7 @@ const eletronFalso = {
   shell: { openExternal() {}, openPath() {}, showItemInFolder() {} },
   Menu: { setApplicationMenu() {}, buildFromTemplate: () => ({}) },
   nativeTheme: { on() {} },
-  clipboard: { readText: () => '', writeText() {} },
+  clipboard: { readText: async () => '', writeText: async () => {}, read: async () => [], has: async () => false },   // Electron 44: assincrono, sem readImage/readBuffer
   globalShortcut: { register() {}, unregisterAll() {} },
   session: { defaultSession: { webRequest: { onHeadersReceived() {} }, setPermissionRequestHandler() {} } },
   crashReporter: { start: (o) => crashes.push(o) },
@@ -321,6 +322,7 @@ let carregou = null;
   const requireOriginal = Module.prototype.require;
   Module.prototype.require = function (nome) {
     if (nome === 'electron') return eletronFalso;
+    if (nome === './cockpit-ipc-security') return ipcConfiavel.modulo;
     if (nome === 'os') {
       const real = requireOriginal.call(this, 'os');
       return new Proxy(real, { get: (alvo, k) => (k === 'homedir' ? () => HOME : alvo[k]) });
@@ -339,7 +341,7 @@ const chamar = (canal, arg) => {
   if (carregou !== true) throw carregou;
   const h = handlers.get(canal);
   if (!h) throw new Error('handler ausente: ' + canal);
-  return h({}, arg);
+  return h(ipcConfiavel.evento(), arg);
 };
 const eventos = (paneId, kind) => enviados.filter((e) => e.canal === 'pane:event' && e.paneId === paneId && (!kind || e.kind === kind));
 const LOG = path.join(USERDATA, 'logs', 'motores.log');
@@ -581,6 +583,9 @@ function tela(extra) {
     mostrarAviso: (o) => ctx.avisos.push(o),
     setDot: (P, s) => { P.dot = s; }, trabalhando: (P) => { P.trab = true; }, pararTrabalho: (P) => { P.trab = false; },
     limparPassos: () => {}, esconderPermissao: () => {}, pintarAbasLocal: () => {}, pintarFila: () => {},
+    // Tarefa 2 (26/09): a fila volta pro campo pelo voltarDaFila (tira o trecho citado pelo
+    // Responder). As filas daqui nao tem trecho: devolve o texto como veio.
+    voltarDaFila: (P, texto) => texto,
     zerarTurno: () => {}, userMsg: (P, t) => { ctx.chamadas.push('userMsg:' + P.id + ':' + t); return {}; },
     opcoesDeStart: (P) => ({ paneId: P.id, engine: P.engine, resumeId: P.resumeId || undefined, abaId: P.abaId }),
     esforcoDe: () => 'high', nomeDoMotor: (e) => ({ claude: 'Claude', codex: 'Codex', gemini: 'Gemini' })[e] || e,

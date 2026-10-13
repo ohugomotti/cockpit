@@ -81,6 +81,11 @@ test('históricos com o mesmo id ficam separados entre portas SSH', () => {
       assert.equal(store.list(engine, remote).length, 1);
     }
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    const target = path.resolve(dir);
+    assert.equal(path.dirname(target), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(target).startsWith('cockpit-port-history-'));
+    // Windows pode manter a pasta recém-gravada ocupada por alguns instantes.
+    // Repetir só a limpeza; falhas de isolamento acima continuam falhando.
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

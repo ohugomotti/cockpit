@@ -345,18 +345,26 @@ test('o marked entrega ```excalidraw como code.language-excalidraw — e o app p
 
 test('app: o desenho do bloco roda no texto final, no historico aberto pela lista e no restauro', () => {
   const chamadas = APP.match(/desenharBlocosExcalidraw\(P, b\.el\)/g) || [];
-  assert.equal(chamadas.length, 3, 'textFinal + openSession + restaurarPaineis');
+  /* Tarefa 5 (26/09): o historico aberto pela lista e o restaurado passaram a
+     usar o MESMO desenho (desenharHistorico): 2 chamadas cobrem os 3 caminhos. */
+  assert.equal(chamadas.length, 2, 'textFinal + desenharHistorico (lista e restauro)');
+  for (const f of ['async function openSession(', 'async function restaurarPaineisMiolo(']) {
+    const i = APP.indexOf(f);
+    assert.ok(i > 0 && APP.indexOf('desenharHistorico(P, msgs', i) > i, f + ' usa o desenharHistorico');
+  }
   assert.ok(APP.includes('QuadroFluxo.lerBlocoExcalidraw('), 'o bloco e conferido antes de desenhar');
   assert.ok(/function svgLimpo\([\s\S]{0,300}DOMPurify\.sanitize\(/.test(APP), 'svgLimpo passa pelo DOMPurify');
   assert.ok(/function desenharBlocosExcalidraw[\s\S]{0,3000}svgLimpo\(svg/.test(APP), 'o SVG do bloco passa pelo svgLimpo');
   const html = fs.readFileSync(path.join(RAIZ, 'src', 'renderer', 'index.html'), 'utf8');
   assert.ok(html.indexOf('quadro-fluxo.js') > 0 && html.indexOf('quadro-fluxo.js') < html.indexOf('src="app.js"'), 'quadro-fluxo.js carrega antes do app.js');
   assert.match(html, /id="quadroPrompt"/);
-  assert.match(html, /class="cb p-fluxo"/);
+  // leva 4 (UI 3.1): o Quadro saiu da barra e virou "Desenhar" no menu +
+  assert.doesNotMatch(html, /p-fluxo/);
+  assert.match(APP, /nome: 'Desenhar', desc: 'quadro branco/);
 });
 
 test('instrucao da casa: o exemplo de bloco excalidraw que o agente recebe e valido e vira fluxo', () => {
-  const MAIN = fs.readFileSync(path.join(RAIZ, 'src', 'main.js'), 'utf8');
+  const MAIN = fs.readFileSync(path.join(RAIZ, 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const m = MAIN.match(/const EXEMPLO_EXCALIDRAW = ([\s\S]*?);\n/);
   assert.ok(m, 'EXEMPLO_EXCALIDRAW no main.js');
   const exemplo = vm.runInNewContext(m[1]);

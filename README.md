@@ -15,6 +15,14 @@ Windows, com as correções e as levas de melhoria feitas em cima dela.
 - **Cinco motores** — Claude Code, Codex, Gemini, Grok e o motor **ACP** genérico (qualquer
   agente que fale o *Agent Client Protocol* entra por um comando). Dá para trocar de motor no
   meio da conversa levando o que já foi dito.
+- **Mais IAs pelo ACP** — OpenCode, GitHub Copilot, Qwen Code, Cline, Kilo, Factory Droid, Cursor,
+  Kimi, Mistral Vibe, Goose e o Grok oficial entram com logo e comando prontos: as que estão
+  instaladas no PC aparecem no menu do motor, e cada uma pede o próprio login na primeira mensagem.
+- **Navegador interno** — o link clicado na conversa abre num visor dentro do app, com perfil
+  próprio (câmera, microfone e notificações bloqueados); **↗** leva ao navegador do sistema e
+  Ctrl+clique abre direto fora.
+- **Os agentes da conversa como organograma** — cada subagente aparece ligado a quem o chamou, com a
+  função em uma linha, o estado, o tempo e o modelo. ⚖ Debater e 👥 Workflow ficam ao lado do motor.
 - **Abas por lugar** — cada aba é uma pasta do computador ou um servidor remoto (SSH).
   O painel de uma aba de servidor roda o agente lá dentro, não aqui.
 - **Servidor de primeira classe** — árvore de arquivos, @-menção e visor de arquivo funcionam
@@ -76,7 +84,8 @@ terminal embutido quebra.
 ```bash
 node testes/rodar-tudo.js                # a bateria de testes/: 25 arquivos
 node testes/teste-duplicacao.js          # ou um de cada vez
-node --test "test/*.test.js"             # os 752 casos de test/ (node:test)
+node --test "test/*.test.js"             # os 3234 casos de test/ (node:test)
+node testes/suite-por-arquivo.mjs . suite.json   # os mesmos, um arquivo por vez, com limite de tempo
 ```
 
 A bateria de `testes/` não usa framework: carrega as funções **reais** do `main.js` e do
@@ -98,6 +107,8 @@ o `src/codex-protocol.js`, que não dependem do Electron; outros carregam o `mai
 | `src/preload.js` | A ponte: o único caminho entre a tela e o processo principal |
 | `src/plataforma.js` | O que muda entre Windows e Mac (caminhos, credencial, pty) |
 | `src/acp.js` | O motor ACP: JSON-RPC por stdio e a tradução para os eventos do app. Sem Electron |
+| `src/renderer/acp-presets.js` | A tabela das IAs que entram pelo ACP: nome, logo e comando de cada uma |
+| `src/navegador-interno.js` | O navegador interno: uma página por painel, perfil próprio, permissões negadas e só http/https |
 | `src/codex-protocol.js` | O vocabulário do `codex app-server` (0.147/0.153). Sem Electron |
 | `src/pergunta-mcp.js` | O servidor MCP que entrega plano e pergunta do agente à tela |
 | `src/preload-recorte.js` | Ponte da janela de recorte de tela |
@@ -166,6 +177,7 @@ não moram no código. Duplo clique na aba para preencher.
 | 41.1 | **Colar no terminal embutido** (Ctrl+V, Ctrl+Shift+V, Shift+Insert, botão direito e botão Colar) e link de login sem as sequências de controle do ConPTY |
 | 42 | **Pendências** (view + sino com contador) e chip de **robô em segundo plano** |
 | 1.1.x | **Aplicativo versionado com instalador próprio**, sessões remotas (transporte, credenciais e cofre) e o CSS quebrado por módulo. Na tela: os textos da barra de escrever viraram ícones com dica no hover, as pastas subiram para uma barra horizontal, a lateral ficou com a **Torre fixa** (ela não muda quando se troca de pasta) sobre o histórico, o foco azul passou a circundar a caixa da sessão, a Torre e a lateral ganharam alças de arrastar, e o carregando virou um anel no lugar dos três pontos, tudo atrás de `prefers-reduced-motion` |
+| 1.1.1 (levas 0 a 5i) | **Electron 44** e cinco funções trazidas do Cockpit do Homero (trecho selecionado, "mais detalhes", nome automático da conversa e dos agentes, desfazer edição). Depois: o **leitor de documentos**, um app mais leve com muitas conversas e documento grande, a **caixa de escrever compacta**, o **config à prova de queda** (vai para o disco antes de trocar o arquivo, e a cópia `.bak` nunca recebe o padrão), o chip do motor com menuzinhos e os modelos novos do Claude. Na 5i: **mais IAs pelo ACP**, o **navegador interno**, os agentes como **organograma** e o Debater e o Workflow ao lado do motor |
 
 As levas 35 e 36 passaram por 4 rodadas de auditoria dupla: **94 achados, 176 correções**.
 

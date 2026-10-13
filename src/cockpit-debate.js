@@ -21,13 +21,21 @@ function clean(value, limit) { return String(value || '').slice(0, limit); }
 function roundsOf(value) { const n = Number(value ?? 2); if (!Number.isInteger(n) || n < 1 || n > 3) throw new Error('Escolha de 1 a 3 rodadas.'); return n; }
 /* o ~/.codex/AGENTS.md (e o CLAUDE.md) mandam fechar com "Use: <modelo>".
    No debate isso vira ruido que um passa pro outro: sai a linha final. So' o
-   formato do rodape ("[h5]" ou nome de modelo): "Use: `npm test`" fica. A
+   formato do rodape: "Use: <emoji> <sigla> <anel de peso>" (desde 07/10, leva 5f:
+   emoji + S5.5 + anel; Codex: emoji + GPT-6 Astra + anel; o emoji e o anel sao
+   opcionais), o antigo ("[h5]", "o5.5") e nome de modelo, com negrito ou italico
+   em volta; "Use: `npm test`" fica. A sigla e' h/s/o/f + versao de 4 a 9 (H5, S5.5, O4.8): "Use: S3",
+   "Use: O365", "Use: H100", "Use: H2" (a empresa) e "Use: F1" sao fala de verdade e ficam. A
    mesma regra abre a resposta com "Vou usar: …" (medido no debate vivo de
-   14/09): a primeira linha sai tambem, se houver fala depois dela. */
+   14/09): a primeira linha sai tambem, se houver fala depois dela. A regra do
+   rodape e' a MESMA do RODAPE_USE do nome automatico (src/titulo-auto.js):
+   mexeu aqui, mexa la'. A flag u do regex e' por causa do \p{Extended_Pictographic}. O prefixo e' \n[ \t]*(?:[*_>]+[ \t]*)? e
+   NAO \n[ \t]*[*_>]*[ \t]*: dois [ \t]* separados por um grupo que pode ser vazio fazem o retrocesso ser quadratico (100 mil espacos
+   depois de uma quebra de linha: 4 s). */
 function semRodape(text) {
   return String(text || '')
     .replace(/^\s*(?:Vou usar:[^\n]{0,240}|Sem ferramenta específica, fazendo direto\.?)[ \t]*\n+(?=\S)/i, '')
-    .replace(/\n[ \t]*[*_>]*[ \t]*Use:[ \t]*(?:\[[a-z0-9]{1,6}\]|(?:GPT|Claude|Opus|Sonnet|Haiku|Fable|Codex|Gemini|Grok)[\w .()-]{0,30})[ \t]*[*_]*\s*$/i, '').trimEnd();
+    .replace(/\n[ \t]*(?:[*_>]+[ \t]*)?Use:[ \t]*(?:\p{Extended_Pictographic}\uFE0F?[ \t]*)?(?:\[[a-z0-9]{1,6}\]|[hsof][4-9](?:\.\d)?|(?:GPT|Claude|Opus|Sonnet|Haiku|Fable|Codex|Gemini|Grok)[\w .()-]{0,30})(?:[ \t]*[◔◑◕●])?(?:[ \t]*[*_]+)?\s*$/iu, '').trimEnd();
 }
 /* so' fala boa entra na conversa que vai pro prompt: interrompida, com erro ou
    vazia continua no historico (marcada), mas nao e' argumento pra ninguem */

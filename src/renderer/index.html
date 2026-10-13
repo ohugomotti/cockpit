@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'none'; base-uri 'none'; object-src 'none';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; form-action 'none'; base-uri 'none'; object-src 'none';">
 <title>Cockpit</title>
 <link rel="icon" type="image/svg+xml" href="../assets/icon.svg">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -14,6 +15,8 @@
 <link rel="stylesheet" href="cockpit-popups.css">
 <link rel="stylesheet" href="cockpit-places.css">
 <link rel="stylesheet" href="cockpit-anim.css">
+<link rel="stylesheet" href="visual-mac.css">
+<link rel="stylesheet" href="reader-tools.css">
 </head>
 <body>
 
@@ -159,6 +162,7 @@
               <button class="tema-bt" data-tema="escuro"><span class="tema-am esc"></span>Preto</button>
               <button class="tema-bt" data-tema="claro"><span class="tema-am cla"></span>Claro</button>
               <button class="tema-bt" data-tema="jornal"><span class="tema-am jor"></span>Jornal</button>
+              <button class="tema-bt" data-tema="automatico"><span class="tema-am mac-auto-am" aria-hidden="true"></span>Automático</button>
             </div>
           </div>
           <div class="aj-campo">
@@ -187,8 +191,16 @@
             <select id="selModeloClaude" class="menu-search aj-select"></select>
           </div>
           <label class="chave"><input type="checkbox" id="chkRobos"><span><span class="aj-nome">Conversas dos robôs</span><span class="aj-desc">Desligado, a lista mostra só o que você conversou aqui, no terminal ou no VS Code. Ligado, entram também as abertas por robôs (o do Telegram, rotinas agendadas, scripts). Vale nas listas do Claude e do Codex.</span></span></label>
-          <label class="chave"><input type="checkbox" id="chkTituloAuto"><span><span class="aj-nome">Dar nome automático às conversas novas</span><span class="aj-desc">Usa o Haiku do Claude pra resumir a 1ª mensagem em 3 palavras — vale pra todos os motores.</span></span></label>
+          <label class="chave"><input type="checkbox" id="chkTituloAuto"><span><span class="aj-nome">Dar nome automático às conversas e aos agentes</span><span class="aj-desc">O Haiku do Claude dá o nome e o ajusta ao longo da conversa, conforme o trabalho. Nome dado por você nunca é trocado. Vale pra todos os motores.</span></span></label>
           <label class="chave"><input type="checkbox" id="chkSugestoes"><span><span class="aj-nome">Sugerir a próxima mensagem</span><span class="aj-desc">Só no Claude. O chip preenche o campo, nunca envia sozinho. Vale a partir da próxima conversa (ou quando o painel religar).</span></span></label>
+          <div class="aj-campo">
+            <label class="aj-nome" for="selLinksAbrem">Links abrem</label>
+            <span class="aj-desc">Aqui dentro, o site abre no navegador do Cockpit, ao lado da conversa. Ctrl+clique abre sempre no navegador do Windows, e o login do Claude, do Codex e dos conectores também.</span>
+            <select id="selLinksAbrem" class="menu-search aj-select">
+              <option value="aqui">Aqui dentro</option>
+              <option value="windows">No navegador do Windows</option>
+            </select>
+          </div>
         </section>
 
         <section class="aj-grupo">
@@ -276,6 +288,8 @@
     <span class="quadro-tit" id="quadroTit">Quadro</span>
     <span class="quadro-dica" aria-label="Caixa representa passo; losango representa decisão; seta liga os dois"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/></svg>Passo</span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 9-9 9-9-9z"/></svg>Decisão</span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h18m-6-6 6 6-6 6"/></svg>Liga</span></span>
     <span class="quadro-espaco"></span>
+    <button class="mo-btn hidden" id="quadroSalvar" title="Grava o desenho no arquivo de onde ele foi aberto (pergunta antes de substituir)">Salvar</button>
+    <button class="mo-btn hidden" id="quadroSalvarComo" title="Grava o desenho num arquivo .excalidraw que você escolher">Salvar como</button>
     <button class="mo-btn destaque" id="quadroPrompt" title="Anexa o desenho como imagem e escreve no campo o passo a passo do fluxo (dá pra editar antes de enviar)">Mandar pro prompt</button>
     <button class="mo-btn quadro-icon" aria-label="Anexar como imagem" id="quadroAnexar" title="Exporta o desenho como PNG e anexa no painel (sem texto)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 5-5 4 4 4-6 5 7"/></svg></button>
     <button class="mo-btn quadro-icon" aria-label="Anexar .excalidraw" id="quadroArquivo" title="Salva a cena como .excalidraw e anexa: o agente pode editar e devolver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 15h8M8 18h5"/></svg></button>
@@ -284,7 +298,7 @@
   </div>
   <div id="quadroArea"></div>
 </div>
-<div class="pop-global hidden" id="popGrupo"></div>
+<div class="pop-global hidden" id="popGrupo" role="menu"></div>
 
 <template id="tplPane">
   <section class="pane">
@@ -294,16 +308,20 @@
       <button class="p-cwd" title="Trocar pasta deste painel"></button>
       <button class="p-git hidden" title="Branch do git"></button>
       <span class="p-spacer"></span>
-      <span class="p-tokens" title="Tamanho da conversa agora, comparado ao que cabe neste modelo"></span>
       <span class="p-dot dot off"></span>
       <button class="p-close" title="Fechar painel"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></svg></button>
     </header>
     <div class="modal p-modal hidden"><div class="modal-cx"></div></div>
     <div class="modal p-visor hidden"><div class="visor-cx">
-      <div class="visor-top"><span class="visor-nome"></span>
+      <div class="visor-top"><div class="visor-identidade"><span class="visor-nome"></span><span class="visor-origem"></span></div>
         <button class="visor-abrir" title="Abrir no Mac"></button>
-        <button class="visor-x" title="Fechar (Esc)"></button></div>
-      <div class="visor-corpo"></div>
+        <button class="visor-x" title="Fechar (Esc)" aria-label="Fechar arquivo"></button></div>
+      <div class="visor-caminho"></div>
+      <div class="visor-toolbar hidden"><div class="visor-modos" role="tablist" aria-label="Modo de leitura">
+        <button class="visor-previa" role="tab" aria-selected="true">Prévia</button>
+        <button class="visor-fonte" role="tab" aria-selected="false">Código</button></div>
+        <button class="visor-copiar">Copiar conteúdo</button></div>
+      <div class="visor-corpo" tabindex="0"></div>
     </div></div>
     <div class="pane-chat">
       <div class="pane-empty">
@@ -318,41 +336,56 @@
     </div>
     <div class="pane-cmp">
       <div class="p-fila hidden"></div>
+      <div class="p-citacao hidden"></div>
+      <div class="p-resp hidden" role="status"></div>
       <div class="p-anexos hidden"></div>
-      <div class="cmp-top">
-        <textarea class="p-input" rows="1" placeholder="Escreva aqui…"></textarea>
-      </div>
       <div class="cmp-bar">
-        <button class="cb p-plus" title="Anexar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
-        <button class="cb p-slash" title="Ações e comandos">/</button>
-        <button class="cb p-fluxo" title="Desenhar fluxo: caixas, decisões e setas viram imagem + passo a passo no prompt"></button>
+        <textarea class="p-input" rows="1" placeholder="Escreva aqui…"></textarea>
+        <button class="cb p-plus" title="Anexar, desenhar, comandos e mais" aria-label="Anexar, desenhar, comandos e mais" aria-haspopup="menu"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="M12 5v14" /></svg></button>
+        <button class="cb p-envarq" title="Enviar arquivos do computador" aria-label="Enviar arquivos do computador"></button>
+        <button class="cb p-desenhar" title="Desenhar" aria-label="Desenhar"></button>
         <button class="cb p-mic" title="Gravar áudio e virar texto"></button>
-        <button class="cb p-modoenvio" title="O que fazer se ele já estiver trabalhando"></button>
-        <button class="p-compactar hidden" title="Resumir a conversa para liberar espaço">
-          <svg class="an" viewBox="0 0 36 36">
-            <circle class="an-fundo" cx="18" cy="18" r="15"></circle>
-            <circle class="an-fio" cx="18" cy="18" r="15"></circle>
-          </svg>
-          <span class="cp-txt"></span>
-        </button>
-        <span class="cmp-gap"></span>
-        <button class="p-model" title="Trocar o modelo e o esforço"></button>
-        <button class="modo-btn p-modo" title="O que ele pode fazer sem perguntar">
-          <span class="modo-ic"></span><span class="modo-nome">Sem pedir permissão</span>
-        </button>
-        <button class="p-stop hidden" title="Parar"><svg viewBox="0 0 24 24" class="ic" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
-        <button class="p-send" title="Enviar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7" /> <path d="M12 19V5" /></svg></button>
+        <button class="cb p-compactar" title="Contexto ainda não medido"></button>
+        <div class="cmp-dir">
+          <button class="cb p-debate" title="Debater com Codex e Claude" aria-label="Debater com Codex e Claude"></button>
+          <button class="cb p-workflow" title="Workflow dos agentes" aria-label="Workflow dos agentes"></button>
+          <div class="p-model" role="group" aria-label="Motor, modelo e permissão">
+            <button type="button" class="pm-btn pm-motor" data-peca="motor" aria-haspopup="menu" title="Trocar de motor" aria-label="Motor"></button>
+            <span class="pm-sep" aria-hidden="true">·</span>
+            <button type="button" class="pm-btn pm-modelo" data-peca="modelo" aria-haspopup="menu" title="Trocar o modelo e o esforço" aria-label="Modelo e esforço"></button>
+            <span class="pm-sep" aria-hidden="true">·</span>
+            <button type="button" class="pm-btn pm-perm" data-peca="perm" aria-haspopup="menu" title="Permissões e o envio" aria-label="Permissões e o envio"><span class="pm-modo"></span></button>
+          </div>
+          <button class="p-stop hidden" title="Parar"><svg viewBox="0 0 24 24" class="ic" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
+          <button class="p-send" title="Enviar"><svg viewBox="0 0 24 24" class="ic" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7" /> <path d="M12 19V5" /></svg></button>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
+<script src="log-tela.js"></script>
 <script src="vendor/purify.min.js"></script>
 <script src="vendor/marked.min.js"></script>
 <script src="vendor/xterm.js"></script>
 <script src="quadro-fluxo.js"></script>
 <script src="cockpit-usage.js"></script>
 <script src="cockpit-resume.js"></script>
+<script src="nome-conversa.js"></script>
+<script src="historico-lista.js"></script>
+<script src="visual-mac.js"></script>
+<script src="conversation-work.js"></script>
+<script src="file-links.js"></script>
+<script src="reader-tools.js"></script>
+<script src="history-pager.js"></script>
+<script src="connector-prompts.js"></script>
+<link rel="stylesheet" href="connector-prompts.css">
+<script src="live-voice.js"></script>
+<script src="experiments.js"></script>
+<link rel="stylesheet" href="experiments.css">
+<link rel="stylesheet" href="history-pager.css">
+<script src="model-presentation.js"></script>
+<script src="acp-presets.js"></script>
 <script src="app.js"></script>
 <script src="collaboration.js"></script>
 <script src="cockpit-ui.js"></script>

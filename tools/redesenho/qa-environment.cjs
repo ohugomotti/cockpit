@@ -23,7 +23,7 @@ function identity() {
   return { protocol: 'cockpit-qa-v2', workspaceHash, sourceHash: hash.digest('hex'), processId: process.pid, port: PORT };
 }
 async function verifyServer() {
-  const response = await fetch(ORIGIN + '/__qa/identity', { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(ORIGIN + '/__qa/identity', { signal: AbortSignal.timeout(15000) });
   if (!response.ok || response.headers.get('x-cockpit-qa') !== 'simulado-sem-motores') throw new Error('A porta QA não pertence a uma prévia válida.');
   const actual = await response.json(), expected = identity();
   if (actual.protocol !== expected.protocol || actual.workspaceHash !== expected.workspaceHash || actual.sourceHash !== expected.sourceHash) throw new Error('A prévia pertence a outro worktree ou versão. Reinicie somente o servidor desta prévia.');

@@ -30,7 +30,7 @@ class El {
     this.tagName = String(tag || 'div').toUpperCase();
     this.className = ''; this.style = {}; this.dataset = {};
     this.filhos = []; this.texto = ''; this._html = ''; this.eventos = {};
-    this.classes = new Set(); this._achados = new Map(); this.pai = null;
+    this.classes = new Set(); this._achados = new Map(); this.pai = null; this.attrs = {};
   }
   get classList() {
     const eu = this;
@@ -49,7 +49,11 @@ class El {
   set innerHTML(v) { this._html = String(v); this.filhos = []; }
   get textContent() { return this.texto || this.filhos.map((f) => f.textContent).join(''); }
   set textContent(v) { this.texto = String(v); this.filhos = []; }
-  appendChild(c) { c.pai = this; this.filhos.push(c); return c; }
+  appendChild(c) { if (c.pai) c.pai.filhos = c.pai.filhos.filter(f => f !== c); c.pai = this; this.filhos.push(c); return c; }
+  remove() { if (this.pai) this.pai.filhos = this.pai.filhos.filter(f => f !== this); this.pai = null; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  removeAttribute(k) { delete this.attrs[k]; }   // leva 5 (T3): o fecharMenus de verdade tira o role="menu" da caixa
+  getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(n, f) { (this.eventos[n] = this.eventos[n] || []).push(f); }
   async disparar(n, ev) { for (const f of (this.eventos[n] || [])) await f(ev || {}); }
   scrollIntoView() {}
@@ -59,13 +63,17 @@ class El {
   getClientRects() { return this.closest('.hidden,[hidden]') ? [] : [{}]; }
   // busca de mentira: cria o filho sob demanda so' pra o codigo poder escrever nele
   buscar(sel) {
+    const descendente = (no) => { for (const filho of no.filhos) { if (filho.tagName.toLowerCase() === sel) return filho; const encontrado = descendente(filho); if (encontrado) return encontrado; } return null; };
+    const existente = descendente(this); if (existente) return existente;
     if (!this._achados.has(sel)) this._achados.set(sel, new El('span'));
     return this._achados.get(sel);
   }
   get isConnected() { return true; }
+  querySelector(sel) { return this.buscar(sel); }
   querySelectorAll() { return []; }
 }
 const documentoFalso = {
+  body: new El('body'), activeElement: null,
   createElement: (t) => new El(t),
   createTextNode: (t) => { const e = new El('#text'); e.texto = String(t); return e; },
   createDocumentFragment: () => new El('#frag'),
@@ -257,8 +265,29 @@ async function arvore() {
   respostaLista = { entries: [{ name: 'a.txt', dir: false, path: 'C:\\Users\\hugom\\a.txt' }] };
   await ctxA.loadTree('C:\\Users\\hugom', undefined);
   await caixaTree.filhos.find((f) => f.className === 'node f').disparar('dblclick');
-  checa('local: o duplo clique continua abrindo no PC, como sempre',
-    abriuNoPc === 1 && visorPedidos.length === 0);
+  checa('local: o duplo clique abre no LEITOR deste PC (UI 7.2-1) e nao tenta abrir no programa do Windows',
+    abriuNoPc === 0 && visorPedidos.length === 1 && visorPedidos[0].caminho === 'C:\\Users\\hugom\\a.txt'
+    && visorPedidos[0].remoto === null, JSON.stringify({ abriuNoPc, visorPedidos }));
+
+  /* "Abrir no programa do Windows" saiu do duplo clique e foi pro botao direito (UI 7.2-1), mas o recado de erro e'
+     o mesmo. O main responde { ok } ou { error } (UI 7.2-8): o motivo da recusa vira aviso no painel; texto cru (o
+     formato antigo do openPath) e promessa recusada tambem; { ok, revelado } (script mostrado na pasta) nao avisa nada */
+  const avisosDoPainel = [];
+  ctxA.note = (P, texto, erro) => avisosDoPainel.push({ texto, erro });
+  const abrirNoWindows = async (resposta) => {
+    avisosDoPainel.length = 0;
+    ctxA.window.api.openPath = async () => { if (resposta instanceof Error) throw resposta; return resposta; };
+    await ctxA.abrirNoProgramaDoPc('C:\\Users\\hugom\\a.txt');
+    return avisosDoPainel.map((a) => a.texto);
+  };
+  checa('local: o { error } do main vira aviso no painel (arquivo recusado nao falha calado)',
+    JSON.stringify(await abrirNoWindows({ error: 'Failed to open path' })) === '["Failed to open path"]');
+  checa('local: texto cru do openPath (formato antigo) tambem vira aviso',
+    JSON.stringify(await abrirNoWindows('Failed to open path')) === '["Failed to open path"]');
+  checa('local: promessa recusada tambem vira aviso, nao erro solto',
+    JSON.stringify(await abrirNoWindows(new Error('IPC recusou'))) === '["IPC recusou"]');
+  checa('local: { ok, revelado } e { ok } nao sao erro: nenhum aviso',
+    (await abrirNoWindows({ ok: true, revelado: true })).length === 0 && (await abrirNoWindows({ ok: true })).length === 0);
 
   /* =====================================================================
      ACHADO 3 da auditoria: a arvore do painel VELHO despejava itens na
@@ -646,6 +675,8 @@ function abertura() {
     vm.createContext(ctxG);
     // as funcoes de verdade que a linha usa (abaAtual, pastasDaAba, cwdPadraoDaAba...)
     vm.runInContext(app.slice(app.indexOf('function abasLocais()'), app.indexOf('function nomeCurtoDaAba(')), ctxG);
+    // leva 5i: a linha passou a montar o pedido pelo opcoesDoMotor (o Grok vira ACP); sem o modulo das IAs ele devolve o pedido de sempre
+    vm.runInContext(pegarBloco(app, 'function comandoDoGrokNoAcp(', 'comandoDoGrokNoAcp') + '\n' + pegarBloco(app, 'function opcoesDoMotor(', 'opcoesDoMotor'), ctxG);
     vm.runInContext(linha, ctxG);
     return ctxG.nascidos[0];
   };
@@ -828,12 +859,13 @@ const trechoVisor = app.slice(
 if (trechoVisor.length < 200) throw new Error('nao achei o trecho do visor no app.js');
 
 const pedidosVisor = [];
+const visores = new Set();
 let respostaVisor = { tipo: 'texto', nome: 'x.txt', bytes: 3, dados: 'oi' };
 const ctxC = {
   ...globaisFalsos(), console,
   document: documentoFalso,
-  $: (sel, raiz) => (raiz && raiz.buscar ? raiz.buscar(sel) : new El('div')),
-  $$: () => [],
+  $: (sel, raiz) => { const el = raiz && raiz.buscar ? raiz.buscar(sel) : new El('div'); if (sel === '.p-visor') visores.add(el); return el; },
+  $$: sel => sel === '.p-visor' ? [...visores] : [],
   ico: (n) => '<i>' + n + '</i>',
   note: () => {},
   abrirQuadro: () => {},
@@ -901,7 +933,7 @@ async function visor() {
     !temBotao(corpo) && /O quadro só abre desenho deste PC/.test(corpo.textContent), corpo.textContent);
   await ctxC.verArquivo(P, 'C:\\cena.excalidraw', null);
   checa('excalidraw local: o botao "Abrir no quadro" continua la',
-    temBotao(corpo) && corpo.filhos.some((f) => f.texto === 'Abrir no quadro'));
+    temBotao(corpo) && corpo.filhos.some((f) => f.getAttribute('aria-label') === 'Abrir no quadro' && f.eventos.click?.length === 1));
 
   /* --- clique tardio nao pinta por cima do arquivo novo --- */
   const fila = [];
@@ -932,13 +964,14 @@ function contratos() {
     && !/const remoto = remotoDoPane\(P\);\s*\n\s*if \(remoto\) return;/.test(app));
 
   const links = app.slice(app.indexOf('function linkarArquivos('), app.indexOf('function mesmaFala('));
-  checa('bug antigo: /home/... no texto do modelo agora abre pelo PAINEL, nao no disco do Windows',
-    /verArquivo\(P, caminho, remotoDoPane\(P\)\)/.test(links));
-  checa('a regex de caminho POSIX continua casando /home/... (o link tem que existir pra funcionar)',
-    links.includes('(?:Users|tmp|private|Volumes|home)'));
+  checa('bug antigo: links de arquivo preservam o alvo calculado pelo painel/opções',
+    /remotoDoPane\(P\)/.test(links) && /verArquivo\(P, atual\.path, atual\.remoto/.test(links));
+  const linkHelpers = require('../src/renderer/file-links.js');
+  checa('caminhos POSIX de home e opt conservam a raiz no visor',
+    ['/home/hugo/plano.md', '/opt/equipe/plano.md'].every(path => linkHelpers.resolve(path, { remote: true, cwd: '~' }).path === path));
 
-  checa('o visor recebe o remoto de QUEM CHAMA (assinatura de 3 pecas)',
-    /async function verArquivo\(P, caminho, remoto\) \{/.test(app));
+  checa('o visor recebe o remoto de QUEM CHAMA, com localização opcional no documento',
+    /async function verArquivo\(P, caminho, remoto, localizacao = \{\}\) \{/.test(app));
   checa('e o IPC do visor manda undefined quando nao e remoto (forma antiga no preload)',
     /window\.api\.verArquivo\(caminho, remoto \|\| undefined\)/.test(app));
   checa('a arvore idem: listDir sem remoto e' + String.fromCharCode(39) + ' a chamada de sempre',
@@ -991,7 +1024,11 @@ function contratos() {
 
   /* ACHADO 5, no fonte: o cancelamento tem que sair de DENTRO do send, antes
      da limpeza do campo -- nao adianta depender do evento 'input'. */
-  const corpoSend = pegarBloco(app, 'async function send(P) {', 'send');
+  /* Tarefa 2 (26/09, trecho selecionado): o send ganhou o 2o parametro (o chip
+     Continuar avisa que o "continue" nao e' fala sua e nao leva o trecho
+     preso). A busca pega a funcao pelo nome, sem depender da lista de
+     parametros; o que se prova aqui e' o mesmo. */
+  const corpoSend = pegarBloco(app, 'async function send(', 'send');
   checa('(5) o send cancela a busca do "@" antes de limpar o campo na mao',
     corpoSend.includes('pararBuscaDeArquivos(P);')
     && corpoSend.indexOf('pararBuscaDeArquivos(P);') < corpoSend.indexOf("inp.value = '';"),

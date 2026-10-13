@@ -340,7 +340,11 @@ test('modeloDoHistorico: ultimo modelo que respondeu, mapeado pro catalogo', () 
   assert.equal(ctx.modeloDoHistorico([m('claude-opus-5'), m('<synthetic>')]), 'claude-opus-5[1m]', '<synthetic> nao e modelo');
   assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1')]), 'claude-fable-5-1');
   assert.equal(ctx.modeloDoHistorico([m('claude-haiku-4-5-20251001')]), 'claude-haiku-4-5-20251001');
-  assert.equal(ctx.modeloDoHistorico([m('sonnet')]), 'claude-sonnet-5');
+  // 08/10/2026: os apelidos seguem os do Claude Code (sonnet = Sonnet 5.5, haiku = Haiku 5.5, opus = Opus 5.5, sempre com 1M)
+  assert.equal(ctx.modeloDoHistorico([m('sonnet')]), 'claude-sonnet-5-5');
+  assert.equal(ctx.modeloDoHistorico([m('haiku')]), 'claude-haiku-5-5');
+  assert.equal(ctx.modeloDoHistorico([m('claude-haiku-5-5')]), 'claude-haiku-5-5');
+  assert.equal(ctx.modeloDoHistorico([m('claude-opus-5-5')]), 'claude-opus-5-5[1m]', 'o Opus 5.5 do historico tambem volta com 1M');
   assert.equal(ctx.modeloDoHistorico([m('claude-opus-5[1m]')]), 'claude-opus-5[1m]', 'o Hugo usa o Opus sempre com 1M');
   assert.equal(ctx.modeloDoHistorico([m('claude-opus-4-8')]), '', 'modelo fora do catalogo: fica o padrao');
   assert.equal(ctx.modeloDoHistorico([]), '');
@@ -348,11 +352,19 @@ test('modeloDoHistorico: ultimo modelo que respondeu, mapeado pro catalogo', () 
 });
 
 test('o main manda o modelo de cada resposta do historico do Claude', () => {
-  const ctx = { LIM_IMG_HIST: 1e9, LIM_IMG_TOTAL: 1e9, ehTecnico: () => false, semContexto: (t) => t, claudeToolArg: () => '' };
+  /* Tarefa 2 (26/09, trecho selecionado): o mensagensDoJsonl passou a usar o
+     textoDoBalao (o trecho citado pelo Responder fica na fala reaberta, a tela
+     desenha a citacao). O semContexto agora tira o trecho e so' da' o nome da
+     conversa. O andaime troca o nome da funcao falsa; o que se prova e' o mesmo. */
+  const ctx = { LIM_IMG_HIST: 1e9, LIM_IMG_TOTAL: 1e9, ehTecnico: () => false, textoDoBalao: (t) => t, claudeToolArg: () => '' };
   vm.createContext(ctx);
   // corte por marco: o "startsWith('{')" do corpo engana o contador de chaves
+  /* Tarefa 5 (26/09): o codexHistory virou "async function" (le em blocos) e
+     a leitura de UMA linha (leitorDoJsonl) mora entre os dois. O recorte vai
+     ate' o comeco da LINHA do codexHistory, senao sobrava um "async" solto no
+     fim; o que se prova e' o mesmo. */
   const ini = main.indexOf('function mensagensDoJsonl(');
-  vm.runInContext(main.slice(ini, main.indexOf('function codexHistory(', ini)), ctx);
+  vm.runInContext(main.slice(ini, main.lastIndexOf('\n', main.indexOf('function codexHistory(', ini))), ctx);
   const linhas = [
     { type: 'user', message: { role: 'user', content: 'oi' } },
     { type: 'assistant', message: { model: 'claude-opus-5', content: [{ type: 'text', text: 'ola' }] } },
@@ -366,7 +378,10 @@ test('o main manda o modelo de cada resposta do historico do Claude', () => {
 
 test('openSession: conversa reaberta volta no modelo do historico (antes zerava)', () => {
   const bloco = pegarBloco(app, 'async function openSession(', 'openSession');
-  const carregou = bloco.indexOf('for (const m of (msgs || []))');
+  /* Tarefa 5 (26/09): o laco de desenho saiu do openSession e virou o
+     desenharHistorico (o mesmo da restauracao). O marco de "ja carregou" e'
+     a chamada dele; a ordem provada aqui e' a mesma. */
+  const carregou = bloco.indexOf('desenharHistorico(P, msgs, { revisao })');
   const usa = bloco.indexOf('modeloDoHistorico(msgs)');
   assert.ok(usa > carregou && carregou > 0, 'openSession nao usa o modelo do historico depois de carregar');
   assert.ok(/!P\.started/.test(bloco.slice(usa - 200, usa + 200)), 'trocaria o modelo de um painel que ja subiu');

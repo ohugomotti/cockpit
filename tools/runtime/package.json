@@ -1,0 +1,10 @@
+{
+  "name": "cockpit-runtime-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ferramentas locais para preparar o runtime isolado do Cockpit",
+  "type": "module",
+  "dependencies": {
+    "rcedit": "5.0.2"
+  }
+}

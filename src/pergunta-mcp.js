@@ -28,6 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const hostTools = require('./cockpit-interactions');
 
 const PASTA = process.env.COCKPIT_PERGUNTAS || '';
 const PAINEL = process.env.COCKPIT_PAINEL || 'x';
@@ -215,6 +216,12 @@ function textoDaResposta(perguntas, dado) {
     return 'O usuário fechou a caixa sem responder. Não invente a resposta: '
       + 'siga pelo caminho mais conservador e diga a ele o que ficou em aberto.';
   }
+  /* Leva 5h: o X do cartao. Ele recusou as opcoes e respondeu por texto (a mensagem seguinte dele na caixa de escrever):
+     o texto vale pelo pedido inteiro e vai como ele escreveu, sem trocar as aspas. */
+  const livre = dado && typeof dado.textoLivre === 'string' ? dado.textoLivre.trim() : '';
+  if (livre) {
+    return 'O usuário preferiu responder por texto, sem escolher as opções: "' + livre + '". Siga com isso em mente.';
+  }
   const itens = (dado && dado.respostas) || [];
   const partes = [];
   for (let i = 0; i < perguntas.length; i++) {
@@ -251,11 +258,15 @@ rl.on('line', async (linha) => {
   if (typeof m.method === 'string' && m.method.startsWith('notifications/')) return;
 
   if (m.method === 'tools/list') {
-    return escrever({ jsonrpc: '2.0', id: m.id, result: { tools: [FERRAMENTA, FERRAMENTA_PLANO] } });
+    return escrever({ jsonrpc: '2.0', id: m.id, result: { tools: [FERRAMENTA, FERRAMENTA_PLANO, ...(process.env.COCKPIT_HOST_CAPABILITY ? hostTools.mcpTools() : [])] } });
   }
 
   if (m.method === 'tools/call') {
     const nome = m.params && m.params.name;
+    if (['apresentar_artefato', 'preparar_rascunho'].includes(nome)) {
+      const result = await hostTools.callMcpHostTool({ directory: process.env.COCKPIT_HOST_MAILBOX, paneId: PAINEL, capability: process.env.COCKPIT_HOST_CAPABILITY }, nome, m.params.arguments || {});
+      return escrever({ jsonrpc: '2.0', id: m.id, result });
+    }
     if (nome === 'plano') {
       const args = (m.params && m.params.arguments) || {};
       const texto = resumoDoPlano(args.itens);

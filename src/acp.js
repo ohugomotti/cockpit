@@ -30,6 +30,10 @@
 const fs = require('fs');
 const { StringDecoder } = require('node:string_decoder');
 const path = require('path');
+// Tarefa 5 (26/09): a transcricao volta inteira, lida em blocos
+const { varrerLinhas } = require('./historico-leitura');
+// leva 5i: a tabela das IAs do ACP (puro, sem Electron); daqui sai so' o ambiente que o registro manda junto de cada comando
+const { ambienteDoComando } = require('./renderer/acp-presets');
 
 const COMANDO_PADRAO = 'gemini --acp';
 const LIM_DIFF = 100 * 1024;
@@ -94,6 +98,7 @@ const corta = (s, n) => { const t = String(s == null ? '' : s); return t.length 
 function conteudoDaFerramenta(itens, completo = false) {
   let texto = '';
   let mudanca = null;
+  let diffs = 0;
   const imagens = [];
   for (const it of (Array.isArray(itens) ? itens : [])) {
     if (!it) continue;
@@ -104,17 +109,32 @@ function conteudoDaFerramenta(itens, completo = false) {
         if (dados.length <= LIM_IMG_PASSO && imagens.length < MAX_IMG_PASSO) imagens.push({ mime: b.mimeType || 'image/png', dados });
       } else { const t = textoDoBloco(b); if (t) texto += (texto ? '\n' : '') + t; }
     } else if (it.type === 'diff') {
+      diffs++;
       mudanca = {
         path: String(it.path || ''),
         antes: it.oldText == null ? '' : completo ? String(it.oldText) : corta(it.oldText, LIM_DIFF),
         depois: completo ? String(it.newText == null ? '' : it.newText) : corta(it.newText, LIM_DIFF),
-        tipo: it.oldText == null ? 'write-novo' : 'edit',
+        // oldText ausente nao comprova criacao: o agente pode ter sobrescrito antes do aviso.
+        tipo: it.oldText == null ? 'write-incerto' : 'edit',
       };
     } else if (it.type === 'terminal') {
       texto += (texto ? '\n' : '') + '[terminal ' + (it.terminalId || '') + ']';
     }
   }
+  // Tarefa 9: mais de um diff no passo (varios arquivos): a tela mostra o ultimo e o "Desfazer" nao vale
+  if (mudanca && diffs > 1) mudanca.varios = true;
   return { texto, mudanca, imagens };
+}
+/* Tarefa 9: o passo ja' tinha um diff e chegou OUTRO (outro arquivo, ou o texto
+   mudou): a tela continua mostrando o primeiro, mas desfazer so' ele deixaria o
+   resto pela metade. Sai UM tool-mudanca com "varios", que o main e a tela
+   tratam como passo que nao desfaz. O mesmo diff repetido nao conta. */
+function outroDiff(f, nova) {
+  if (!nova || !f.temMudanca || f.variosAvisado || !f.mudanca) return null;
+  const a = f.mudanca;
+  if (!nova.varios && nova.path === a.path && nova.antes === a.antes && nova.depois === a.depois && nova.tipo === a.tipo) return null;
+  f.variosAvisado = true;
+  return { ...a, varios: true };
 }
 
 /* O "kind" do passo e' a categoria padronizada do protocolo; o nome que vai pra
@@ -199,13 +219,18 @@ function traduzirUpdate(st, upd) {
     if (st.carregando) return out;
     fecharFala(st, out);
     const id = String(upd.toolCallId || ('t' + Date.now()));
+    /* Tarefa 9: o id que vai pra TELA leva a geracao do agente deste painel
+       (st.prefixoId, posto no start): o toolCallId do ACP so' e' unico dentro
+       da sessao, e o "Desfazer" nao pode confundir o passo de antes de religar
+       com o de agora. O mapa interno (e o request_permission) seguem no cru. */
+    const idTela = (st.prefixoId || '') + id;
     const p = passoDaFerramenta(upd);
     const c = conteudoDaFerramenta(upd.content);
     // guarda o pedido cru: o request_permission pode vir so' com o id
     st.ferramentas.set(id, { name: p.name, arg: p.arg, kind: p.kind, temMudanca: !!c.mudanca, mudanca: c.mudanca, bruto: enxuto(upd), fim: false });
-    out.push({ kind: 'tool-start', id, name: p.name, arg: p.arg, mudanca: c.mudanca || null });
+    out.push({ kind: 'tool-start', id: idTela, name: p.name, arg: p.arg, mudanca: c.mudanca || null });
     if (upd.status === 'completed' || upd.status === 'failed') {
-      out.push({ kind: 'tool-end', id, output: corta(c.texto, LIM_SAIDA), error: upd.status === 'failed', imagens: c.imagens });
+      out.push({ kind: 'tool-end', id: idTela, output: corta(c.texto, LIM_SAIDA), error: upd.status === 'failed', imagens: c.imagens });
       st.ferramentas.get(id).fim = true;
     }
     return out;
@@ -214,12 +239,14 @@ function traduzirUpdate(st, upd) {
     if (st.carregando) return out;
     const id = String(upd.toolCallId || '');
     if (!id) return out;
+    const idTela = (st.prefixoId || '') + id;   // Tarefa 9: ver o tool_call
     const c = conteudoDaFerramenta(upd.content);
     let f = st.ferramentas.get(id);
     if (f && f.fim) {
       // passo ja terminado: so' um diff tardio interessa; o resto e' repeticao
       // (renascer como passo novo dava passo e fim em dobro na linha do tempo)
-      if (c.mudanca && !f.temMudanca) { f.temMudanca = true; f.mudanca = c.mudanca; out.push({ kind: 'tool-mudanca', id, mudanca: c.mudanca }); }
+      if (c.mudanca && !f.temMudanca) { f.temMudanca = true; f.mudanca = c.mudanca; out.push({ kind: 'tool-mudanca', id: idTela, mudanca: c.mudanca }); }
+      else { const varios = outroDiff(f, c.mudanca); if (varios) out.push({ kind: 'tool-mudanca', id: idTela, mudanca: varios }); }
       return out;
     }
     if (!f) {
@@ -229,20 +256,23 @@ function traduzirUpdate(st, upd) {
       const p = passoDaFerramenta(upd);
       f = { name: p.name, arg: p.arg, kind: p.kind, temMudanca: !!c.mudanca, mudanca: c.mudanca, bruto: enxuto(upd), fim: false };
       st.ferramentas.set(id, f);
-      out.push({ kind: 'tool-start', id, name: p.name, arg: p.arg, mudanca: c.mudanca || null });
+      out.push({ kind: 'tool-start', id: idTela, name: p.name, arg: p.arg, mudanca: c.mudanca || null });
     } else if (c.mudanca && !f.temMudanca) {
       f.temMudanca = true; f.mudanca = c.mudanca;
-      out.push({ kind: 'tool-mudanca', id, mudanca: c.mudanca });
+      out.push({ kind: 'tool-mudanca', id: idTela, mudanca: c.mudanca });
+    } else {
+      const varios = outroDiff(f, c.mudanca);
+      if (varios) out.push({ kind: 'tool-mudanca', id: idTela, mudanca: varios });
     }
     f.bruto = { ...(f.bruto || {}), ...enxuto(upd) };
     const status = upd.status;
     if (status === 'completed' || status === 'failed') {
       let saida = c.texto;
       if (!saida && upd.rawOutput != null) saida = typeof upd.rawOutput === 'string' ? upd.rawOutput : seguroJson(upd.rawOutput);
-      out.push({ kind: 'tool-end', id, output: corta(saida, LIM_SAIDA), error: status === 'failed', imagens: c.imagens });
+      out.push({ kind: 'tool-end', id: idTela, output: corta(saida, LIM_SAIDA), error: status === 'failed', imagens: c.imagens });
       f.fim = true;
     } else if (c.texto) {
-      out.push({ kind: 'tool-output', id, text: c.texto });
+      out.push({ kind: 'tool-output', id: idTela, text: c.texto });
     }
     return out;
   }
@@ -373,15 +403,33 @@ function listarSessoes(pastaDados) {
   out.sort((a, b) => b.when - a.when);
   return out.slice(0, 300);
 }
+/* uma fala anotada vira mensagem da tela (ou nada) */
+function mensagemDaFala(m) {
+  if (m.role === 'user') return String(m.text || '').trim() ? { role: 'user', text: String(m.text) } : null;
+  if (m.role === 'bot') return String(m.text || '').trim() ? { role: 'bot', text: String(m.text) } : null;
+  if (m.role === 'tool') return { role: 'tool', name: m.name || 'Ferramenta', arg: String(m.arg || '').slice(0, 120) };
+  return null;
+}
+/* Sincrono, e so' as ultimas maxMsgs se pedir: o contexto que vai junto quando
+   o agente nao retoma a conversa (as ultimas 20). Tarefa 5: sem maxMsgs vem
+   tudo -- o corte de 60 itens saiu. */
 function historicoDaSessao(arquivo, maxMsgs) {
-  const { msgs } = lerTranscrito(arquivo);
+  const out = lerTranscrito(arquivo).msgs.map(mensagemDaFala).filter(Boolean);
+  return maxMsgs ? out.slice(-maxMsgs) : out;
+}
+/* Tarefa 5: o que volta pra tela ao reabrir -- a transcricao INTEIRA, lida em
+   blocos (varrerLinhas), sem montar o arquivo numa string so'. O corte
+   (cortarHistorico, 600 falas) e' de quem chama. */
+async function historicoEmBlocos(arquivo) {
   const out = [];
-  for (const m of msgs) {
-    if (m.role === 'user') { if (String(m.text || '').trim()) out.push({ role: 'user', text: String(m.text) }); }
-    else if (m.role === 'bot') { if (String(m.text || '').trim()) out.push({ role: 'bot', text: String(m.text) }); }
-    else if (m.role === 'tool') out.push({ role: 'tool', name: m.name || 'Ferramenta', arg: String(m.arg || '').slice(0, 120) });
-  }
-  return out.slice(-(maxMsgs || 60));
+  await varrerLinhas(arquivo, (linha) => {
+    if (linha.charCodeAt(0) !== 123) return;
+    let d; try { d = JSON.parse(linha); } catch { return; }
+    if (!d || d.cabecalho || !d.role) return;
+    const m = mensagemDaFala(d);
+    if (m) out.push(m);
+  });
+  return out;
 }
 
 /* ======================= o motor de verdade ======================= */
@@ -390,6 +438,8 @@ function criarAcp(dep) {
   const autoLiberada = dep.autoLiberada || (() => false);
   const paineis = new Map();     // paneId -> st
   const iniciando = new Map();   // paneId -> { comando, promessa }: dois Enter durante o "Ligando…" viram UM start
+  // Tarefa 9: quantas vezes cada painel subiu um agente; vai na frente do id do passo que sai pra tela
+  const geracoes = new Map();    // paneId -> numero
 
   const escrever = (st, obj) => {
     if (!st.proc || !st.proc.stdin) return false;
@@ -586,8 +636,11 @@ function criarAcp(dep) {
     const { bin, args } = comandoEmPartes(comando);
     if (!bin) throw new Error('O comando do agente ACP está vazio. Escolha um no menu do modelo.');
     parar(paneId);
+    const geracao = (geracoes.get(paneId) || 0) + 1;
+    geracoes.set(paneId, geracao);
     const st = {
       paneId, comando, cwd: opts.cwd || HOME, approval: opts.approval || 'manual',
+      prefixoId: 'g' + geracao + ':',   // Tarefa 9: o mesmo toolCallId depois de religar e' outro passo
       proc: null, buf: '', erro: '', rpcId: 0, pend: new Map(), pedidos: new Map(),
       sessionId: '', nova: false, caps: {}, info: {}, modos: [], modoAtual: '', modelos: [], modeloAtual: '', comandos: [],
       ferramentas: new Map(), msgId: null, acc: '', seq: 0, carregando: false, ocupado: false, cancelando: false,
@@ -606,6 +659,8 @@ function criarAcp(dep) {
   async function subir(st, bin, args, opts) {
     const paneId = st.paneId;
     const env = buildEnv();
+    // leva 5i: variaveis que o registro do ACP manda junto do comando de uma IA (so' o Droid: sem auto-atualizar no meio da sessao)
+    Object.assign(env, ambienteDoComando(st.comando) || {});
     // a chave vale pro comando INTEIRO ("npx @google/gemini-cli --acp" tambem e' gemini)
     if (/gemini/i.test(st.comando) && !env.GEMINI_API_KEY && !env.GOOGLE_API_KEY) {
       const chave = lerChaveGemini(HOME);
@@ -882,13 +937,14 @@ function criarAcp(dep) {
   return {
     start, enviar, interromper, parar, pararTodos, responderPermissao, setModelo, comandos,
     sessoes: () => listarSessoes(pastaDados),
-    historico: (id, file, max) => historicoDaSessao(file && fs.existsSync(file) ? file : arquivoDaSessao(pastaDados, id), max || 60),
+    // Tarefa 5: a conversa inteira, em blocos (antes: sincrono, os ultimos 60 itens)
+    historico: (id, file) => historicoEmBlocos(file && fs.existsSync(file) ? file : arquivoDaSessao(pastaDados, id)),
     arquivoDe: (id) => arquivoDaSessao(pastaDados, id),
   };
 }
 
 module.exports = {
   criarAcp, traduzirUpdate, comandoEmPartes, modoDoAgente, escolherOpcao, passoDaFerramenta, chaveDePermissao,
-  conteudoDaFerramenta, dadosDaPermissao, lerChaveGemini, listarSessoes, historicoDaSessao, arquivoDaSessao, anotar,
+  conteudoDaFerramenta, dadosDaPermissao, lerChaveGemini, listarSessoes, historicoDaSessao, historicoEmBlocos, arquivoDaSessao, anotar,
   COMANDO_PADRAO, MODOS_EQUIVALENTES,
 };

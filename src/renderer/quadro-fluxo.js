@@ -137,24 +137,30 @@
      comecando pelas caixas sem entrada e seguindo o ramo que acabou de andar;
      empate pela posicao. Num ciclo, entra quem ja' recebe seta de um numerado. */
   function ordenar(nos, ligacoes) {
-    const ordem = [], posDe = new Map();
+    const ordem = [];
     const restantes = new Set(nos);
-    const entradasDe = (n) => ligacoes.filter((l) => l.para === n && l.de !== n);
-    const nota = (n) => {   // quanto maior, mais "continuacao" do que acabou de ser numerado
-      let m = -1;
-      for (const l of entradasDe(n)) if (posDe.has(l.de)) m = Math.max(m, posDe.get(l.de));
-      return m;
-    };
-    const melhor = (lista) => lista.sort((a, b) => (nota(b) - nota(a)) || porPosicao(a, b))[0];
+    /* R5-07: as entradas e a "nota" de cada caixa saem de contas feitas UMA vez. Antes cada passo refiltrava todas as
+       setas para cada caixa e a ordenação chamava nota() (outro filtro) a cada comparação: centenas de caixas e setas
+       viravam centenas de milhões de operações. A escolha é a mesma, na mesma ordem (o sort e o desempate ficam). */
+    const saidasDe = new Map(), faltam = new Map(), nota = new Map();
+    for (const n of nos) { saidasDe.set(n, []); faltam.set(n, 0); nota.set(n, -1); }
+    for (const l of ligacoes) {
+      const de = l.de, para = l.para;
+      if (de === para || !faltam.has(para)) continue;   // seta para a mesma caixa não conta como entrada
+      faltam.set(para, faltam.get(para) + 1);           // entradas cuja origem ainda não foi numerada
+      if (saidasDe.has(de)) saidasDe.get(de).push(para);
+    }
+    const melhor = (lista) => lista.sort((a, b) => (nota.get(b) - nota.get(a)) || porPosicao(a, b))[0];
     while (restantes.size) {
       const vivos = [...restantes];
-      let prontos = vivos.filter((n) => entradasDe(n).every((l) => posDe.has(l.de)));
+      let prontos = vivos.filter((n) => faltam.get(n) === 0);
       if (!prontos.length) {
-        const comEntrada = vivos.filter((n) => nota(n) >= 0);
+        const comEntrada = vivos.filter((n) => nota.get(n) >= 0);
         prontos = comEntrada.length ? comEntrada : vivos;
       }
       const n = melhor(prontos);
-      posDe.set(n, ordem.length);
+      // quem recebe seta de n: uma entrada a menos esperando, e n é a origem numerada mais recente
+      for (const alvo of saidasDe.get(n)) { faltam.set(alvo, faltam.get(alvo) - 1); nota.set(alvo, ordem.length); }
       ordem.push(n);
       restantes.delete(n);
     }

@@ -112,18 +112,31 @@
     };
   }
 
-  function resetText(value) {
-    if (!finite(value)) return 'reset indisponível';
-    return 'zera ' + new Date(value).toISOString().replace('T', ' ').slice(0, 16) + 'Z';
+  // Hover do anel: "Claude · janela de 5 h: 42 % (zera 14:00) · semana: 18 % (zera seg)".
+  // Hora e dia são os do PC (timeZone só entra nos testes); a janela diz a duração que o motor informou.
+  function windowLabel(window) {
+    if (window.id === 'semana') return 'semana';
+    if (!finite(window.durationMs)) return 'sessão';
+    const minutes = Math.round(window.durationMs / MINUTE);
+    return 'janela de ' + (minutes % 60 === 0 ? minutes / 60 + ' h' : minutes + ' min');
   }
 
-  function titleFor(engine, where, windows, stale) {
+  function resetText(window, timeZone) {
+    if (!finite(window.resetAt)) return 'reset indisponível';
+    const at = new Date(window.resetAt);
+    return 'zera ' + (window.id === 'semana'
+      ? at.toLocaleDateString('pt-BR', { weekday: 'short', timeZone }).replace('.', '')
+      : at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone }));
+  }
+
+  function titleFor(engine, where, windows, stale, timeZone) {
     const name = ENGINE_NAMES[String(engine).toLowerCase()] || String(engine || 'Motor');
     const place = where ? ' · ' + String(where) : '';
-    if (!windows.length) return name + place + ': sem dados de limite' + (stale ? ' · dados desatualizados' : '');
-    const labels = { sessao: 'sessão', semana: 'semana' };
-    const parts = windows.map((window) => labels[window.id] + ' ' + window.pct + '% · ' + resetText(window.resetAt));
-    return name + place + ': ' + parts.join('; ') + (stale ? ' · dados desatualizados' : '');
+    const note = stale ? ' · dados desatualizados' : '';
+    if (!windows.length) return name + place + ': sem dados de limite' + note;
+    const parts = windows.map((window) => windowLabel(window) + ': '
+      + String(Math.round(window.pct * 10) / 10).replace('.', ',') + ' % (' + resetText(window, timeZone) + ')');
+    return name + place + ' · ' + parts.join(' · ') + note;
   }
 
   function accountSummary(engine, data, opts) {
@@ -145,7 +158,7 @@
       available: windows.length > 0,
       pct: chosen ? chosen.pct : null,
       attention: windows.some((window) => window.attention),
-      title: titleFor(engine, opts.where, publicWindows, stale),
+      title: titleFor(engine, opts.where, publicWindows, stale, opts.timeZone),
       windows: publicWindows,
       projection,
       credits: creditsSummary(data.extra || data.credits),

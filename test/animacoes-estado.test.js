@@ -116,7 +116,9 @@ test('selo de estado: "sua vez" respira e "trabalhando" pulsa; "terminou" e "gua
   const anel = regras.find((r) => r.sel === '.ck-g.working' && animacaoDe(r));
   assert.ok(anel, 'falta o anel de "trabalhando"');
   assert.match(animacaoDe(anel), /^ck-anel 0\.75s linear infinite$/);
-  assert.match(anel.corpo, /border:\s*1\.5px solid transparent/, 'o anel e a borda do selo');
+  /* Leva 5 (UI 5.4): o anel ganhou o trilho inteiro apagado (28 % da cor); sem ele os 2 lados pareciam um "(" solto.
+     Continua anel girando, que foi o que o Hugo pediu em 21/09. */
+  assert.match(anel.corpo, /border:\s*1\.5px solid color-mix\(in srgb, var\(--working\) 28%, transparent\)/, 'o anel e a borda do selo, com trilho');
   assert.match(anel.corpo, /border-top-color:\s*var\(--working\)/);
   assert.match(anel.corpo, /background:\s*transparent/, 'anel vazado, nao bolinha cheia');
   // e o keyframe gira e mais nada: uma propriedade so, compositor puro
@@ -225,9 +227,9 @@ test('toda animacao tem guarda de prefers-reduced-motion e a forma continua dize
   assert.match(regras.find((r) => r.sel === '.ck-g.attention').corpo, /background:\s*var\(--attention\)/);
   // "trabalhando" segue tres pontinhos visiveis (nao nascem transparentes)
   assert.doesNotMatch(regras.find((r) => r.sel === '.ck-g.working').corpo, /box-shadow:/);
-  // "terminou" segue com o visto, "guardada" segue so contorno
+  // "terminou" segue com o visto; "guardada" (leva 5, UI 5.4) não mostra nada, mas guarda o lugar (o logo não anda)
   assert.ok(regras.some((r) => r.sel === '.ck-g.done::after'));
-  assert.match(regras.find((r) => r.sel === '.ck-g.stored').corpo, /border:/);
+  assert.match(regras.find((r) => r.sel === '.ck-g.stored').corpo, /visibility:\s*hidden/);
   // e o caret parado fica ACESO: apagado ele mentiria que o turno acabou
   assert.doesNotMatch(regras.find((r) => /ocupado/.test(r.sel) && animacaoDe(r)).corpo, /opacity:\s*0/);
   /* os tres pontinhos do chat (.trab-pts) falam a mesma lingua do selo de
@@ -314,12 +316,16 @@ test('o esqueleto se amarra ao historyLoading que ja existia, sem segundo contro
   assert.match(pintura, /const carregando = historyLoading && !saved\.length/);
   assert.match(pintura, /historySkeleton\(carregando\)/);
   // enquanto carrega quem ocupa o lugar e o esqueleto, nao o "Nenhuma conversa"
-  assert.match(pintura, /!saved\.length && !carregando && !q\("\.ck-empty-nav", sessionList\)/);
+  assert.match(pintura, /!saved\.length && !carregando && !avisosHistorico\.length && !q\("\.ck-empty-nav", sessionList\)/);
+  // falha/aviso na consulta tambem nao pode aparecer como uma lista vazia
+  assert.match(pintura, /if \(saved\.length \|\| carregando \|\| avisosHistorico\.length\) q\("\.ck-empty-nav", sessionList\)\?\.remove\(\)/);
   // nenhuma variavel nova de estado: quem liga e desliga continua sendo, e so,
-  // o loadPlaceHistory -- fora dele so existe a declaracao
+  // o loadPlaceHistory -- fora dele so existe a declaracao. Auditoria 2 (I-1): ele CONTA as recargas em
+  // andamento (a parcial e a dos 5 min correm juntas) e o historyLoading so' cai quando a ultima termina
+  const escritas = /historyLoading(\s*=(?!=)|\s*[+-]=|\+\+|--)/g;
   const carga = pedaco(ui, 'loadPlaceHistory', '  ');
-  assert.equal((carga.match(/historyLoading = (true|false)/g) || []).length, 2);
-  assert.equal((ui.match(/historyLoading = (true|false)/g) || []).length, 3, 'declaracao + liga + desliga');
+  assert.deepEqual(carga.match(escritas), ['historyLoading++', 'historyLoading--']);
+  assert.equal((ui.match(escritas) || []).length, 3, 'declaracao + conta + desconta');
 });
 
 test('historySkeleton cria uma vez, reaproveita, e MORRE quando os dados chegam', async () => {

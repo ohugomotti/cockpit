@@ -14,6 +14,7 @@ fs.mkdirSync(path.join(HOME_FALSA, '.claude'), { recursive: true });
 fs.mkdirSync(USERDATA, { recursive: true });
 
 const handlers = new Map();
+const ipcConfiavel = require('./ipc-confiavel').criarIpcConfiavel();
 const eletronFalso = {
   app: {
     getPath: (q) => (q === 'userData' ? USERDATA : HOME_FALSA),
@@ -29,7 +30,7 @@ const eletronFalso = {
   shell: { openExternal() {}, openPath() {}, showItemInFolder() {} },
   Menu: { setApplicationMenu() {}, buildFromTemplate: () => ({}) },
   nativeTheme: { on() {} },
-  clipboard: { readText: () => '', writeText() {} },
+  clipboard: { readText: async () => '', writeText: async () => {}, read: async () => [], has: async () => false },   // Electron 44: assincrono, sem readImage/readBuffer
   globalShortcut: { register() {}, unregisterAll() {} },
   session: { defaultSession: { webRequest: { onHeadersReceived() {} }, setPermissionRequestHandler() {} } },
 };
@@ -37,7 +38,8 @@ const eletronFalso = {
 // intercepta o require de 'electron' e o os.homedir que o main usa pra achar a HOME
 const requireOriginal = Module.prototype.require;
 Module.prototype.require = function (nome) {
-  if (nome === 'electron') return eletronFalso;
+    if (nome === 'electron') return eletronFalso;
+    if (nome === './cockpit-ipc-security') return ipcConfiavel.modulo;
   if (nome === 'os') {
     const real = requireOriginal.call(this, 'os');
     // proxy: trocar so' o homedir sem copiar o resto (constants e' somente leitura)
@@ -64,7 +66,7 @@ Module.prototype.require = requireOriginal;
 const chamar = (canal, arg) => {
   const h = handlers.get(canal);
   if (!h) throw new Error('handler ausente: ' + canal);
-  return h({}, arg);
+  return h(ipcConfiavel.evento(), arg);
 };
 
 const CRED = path.join(HOME_FALSA, '.claude', '.credentials.json');

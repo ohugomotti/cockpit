@@ -86,6 +86,7 @@ globalThis.fetch = async (url, o) => {
 
 /* ---- Electron falso + carga do main de verdade ---- */
 const handlers = new Map();
+const ipcConfiavel = require('../testes/ipc-confiavel').criarIpcConfiavel();
 const eletronFalso = {
   app: {
     getPath: (q) => (q === 'userData' ? USERDATA : HOME_PC),
@@ -101,7 +102,7 @@ const eletronFalso = {
   shell: { openExternal() {}, openPath() {}, showItemInFolder() {} },
   Menu: { setApplicationMenu() {}, buildFromTemplate: () => ({}) },
   nativeTheme: { on() {} },
-  clipboard: { readText: () => '', writeText() {} },
+  clipboard: { readText: async () => '', writeText: async () => {}, read: async () => [], has: async () => false },   // Electron 44: assincrono, sem readImage/readBuffer
   globalShortcut: { register() {}, unregisterAll() {} },
   session: { defaultSession: { webRequest: { onHeadersReceived() {} }, setPermissionRequestHandler() {} } },
   crashReporter: { start() {} },
@@ -111,6 +112,7 @@ if (SH) {
   const requireOriginal = Module.prototype.require;
   Module.prototype.require = function (nome) {
     if (nome === 'electron') return eletronFalso;
+    if (nome === './cockpit-ipc-security') return ipcConfiavel.modulo;
     if (nome === 'os') {
       const real = requireOriginal.call(this, 'os');
       return new Proxy(real, { get: (alvo, k) => (k === 'homedir' ? () => HOME_PC : alvo[k]) });
@@ -130,7 +132,7 @@ const chamar = (canal, arg) => {
   if (carregou !== true) throw carregou;
   const h = handlers.get(canal);
   if (!h) throw new Error('handler ausente: ' + canal);
-  return h({}, arg);
+  return h(ipcConfiavel.evento(), arg);
 };
 const pcIntacto = () => {
   assert.equal(fs.readFileSync(CRED_PC, 'utf8'), TXT_PC, 'a credencial do PC foi tocada');
@@ -256,7 +258,7 @@ test('"Entrar com outra conta" escolhe painel do motor e do lugar certos, não o
 /* Leva 41 (B2, item 5 do adendo): o painel DESTE PC tambem ganhou tarja propria
    ("Entrar de novo", que abre o login daqui). Antes da B2 este teste provava
    que no PC nao saia tarja nenhuma. */
-test('erro de login num painel do servidor vira tarja "Entrar na conta da VPS"; no PC, "Entrar de novo" daqui', () => {
+test('erro de login num painel do servidor vira tarja "Entrar na conta da VPS"; no PC, "Entrar de novo" daqui', async () => {
   const { ctx, chamadas, painel } = telaDeContas({ nomeDoMotor: () => 'Claude' });
   for (const t of ['Not logged in · Please run /login', 'Invalid API key · Please run /login',
     'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}',
@@ -271,13 +273,13 @@ test('erro de login num painel do servidor vira tarja "Entrar na conta da VPS"; 
   assert.equal(local.acao, 'Entrar de novo');
   assert.match(local.texto, /neste PC/);
   assert.doesNotMatch(local.texto, /VPS|servidor/);
-  local.aoClicar();
+  assert.equal(await local.aoClicar(), false, 'abrir login não resolve o alerta');
   assert.deepEqual(chamadas, ['contaAcao:p2:login'], 'o login e o deste PC, no painel certo');
   assert.equal(ctx.avisarLoginDoServidor(vps, 'Not logged in · Please run /login'), true);
   const av = ctx.avisos[1];
   assert.equal(av.acao, 'Entrar na conta da VPS');
   assert.match(av.texto, /hugo@203\.0\.113\.10/);
-  av.aoClicar();
+  assert.equal(await av.aoClicar(), false, 'abrir login da VPS não resolve o alerta');
   assert.deepEqual(chamadas, ['contaAcao:p2:login', 'contaAcao:p1:login']);
 });
 

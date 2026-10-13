@@ -74,7 +74,11 @@ checa('recibo pedido ao Claude e ao Codex', (main.match(/## Recibo/g) || []).len
 checa('pedirTexto declarado uma vez so (a nova virou perguntarTexto)', (app.match(/^function pedirTexto\(/gm) || []).length === 1 && (app.match(/^function perguntarTexto\(/gm) || []).length === 1 && !/await pedirTexto\('/.test(app));
 checa('modal global tem gancho de fechamento (camera desliga no veu/Esc)', /let aoFecharModalGlobal = null;/.test(app) && /aoFecharModalGlobal = \(\) => \{ fechado = true; parar\(\);/.test(app) && /aoFecharModalGlobal = \(\) => fim\(null\);/.test(app));
 checa('quadro: foco dentro, Esc e aceleradores barrados, cena em arquivo', /focarQuadro\(\);/.test(app) && /if \(e\.key !== 'Escape' \|\| quadro\) return;/.test(app) && /if \(e\.key === 'Escape' && !quadro\)/.test(app) && /if \(quadro && a !== 'parar'\) return;\s*\n\s*if \(a === 'newPane'\)/.test(app) && /nome: 'quadro-' \+ P\.id/.test(app) && /quadro: P\.quadroArquivo \|\| \(\(P\.quadroCena/.test(app));
-checa('recibo: so titulo "Recibo" e so como fecho da fala; painel restaurado tambem ganha o cartao', /cabs\.find\(\(h\) => \/\^.{0,12}recibo\(.{0,40}turno\)\?.{0,24}\$\/i\.test\(h\.textContent/.test(app) && /nivel\(h\) <= nivel\(cab\)/.test(app) && (app.match(/marcarRecibo\(b\.el\);/g) || []).length >= 3);
+/* Tarefa 5 (26/09): a conversa reaberta pela lista e a restaurada passaram a
+   usar o MESMO desenho (desenharHistorico): 2 chamadas do marcarRecibo
+   cobrem os 3 caminhos (fala ao vivo + os dois). */
+checa('recibo: so titulo "Recibo" e so como fecho da fala; painel restaurado tambem ganha o cartao', /cabs\.find\(\(h\) => \/\^.{0,12}recibo\(.{0,40}turno\)\?.{0,24}\$\/i\.test\(h\.textContent/.test(app) && /nivel\(h\) <= nivel\(cab\)/.test(app) && (app.match(/marcarRecibo\(b\.el\);/g) || []).length >= 2
+  && /marcarRecibo\(b\.el\);/.test(pegarBloco(app, 'function desenharHistorico(')) && (app.match(/desenharHistorico\(P, msgs, \{ revisao \}\)/g) || []).length >= 2);
 // leva 41: a geracao passou a ser SO' da busca (igual as Rotinas) -- pintar e'
 // sincrono e nao invalida quem voa; a busca atrasada sai calada
 checa('torre: geracao contra busca em voo e linha de fora sem pointer', /const gen = \+\+torreGen;/.test(app) && /if \(gen !== torreGen\) return;\s*\n\s*torreAgentes\.buscando = false;/.test(app) && /else d\.classList\.add\('fora'\)/.test(app));
@@ -90,10 +94,12 @@ const ctxI = {
   ...globaisFalsos(), console, fs, path, Date,
   PASTA_INBOX: () => tmp,
   inboxVistos: new Set(),
+  inboxRestaurados: new Map(), inboxAnunciados: new Map(),
   inboxOuvinte: true,
   win: { isDestroyed: () => false, webContents: { isLoading: () => false, send: (canal, dados) => enviados.push({ canal, dados }) } },
 };
 vm.createContext(ctxI);
+for (const nome of ['arquivosInbox', 'parInbox', 'ocorrenciaInbox', 'itemInbox']) vm.runInContext(pegarBloco(main, 'function ' + nome + '('), ctxI);
 vm.runInContext(pegarBloco(main, 'function varrerInbox(', 'varrerInbox'), ctxI);
 fs.writeFileSync(path.join(tmp, 'telegram-1.txt'), 'Cria a página de captura', 'utf8');
 fs.writeFileSync(path.join(tmp, 'foto-1.jpg'), Buffer.from([1, 2, 3]));
@@ -160,7 +166,7 @@ const caixa = fs.mkdtempSync(path.join(os.tmpdir(), 'inbox-consumir-'));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'userdata-'));
 const gravados = {};
 const ctxH = {
-  ...globaisFalsos(), console, fs, path, Date,
+  ...globaisFalsos(), console, fs, path, Date, crypto: require('node:crypto'),
   EH_WIN: process.platform === 'win32',
   PASTA_INBOX: () => caixa,
   PROMPTS_PATH: () => path.join(userData, 'prompts.json'),
@@ -168,6 +174,7 @@ const ctxH = {
   app: { getPath: () => userData },
 };
 vm.createContext(ctxH);
+for (const nome of ['arquivosInbox', 'parInbox', 'ocorrenciaInbox', 'itemInbox']) vm.runInContext(pegarBloco(main, 'function ' + nome + '('), ctxH);
 const consumir = vm.runInContext(handlerDe('inbox:consumir'), ctxH);
 fs.writeFileSync(path.join(caixa, 'foto.png'), Buffer.from([1]));
 fs.writeFileSync(path.join(caixa, 'foto.txt'), 'legenda', 'utf8');

@@ -50,7 +50,7 @@
 .ck-app .co-health-error summary { cursor:pointer; color:var(--red); }
 .ck-app .co-health-error .co-error { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; }
 .co-visually-hidden { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip-path:inset(50%); white-space:nowrap; border:0!important; }
-.ck-app .quadro-top { min-height:44px; padding:8px 12px; flex-wrap:wrap; gap:8px; }
+.ck-app .quadro-top { min-height:44px; padding:8px 12px; flex-wrap:wrap; gap:8px; -webkit-app-region:no-drag; }
 .ck-app .quadro-dica { display:flex; gap:12px; font-size:11px; }
 .ck-app .quadro-dica>span { display:inline-flex; align-items:center; gap:4px; }
 .ck-app .quadro-dica svg { width:18px; height:18px; }
@@ -76,6 +76,9 @@
 }
 .ck-result-group { padding:12px 10px 5px; color:var(--fg-dim); font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
 .ck-model-context { margin-left:auto; font:10px var(--mono); color:var(--fg-dim); }
+/* Descrição por linha (Modelo/Permissões): só aparece com o Visual Mac ligado
+   (item 2 do ajuste de 27/09/2026); a lista clássica continua só com o nome. */
+.ck-choice-desc, .ck-mode-text { display:none; }
 .ck-effort-bars { display:inline-flex; align-items:flex-end; gap:5px; }
 .ck-effort-level { min-width:28px; min-height:34px; display:flex; justify-content:center; align-items:flex-end; padding:5px 8px; border:1px solid transparent; border-radius:5px; }
 .ck-effort-level>span { width:7px; background:var(--fg-dim); border-radius:2px; }

@@ -24,7 +24,7 @@ const checa = (nome, ok, det) => {
 let ultimoScript = '';
 let respostaFalsa = { out: '' };
 const ctx = {
-  ...globaisFalsos(), console, path, Buffer,
+  ...globaisFalsos(), console, path, Buffer, TextDecoder,
   // o helper unico de exec remoto vira um gravador: guarda o script e devolve o combinado
   execRemoto: async (_remoto, script) => { ultimoScript = script; return respostaFalsa; },
 };
@@ -41,8 +41,10 @@ function constDe(nome) {
   ctx[nome] = vm.runInContext('(' + main.slice(i + decl.length, fim) + ')', ctx);
   return ctx[nome];
 }
+// MSG_CAMINHO_DE_REDE e ehCaminhoDeRede: o verArquivoLocal passou a recusar caminho de rede antes de tocar no disco (R5-01)
 for (const n of ['IGNORE', 'PONTO_OK', 'escondido', 'ordemDaArvore', 'EXT_VIS_IMG',
-  'EXT_VIS_TXT', 'TETO_VIS_IMG', 'TETO_VIS_TXT', 'mimeDaImagem', 'chaveDoCache']) constDe(n);
+  'EXT_VIS_TXT', 'TETO_VIS_IMG', 'TETO_VIS_TXT', 'mimeDaImagem', 'chaveDoCache',
+  'MSG_CAMINHO_DE_REDE', 'ehCaminhoDeRede', 'EXT_VIS_DOC']) constDe(n);
 /* A sonda do find/base64 do GNU e' uma const de varias linhas E com ';' dentro
    do proprio texto do script -- o constDe corta no primeiro ';' e traria lixo.
    Entao o bloco inteiro entra de uma vez e se anuncia no contexto no fim. */
@@ -51,7 +53,8 @@ vm.runInContext(blocoSonda + '\nthis.SONDA_GNU = SONDA_GNU; this.AVISO_SEM_GNU =
 
 // o ramo LOCAL entra junto: e' com ele que o remoto tem que empatar
 ctx.fs = require('fs');
-for (const f of ['function qLinux(', 'function cdRemoto(', 'function qRemoto(', 'function registrosNul(',
+// leva 2 (UI 7.2-3/7.2-5): os dois ramos decidem o tipo pelo nome (tipoDoVisor) e o acento pelos bytes (textoDosBytes)
+for (const f of ['function tipoDoVisor(', 'function textoDosBytes(', 'function qLinux(', 'function cdRemoto(', 'function qRemoto(', 'function registrosNul(',
   'async function listDirRemoto(', 'async function varrerArquivosRemoto(', 'async function verArquivoRemoto(',
   'function verArquivoLocal(', 'function pontuarArquivos(']) vm.runInContext(pegarBloco(main, f, f), ctx);
 
@@ -158,6 +161,11 @@ async function main2() {
   const txt = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/app/leia.md');
   checa('texto volta decodificado', txt.tipo === 'texto' && txt.dados === 'oi servidor');
   checa('o teto de texto tambem e o mesmo (600 KB)', ultimoScript.includes(String(ctx.TETO_VIS_TXT)));
+  for (const ext of ['markdown', 'mdx', 'jsx', 'tsx', 'cjs', 'mjs', 'ps1', 'sql']) {
+    const codigo = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/app/arquivo.' + ext);
+    checa('o visor lê .' + ext + ' como texto, sem executar', codigo.tipo === 'texto' && codigo.dados === 'oi servidor');
+    checa('código .' + ext + ' conserva o teto de 600 KB', ultimoScript.includes(String(ctx.TETO_VIS_TXT)));
+  }
 
   respostaFalsa = { out: 'COCKPIT_TAM 900000000' + NL };
   const gordo = await ctx.verArquivoRemoto({ usuario: 'hugo', host: 'vps', chave: 'k' }, '~/filme.mp4');

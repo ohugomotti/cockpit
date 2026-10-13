@@ -104,7 +104,7 @@ test('link do login: o ConPTY move o cursor no lugar da quebra de linha e o link
 });
 
 /* ---------- janelaTerminal de verdade, num DOM de mentira ---------- */
-function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = true, confirma = true, erro, aoFechar, opcoes, run } = {}) {
+function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = true, confirma = true, erro, aoFechar, opcoes, run, saindo = false } = {}) {
   const els = new Map();
   const el = (sel) => {
     if (!els.has(sel)) {
@@ -147,15 +147,25 @@ function palco({ copiado = 'CODIGO-DO-PORTAL#estado', selecao = '', bracketed = 
     setTimeout: () => 0, clearTimeout() {},
   });
   vm.runInContext(pegarBloco(APP, 'function fecharTerminalEmSilencio('), ctx);
+  vm.runInContext(pegarBloco(APP, 'function cancelarSaidaDoModal('), ctx);
   vm.runInContext(pegarBloco(APP, 'function ajustarTerminal('), ctx);
   vm.runInContext(pegarBloco(APP, 'function janelaTerminal('), ctx);
   const listener = APP.slice(APP.indexOf('window.api.onTermEvent('));
   vm.runInContext(listener.slice(0, listener.indexOf('\n});') + 4), ctx);
   const painel = { id: 'p1', engine: 'claude', el: {} };
   ctx.panes.set(painel.id, painel);
+  if (saindo) { el('.p-modal').classList.add('ck-saindo'); el('.p-modal')._saidaTok = 8; }
   ctx.janelaTerminal(painel, 'ssh -t hugo@vps "claude auth login"', 'Entrar', aoFechar, opcoes);
   return { ctx, el, log, term: termo, painel };
 }
+
+test('janelaTerminal: abrir durante a saída cancela o fade anterior sem matar o terminal novo', () => {
+  const h = palco({ saindo: true });
+  assert.equal(h.el('.p-modal').classList.contains('ck-saindo'), false);
+  assert.equal(h.el('.p-modal')._saidaTok, 9);
+  assert.equal(h.ctx.termsVivos.size, 1);
+  assert.ok(h.term);
+});
 const eventoTecla = (o) => { const e = tecla(o); e.prevenido = 0; e.preventDefault = () => { e.prevenido++; }; e.stopPropagation = () => {}; return e; };
 
 test('janelaTerminal: Ctrl+V cola a area de transferencia UMA vez e nao manda ^V', async () => {
@@ -289,16 +299,19 @@ test('auditoria 3: clipboard:texto recusa texto acima de 1 MB e a tela avisa', a
   const i = MAIN.indexOf("ipcMain.handle('clipboard:texto'");
   assert.ok(i > 0);
   const handler = MAIN.slice(i, MAIN.indexOf("ipcMain.handle('clipboard:copiar'", i));
-  const rodar = (texto) => {
+  /* Electron 44: o clipboard do main e' assincrono (readText devolve Promise). Simular readText
+     sincrono deixava este teste verde com o colar do terminal quebrado. */
+  const assinatura = MAIN.includes('async function lerTextoCopiado(') ? 'async function lerTextoCopiado(' : 'function lerTextoCopiado(';
+  const rodar = async (texto) => {
     let h = null;
-    const ctx = { ipcMain: { handle: (n, fn) => { if (n === 'clipboard:texto') h = fn; } }, clipboard: { readText: () => texto } };
+    const ctx = { ipcMain: { handle: (n, fn) => { if (n === 'clipboard:texto') h = fn; } }, clipboard: { readText: async () => texto }, logMain() {} };
     vm.createContext(ctx);
-    vm.runInContext(pegarBloco(MAIN, 'function lerTextoCopiado(', 'lerTextoCopiado') + '\n' + handler, ctx);
-    return JSON.parse(JSON.stringify(h()));   // objeto de outro realm (vm)
+    vm.runInContext(pegarBloco(MAIN, assinatura, 'lerTextoCopiado') + '\n' + handler, ctx);
+    return JSON.parse(JSON.stringify(await h()));   // objeto de outro realm (vm)
   };
-  assert.deepEqual(rodar('abc'), { texto: 'abc' });
-  assert.deepEqual(rodar(''), { texto: '' });
-  const grande = rodar('x'.repeat(1024 * 1024 + 1));
+  assert.deepEqual(await rodar('abc'), { texto: 'abc' });
+  assert.deepEqual(await rodar(''), { texto: '' });
+  const grande = await rodar('x'.repeat(1024 * 1024 + 1));
   assert.equal(grande.texto, '');
   assert.equal(grande.erro, 'grande');
 
@@ -374,4 +387,67 @@ test('terminal de conta: Cancelar prevalece sobre exit zero posterior e descarte
 test('terminal de conta: falha ao iniciar solta o fluxo sem inventar exit zero', async () => {
   const fins = []; palco({ run: () => Promise.reject(new Error('FALHA_FICTICIA')), opcoes: { onExit: fim => fins.push(fim) } });
   await tique(); assert.equal(fins.length, 1); assert.equal(fins[0].code, null); assert.equal(fins[0].error, 'FALHA_FICTICIA');
+});
+
+/* Leva 5, T6 (R2-03): a tela preta prendia o teclado (o xterm fica com o Tab e o escGlobal ignora o Esc dentro dela).
+   Ctrl+Tab sai para os botões; Tab e Esc continuam do programa. Medida: Ctrl+Tab leva o foco para fora (antes não; depois sim). */
+test('janelaTerminal: Ctrl+Tab sai para o Cancelar, Ctrl+Shift+Tab para o ×; Tab e Esc continuam do programa (R2-03)', () => {
+  const { el, term } = palco();
+  const focados = [];
+  for (const sel of ['#tmCancela', '.mo-x']) el(sel).focus = () => focados.push(sel);
+  const e = eventoTecla({ key: 'Tab', code: 'Tab', ctrlKey: true });
+  assert.equal(term._tecla(e), false, 'o xterm não recebe o Ctrl+Tab');
+  assert.equal(e.prevenido, 1);
+  assert.equal(term._tecla(eventoTecla({ key: 'Tab', code: 'Tab', ctrlKey: true, shiftKey: true })), false);
+  assert.deepEqual(focados, ['#tmCancela', '.mo-x']);
+  assert.equal(term._tecla(eventoTecla({ key: 'Tab', code: 'Tab' })), true, 'Tab sozinho é do programa');
+  assert.equal(term._tecla(eventoTecla({ key: 'Escape', code: 'Escape' })), true, 'Esc é do programa');
+  assert.match(el('.modal-cx').innerHTML, /mo-sub">[^<]*Ctrl\+Tab sai da tela preta/, 'a dica do atalho');
+});
+
+test('janelaTerminal no login: Ctrl+Tab vai ao campo do código (R2-03)', () => {
+  const { el, term } = palco({ opcoes: { login: true } });
+  let foco = '';
+  el('.term-code-input').focus = () => { foco = 'código'; };
+  term._tecla(eventoTecla({ key: 'Tab', code: 'Tab', ctrlKey: true }));
+  assert.equal(foco, 'código');
+  assert.match(el('.mo-sub').textContent, /Ctrl\+Tab sai da tela preta/);
+});
+
+/* Rodada final da leva 5 (item 6): depois do Ctrl+Tab, o Esc, o × ou o Fechar fechavam a janelinha e o foco caía no body (o botão
+   focado sai da tela). Agora, se o foco estava dentro da janelinha, ele volta ao campo do painel (.p-input), sem rolar a tela.
+   O "dentro" é lido antes do term.dispose(), que tira a tela preta (e o foco dela) do DOM. */
+function palcoComFoco(onde, extra) {
+  const h = palco(extra);
+  /* rodada 2 da leva 5 (item 3): o foco só volta ao campo se a janelinha está mesmo fechando (hidden, ou ck-saindo no fade), porque
+     o aoFechar dos conectores a reabre. O fecharModal() {} do palco não escondia nada: aqui roda o de verdade (o DOM de mentira não
+     anima, então ela some na hora, como sem o fade). O fade e o conector estão em test/conectores-terminal-corrida.test.js. */
+  for (const nome of ['sairDoModal', 'fecharModal']) vm.runInContext(pegarBloco(APP, 'function ' + nome + '('), h.ctx);
+  const focos = [];
+  h.el('.p-input').focus = (o) => focos.push(o);
+  const dentro = h.el(onde === 'tela preta' ? '.term-tela' : onde);
+  const doc = { activeElement: onde === 'fora' ? h.el('.p-input') : dentro };
+  Object.assign(h.el('.p-modal'), { ownerDocument: doc, contains: (n) => n === dentro && onde !== 'fora' });
+  if (onde === 'tela preta') h.term.dispose = () => { doc.activeElement = null; };   // o xterm sai do DOM e leva o foco junto
+  return { ...h, focos };
+}
+for (const [como, fechar] of [['Fechar', (h) => h.el('#tmFecha').onclick()], ['×', (h) => h.el('.mo-x').onclick()],
+  ['Esc (tratarEsc chama o P._fecharTerm)', (h) => h.painel._fecharTerm()]]) {
+  test('janelaTerminal: fechar pelo ' + como + ' com o foco na janelinha devolve o foco ao campo do painel, sem rolar (final)', () => {
+    const h = palcoComFoco('#tmCancela');   // o Ctrl+Tab levou o foco ao Cancelar
+    fechar(h);
+    assert.equal(h.focos.length, 1, 'o foco volta ao .p-input (antes caía no body)');
+    assert.equal(h.focos[0] && h.focos[0].preventScroll, true);
+  });
+}
+test('janelaTerminal: foco na tela preta conta como dentro; foco fora da janelinha e o descarte em silêncio não mexem no foco (final)', () => {
+  const tela = palcoComFoco('tela preta');
+  tela.el('#tmFecha').onclick();
+  assert.equal(tela.focos.length, 1, 'o dentro é lido antes do dispose, que tira a tela preta do DOM');
+  const fora = palcoComFoco('fora');
+  fora.el('#tmFecha').onclick();
+  assert.equal(fora.focos.length, 0, 'o foco já estava em outro lugar: fica lá');
+  const silencio = palcoComFoco('#tmCancela', { opcoes: { onDiscard() {} } });
+  silencio.ctx.fecharTerminalEmSilencio(silencio.painel);   // um terminal novo vai tomar o lugar: o foco é dele
+  assert.equal(silencio.focos.length, 0);
 });

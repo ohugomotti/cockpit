@@ -363,7 +363,11 @@ test('achado 4: trocar modo/modelo/pasta no "Religo em N s" diz que cancelou a r
   assert.equal(D._avisouModo, false);
   assert.equal(D._religar, null);
   assert.equal(D._chip, true);
-  assert.equal(c2.cfg.defMode, 'plan');
+  /* Mudado de proposito na Tarefa 8 (26/09): antes esta linha esperava 'plan'
+     (o menu gravava todo modo escolhido como padrao dos chats novos). O brief
+     da Tarefa 8 manda o contrario: o Plano do Claude vale so' pra ESTE chat e
+     nunca vira o padrao -- o cfg.defMode fica como estava ('manual'). */
+  assert.equal(c2.cfg.defMode, 'manual');
   const deD = c2.notas.filter(n => n.id === 'd').map(n => n.t).join(' | ');
   assert.match(deD, /Cancelei a religação automática \(você trocou o modo\)/);
   assert.doesNotMatch(deD, /interrompida/);
@@ -426,11 +430,14 @@ test('achado 5: com a reserva ligada, a ultima resposta do Sonnet reserva nao de
   const ctx = vm.createContext({ cfg: { fallbackClaude: true } });
   vm.runInContext([constLista('MODELOS_CLAUDE'), constLinha('APELIDO_CLAUDE'), constLinha('COM_1M'), constLinha('RESERVA_CLAUDE'), recorte('modeloDoHistorico')].join('\n'), ctx);
   const m = (model) => ({ role: 'bot', text: 'x', model });
-  assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1'), m('claude-sonnet-5')]), 'claude-fable-5-1');
-  assert.equal(ctx.modeloDoHistorico([m('claude-opus-5'), m('claude-sonnet-5'), m('<synthetic>')]), 'claude-opus-5[1m]');
-  assert.equal(ctx.modeloDoHistorico([m('claude-sonnet-5')]), 'claude-sonnet-5', 'so Sonnet: e Sonnet');
+  // 08/10/2026: a reserva e' o Sonnet 5.5; o Sonnet 5 (a reserva de antes) continua contando como reserva nas conversas antigas
+  assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1'), m('claude-sonnet-5-5')]), 'claude-fable-5-1');
+  assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1'), m('claude-sonnet-5')]), 'claude-fable-5-1', 'conversa antiga: o Sonnet 5 era a reserva');
+  assert.equal(ctx.modeloDoHistorico([m('claude-opus-5'), m('claude-sonnet-5-5'), m('<synthetic>')]), 'claude-opus-5[1m]');
+  assert.equal(ctx.modeloDoHistorico([m('claude-sonnet-5-5')]), 'claude-sonnet-5-5', 'so Sonnet: e Sonnet');
+  assert.equal(ctx.modeloDoHistorico([m('claude-sonnet-5')]), 'claude-sonnet-5', 'so o Sonnet 5 antigo: e ele');
   ctx.cfg.fallbackClaude = false;
-  assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1'), m('claude-sonnet-5')]), 'claude-sonnet-5', 'sem reserva ligada, o Sonnet foi escolha sua');
+  assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1'), m('claude-sonnet-5-5')]), 'claude-sonnet-5-5', 'sem reserva ligada, o Sonnet foi escolha sua');
 });
 
 /* =====================================================================
@@ -502,8 +509,12 @@ test('achado 12: origem apagada ("No conversation found"): diz que a original su
    ===================================================================== */
 function ctxTitulo(resposta) {
   let solta;
+  /* Tarefa 6 (27/09): o podeGerarTituloAuto passou a perguntar o que conta como
+     pedido (saudacao e teste de conexao nao sao) ao arquivo compartilhado
+     src/renderer/nome-conversa.js (no app, window.NomeConversa pelo <script>) --
+     ele entra no contexto. O que os testes daqui provam e' o mesmo. */
   const c = ctxTela(['tituloCurto', 'soComandoOuContinue', 'tituloCurto3', 'podeGerarTituloAuto', 'iniciarTituloAuto', 'esquecerTituloAuto', 'aoNascerSessao', 'gravarNomeDoPainel',
-    'const MIN_PRA_APARAR', 'const PALAVRAS_DO_NOME'], { loadHist() {} });
+    'const MIN_PRA_APARAR', 'const PALAVRAS_DO_NOME'], { loadHist() {}, NomeConversa: require('../src/renderer/nome-conversa') });
   const i = APP.indexOf('const PALAVRA_VAZIA');
   vm.runInContext(APP.slice(i, APP.indexOf(']);', i) + 3).replace(/^const /, 'var '), c);
   c.window.api.tituloAuto = () => new Promise((r) => { solta = () => r({ titulo: resposta }); });
@@ -557,12 +568,18 @@ test('achado 14b: 1a mensagem "continue"//comando e o aiTitle deu nome: a demand
   assert.match(bn, /P\._tituloDe = ehRamo \? null : 'ai'/);
   assert.match(recorte('send'), /P\.titulo = tituloCurto\(text\); P\._tituloDe = 'curto';/);
 });
-test('achado 14c: interruptor "Dar nome automático às conversas novas" nos Ajustes (Painéis e conversas) -> cfg.tituloAuto, ligado por padrao', () => {
+test('achado 14c: interruptor "Dar nome automático às conversas e aos agentes" nos Ajustes (Painéis e conversas) -> cfg.tituloAuto, ligado por padrao', () => {
   const html = lerFonte('renderer', 'index.html');
   const g = html.indexOf('<h3 class="aj-titulo">Painéis e conversas</h3>');
   const fim = html.indexOf('</section>', g);
   const grupo = html.slice(g, fim);
-  assert.match(grupo, /<label class="chave"><input type="checkbox" id="chkTituloAuto"><span><span class="aj-nome">Dar nome automático às conversas novas<\/span><span class="aj-desc">Usa o Haiku do Claude pra resumir a 1ª mensagem em 3 palavras — vale pra todos os motores\.<\/span><\/span><\/label>/);
+  /* Tarefa 6 (27/09), mudado de proposito: o texto dizia "conversas novas" e
+     "resumir a 1ª mensagem em 3 palavras" (e tinha travessao). Agora o nome
+     acompanha o trabalho ao longo da conversa, de 1 a 5 palavras, e o nome dado
+     por voce nunca e' trocado. A chave (cfg.tituloAuto) e' a mesma. */
+  // Leva final: o mesmo interruptor tambem controla nomes dos agentes; o rotulo explicita isso.
+  assert.match(grupo, /<label class="chave"><input type="checkbox" id="chkTituloAuto"><span><span class="aj-nome">Dar nome automático às conversas e aos agentes<\/span><span class="aj-desc">O Haiku do Claude dá o nome e o ajusta ao longo da conversa, conforme o trabalho\. Nome dado por você nunca é trocado\. Vale pra todos os motores\.<\/span><\/span><\/label>/);
+  assert.doesNotMatch(grupo.slice(grupo.indexOf('id="chkTituloAuto"'), grupo.indexOf('</label>', grupo.indexOf('id="chkTituloAuto"'))), /—/, 'texto de tela sem travessao');
   // boot: le com padrao ligado e grava a troca
   const i = APP.indexOf("const chkTit = $('#chkTituloAuto');");
   assert.ok(i > 0);
@@ -647,5 +664,9 @@ test('achado 17: .excalidraw.md com cena em json abre no quadro; comprimido avis
    18) historico reaberto/restaurado com caminho clicavel
    ===================================================================== */
 test('achado 18: conversa reaberta pela lista e painel restaurado passam o texto pelo linkarArquivos, como a fala ao vivo', () => {
-  for (const [f, corpo] of [['openSession', recorte('openSession')], ['restaurarPaineisMiolo', restaurarMiolo()]]) assert.match(corpo, /desenharBlocosExcalidraw\(P, b\.el\);\s*linkarArquivos\(P, b\.el\); marcarLinksWeb\(b\.el\); botoesDeCodigo\(b\.el\);/, f);
+  /* Tarefa 5 (26/09): os dois lacos de desenho viraram UM, o
+     desenharHistorico, e os dois chamam ele. O passo provado continua o
+     mesmo: a resposta reaberta passa pelo linkarArquivos como a fala ao vivo. */
+  assert.match(recorte('desenharHistorico'), /desenharBlocosExcalidraw\(P, b\.el\);\s*linkarArquivos\(P, b\.el\); marcarLinksWeb\(b\.el\); botoesDeCodigo\(b\.el\);/);
+  for (const [f, corpo] of [['openSession', recorte('openSession')], ['restaurarPaineisMiolo', restaurarMiolo()]]) assert.match(corpo, /desenharHistorico\(P, msgs, \{ revisao \}\)/, f);
 });

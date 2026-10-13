@@ -19,7 +19,7 @@ function funcao(nome) {
 }
 
 function carregar(nomes, extras = {}) {
-  const ctx = vm.createContext({ ...extras });
+  const ctx = vm.createContext({ window: { CockpitModels: require('../src/renderer/model-presentation') }, ...extras });
   vm.runInContext(nomes.map(funcao).join('\n'), ctx);
   return ctx;
 }
@@ -188,5 +188,7 @@ test('catálogo remoto pertence ao painel e destino, sem herdar modelos locais',
  const p={engine:'codex',model:'servidor',uiCodexModels:[{id:'servidor',efforts:['low']}],uiCodexModelsScope:JSON.stringify(['qa','vps-a',22,'key'])};
  assert.equal(ctx.modeloAtual(p).id,'servidor');assert.equal(ctx.modeloAtual(p).efforts[0],'low');
  remote={...remote,host:'vps-b'};assert.equal(ctx.modeloAtual(p).efforts.length,0);
- remote=null;assert.equal(ctx.modeloAtual(p).id,'local');
+ remote=null;assert.equal(ctx.modeloAtual(p).id,'servidor');
+ assert.equal(ctx.modeloAtual(p).preserved,true);
+ assert.equal(ctx.modelosDe(p).some(m=>m.id==='local'),true);
 });

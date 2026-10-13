@@ -164,14 +164,20 @@ function criarVigiaDeTurno(opts) {
      comecando por "You've hit your limit" (ele citando a frase) -- so' a que o
      main marcou erroDoCli (o CLI a escreveu como erro de API). */
   const limiteDoTurno = new Map();   // paneId -> { lim, avisado }
+  /* Tarefa 9: quando comecou o turno de cada painel. Fica depois do fim (o robo
+     em segundo plano grava depois do turno): o desfazer do Write so' confia no
+     "antes" de arquivo sem mexida desde o comeco do turno. */
+  const inicios = new Map();   // paneId -> ms
   const dado = (paneId) => { if (!info.has(paneId)) info.set(paneId, {}); return info.get(paneId); };
   return {
     registrarPainel(paneId, extra) { Object.assign(dado(paneId), extra || {}); },
-    ligar(paneId) { emTurno.set(paneId, Date.now()); limiteDoTurno.delete(paneId); },
+    ligar(paneId) { const agora = Date.now(); emTurno.set(paneId, agora); inicios.set(paneId, agora); limiteDoTurno.delete(paneId); },
     desligar(paneId) { emTurno.delete(paneId); },
     esta(paneId) { return emTurno.has(paneId); },
+    // o comeco do turno em andamento; parado, o do ultimo turno; 0 = nunca ligou
+    inicioDoTurno(paneId) { return inicios.get(paneId) || 0; },
     // o painel fechou (stop): o que se sabia dele nao vale mais
-    esquecer(paneId) { emTurno.delete(paneId); info.delete(paneId); limiteDoTurno.delete(paneId); },
+    esquecer(paneId) { emTurno.delete(paneId); info.delete(paneId); limiteDoTurno.delete(paneId); inicios.delete(paneId); },
     passar(paneId, kind, data) {
       if (kind === 'turn-end') { emTurno.delete(paneId); return data; }
       if (kind === 'sessao') { if (data && data.id) dado(paneId).sessaoId = String(data.id); return data; }

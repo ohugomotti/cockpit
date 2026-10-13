@@ -19,7 +19,7 @@ async function run(name,bin,args){
 }
 (async()=>{
  const files=fs.readdirSync('test').filter(f=>f.endsWith('.test.js')).sort().map(f=>'test/'+f);
- await run('node',process.execPath,['--test','--test-reporter=tap','--test-concurrency=1',...files]);
+ await run('node',process.execPath,['--test','--test-reporter=tap','--test-concurrency=2',...files]);
  await run('legado',process.execPath,['testes/rodar-tudo.js']);
  await run('audio-python','C:/Users/hugom/Projetos-Codex/cockpit-modernizacao-20260907/.graphify-venv/Scripts/python.exe',['-B','test/test_ouvinte_protocol.py']);
  const syntax=[];for(const {file}of before.filter(f=>f.file.endsWith('.js')&&!f.file.includes('/vendor/'))){const p=cp.spawnSync(process.execPath,['--check',file],{encoding:'utf8',windowsHide:true});syntax.push({file,passed:p.status===0,...(p.status===0?{}:{error:p.stderr||p.error?.message})});}

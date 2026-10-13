@@ -88,7 +88,7 @@ const CLAUDE = [
   { id: 'claude-haiku-4-5-20251001', nome: 'Haiku 4.5', efforts: ['low', 'medium', 'high'], padraoEffort: 'medium' },
 ];
 
-function montar({ api = {}, remoto = null, codex = CODEX, painel = {} } = {}) {
+function montar({ api = {}, remoto = null, codex = CODEX, painel = {}, semBotao = false } = {}) {
   const document = criarDocumento();
   const chamadas = { start: [], review: [], models: 0 };
   let ouvinteDebate = null;
@@ -104,7 +104,14 @@ function montar({ api = {}, remoto = null, codex = CODEX, painel = {} } = {}) {
   const P = { id: 'p1', engine: 'codex', cwd: 'C:\\Projetos\\prev-ia', abaId: 'a', hist: [{ quem: 'Você', texto: 'oi' }, { quem: 'Codex', texto: 'olá' }], el: new No('section', document), ...painel };
   const inp = new No('textarea', document); inp.className = 'p-input'; inp.value = '';
   const fechar = new No('button', document); fechar.className = 'p-close';
-  P.el.append(inp, fechar); document.body.append(P.el);
+  /* leva 5i: a barra do template de verdade tem o ⚖ Debater FIXO na caixa da direita (.cmp-dir), antes do ■; o collaboration.js só marca o estado dele.
+     semBotao: um painel de molde antigo, sem o botão (nada deve quebrar) */
+  const barra = new No('div', document); barra.className = 'cmp-bar';
+  const dir = new No('div', document); dir.className = 'cmp-dir';
+  const parar = new No('button', document); parar.className = 'p-stop';
+  if (!semBotao) { const debate = new No('button', document); debate.className = 'cb p-debate'; debate.title = 'Debater com Codex e Claude'; dir.append(debate); }
+  dir.append(parar); barra.append(dir);
+  P.el.append(inp, fechar, barra); document.body.append(P.el);
   const panes = new Map([[P.id, P]]);
   const EF_PT = { minimal: 'Mínimo', low: 'Leve', medium: 'Médio', high: 'Alto', xhigh: 'Extra alto', max: 'Máximo', ultra: 'Ultra' };
   const ctx = { document, window: { api: apiBase }, panes, panesFundo: new Map(), MODELOS_CODEX: codex, MODELOS_CLAUDE: CLAUDE,
@@ -242,17 +249,62 @@ test('rodando: status "Rodada 1 de 2 · Codex respondendo", só Interromper; con
   assert.equal(visiveis().includes('Interromper'), false);
 });
 
-test('botão do painel: ícone + rótulo; rodando = classe ativo sem trocar o texto', async () => {
+/* Leva 5i (seção 4 da spec): o Debater é um botão FIXO da barra (⚖, no index.html, o clique é ligado pelo app.js) e o botão temporário que nascia antes do ■
+   com o debate rodando (leva 4, UI 3.1) se FUNDIU com ele. O que o collaboration.js faz agora é só marcar o estado "rodando" no ⚖ de sempre.
+   Nenhum nó entra nos assert: um assert que falha com um nó do DOM de mentira tenta mostrar o objeto inteiro (já derrubou o PC, 08/10); aqui se compara
+   booleano, texto e quantidade. */
+test('botão do painel: o ⚖ fixo ganha o estado "rodando" com o debate rodando e volta ao normal quando ele acaba; nenhum botão novo nasce (leva 5i)', async () => {
   const h = montar();
   const b = h.P.el.querySelector('.p-debate');
-  assert.match(b.innerHTML, /data-ic="messages-square"/);
-  assert.match(b.innerHTML, /<span class="pd-rot">Debater<\/span>/);
-  const antes = b.innerHTML;
+  const botoesAntes = h.P.el.querySelectorAll('button').length;
+  assert.equal(b.classes.has('rodando'), false, 'parado: sem estado');
+  assert.equal(b.title, 'Debater com Codex e Claude');
   h.evento({ id: 'd9', paneId: 'p1', status: 'running', messages: [] });
-  assert.equal(b.classes.has('ativo'), true);
-  assert.equal(b.innerHTML, antes);
+  assert.ok(h.P.el.querySelector('.p-debate') === b, 'é o MESMO botão da barra, não um segundo');
+  assert.equal(h.P.el.querySelectorAll('.p-debate').length, 1);
+  assert.equal(h.P.el.querySelectorAll('button').length, botoesAntes, 'nenhum botão temporário nasce');
+  assert.equal(b.classes.has('rodando'), true);
+  assert.equal(b.title, 'Debate em andamento — clique para acompanhar');
+  assert.equal(b.getAttribute('aria-label'), 'Debate em andamento — clique para acompanhar');
+  assert.equal(b.innerHTML, '', 'o desenho (o ícone da balança) é do app.js: o collaboration.js não escreve texto nem ponto dentro do botão');
   h.evento({ id: 'd9', paneId: 'p1', status: 'completed', messages: [] });
-  assert.equal(b.classes.has('ativo'), false);
+  assert.equal(b.classes.has('rodando'), false, 'terminou: volta ao normal');
+  assert.equal(b.title, 'Debater com Codex e Claude');
+  assert.equal(b.getAttribute('aria-label'), 'Debater com Codex e Claude');
+  assert.equal(h.P.el.querySelectorAll('button').length, botoesAntes, 'e o botão continua lá: fixo');
+});
+
+test('botão do painel: eventos repetidos do debate rodando não criam botão nenhum, e qualquer fim (concluído, falhou, interrompido) tira o estado (leva 5i)', async () => {
+  const h = montar();
+  const b = h.P.el.querySelector('.p-debate');
+  for (let i = 0; i < 3; i++) h.evento({ id: 'd9', paneId: 'p1', status: 'running', messages: [] });
+  assert.equal(h.P.el.querySelectorAll('.p-debate').length, 1);
+  assert.equal(b.classes.has('rodando'), true);
+  for (const fim of ['failed', 'completed', 'interrupted']) {
+    h.evento({ id: 'd9', paneId: 'p1', status: 'running', messages: [] });
+    assert.equal(b.classes.has('rodando'), true, fim + ': rodando de novo');
+    h.evento({ id: 'd9', paneId: 'p1', status: fim, messages: [] });
+    assert.equal(b.classes.has('rodando'), false, fim + ': tira o estado');
+  }
+  h.evento({ id: 'd9', paneId: 'p1', status: 'completed', messages: [] });   // fim sem estado ligado: não quebra
+  assert.equal(b.classes.has('rodando'), false);
+  assert.equal(h.P.el.querySelectorAll('.p-debate').length, 1);
+});
+
+test('botão do painel: painel de molde antigo, sem o ⚖ na barra, não quebra com o debate rodando e acabando; o P guarda o debate do mesmo jeito (leva 5i)', async () => {
+  const h = montar({ semBotao: true });
+  assert.equal(h.P.el.querySelectorAll('.p-debate').length, 0);
+  assert.doesNotThrow(() => h.evento({ id: 'd9', paneId: 'p1', status: 'running', messages: [] }));
+  assert.equal(h.P.el.querySelectorAll('.p-debate').length, 0, 'e não nasce um botão temporário no lugar (a fusão acabou com ele)');
+  assert.equal(h.P.debateId, 'd9');
+  assert.doesNotThrow(() => h.evento({ id: 'd9', paneId: 'p1', status: 'completed', messages: [] }));
+});
+
+test('o collaboration.js não cria mais botão nenhum na barra: sem o texto "Debater" nem o ponto de antes, nem button(…, "p-debate") (leva 5i)', () => {
+  assert.doesNotMatch(FONTE, /button\('', 'p-debate'/, 'o botão temporário saiu');
+  assert.doesNotMatch(FONTE, /pd-rot|pd-ponto/, 'o rótulo e o ponto do botão temporário saíram');
+  assert.doesNotMatch(FONTE, /classList\.add\('ativo'\)/, 'e o estado agora é o "rodando"');
+  assert.match(FONTE, /classList\.toggle\('rodando', !!rodando\)/);
 });
 
 test('debate de OUTRO painel aberto pelo seletor não troca o debate deste painel', async () => {
@@ -275,17 +327,18 @@ test('o debate recém-iniciado entra no seletor sem reabrir o diálogo', async (
 test('apagar uma aba para o debate de cada painel dela', async () => {
   const { pegarBloco } = require('../testes/raiz');
   const app = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
-  const parados = [], parouPainel = [];
+  const parados = [], parouPainel = [], limpos = [];
   const fundo = new Map([['p1', { id: 'p1', abaId: 'velha', debateId: 'deb-1', engine: 'codex' }], ['p2', { id: 'p2', abaId: 'outra', debateId: 'deb-2', engine: 'claude' }]]);
   const abas = [{ id: 'velha', nome: 'Velha' }, { id: 'outra', nome: 'Outra' }];
   const ctx = { cfg: { abaAtiva: 'outra', abas }, panesFundo: fundo, confirm: () => true, abasLocais: () => ctx.cfg.abas,
-    trocarAbaLocal: async () => {}, matarTerminaisDoPainel: () => {}, pintarAbasLocal: () => {}, clearInterval: () => {},
+    trocarAbaLocal: async () => {}, matarTerminaisDoPainel: () => {}, pintarAbasLocal: () => {}, clearInterval: () => {}, clearTimeout: () => {}, pararIrProFim: p => limpos.push(p.id),
     window: { api: { debateStop: async id => parados.push(id), paneStop: async p => parouPainel.push(p.paneId), setConfig: () => {} } } };
   vm.createContext(ctx);
   vm.runInContext(pegarBloco(app, 'async function apagarAbaLocal(', 'apagarAbaLocal'), ctx);
   await ctx.apagarAbaLocal(abas[0]);
   assert.deepEqual(parados, ['deb-1']);
   assert.deepEqual(parouPainel, ['p1']);
+  assert.deepEqual(limpos, ['p1']);
 });
 
 test('botão só com ícone em painel estreito (@container no fim do style.css, com .pane-hd)', () => {

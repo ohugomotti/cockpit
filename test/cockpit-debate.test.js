@@ -266,6 +266,100 @@ test('linha de roteamento "Vou usar: …" do começo e rodapé do fim saem; "Use
   assert.equal(semRodape('Vou usar: só isso'), 'Vou usar: só isso');   // sem mais nada, nao apaga a fala inteira
 });
 
+/* Leva 5f (07/10): o rodape do CLAUDE.md/AGENTS.md mudou de "Use: [h5]" para "Use: <emoji da familia> <sigla> <anel de peso>"
+   (Claude: "Use: 🪶 S5.5 ◑"; Codex: "Use: ⭐ GPT-6 Astra ◕"; os bots escrevem so' emoji + sigla). O filtro so' conhecia "[h5]" e o nome
+   de modelo sem emoji nem anel: o rodape novo passava e o outro participante lia "Use: ..." como parte da fala. A mesma regra mora
+   no interpretarSaida do nome automatico (src/titulo-auto.js). */
+const RODAPES_USE_NOVOS = [
+  'Use: 🪶 S5.5 ◑', 'Use: 🎼 O5.5 ◕', 'Use: 🍃 H5 ◔', 'Use: 🦊 F5.1 ●',
+  'Use: ⭐ GPT-6 Astra ◕', 'Use: 🌙 GPT-6 Luna ◔', 'Use: ☀\uFE0F GPT-6.1 Sol ◑', 'Use: ☀ GPT-6.1 Sol ◑', // o mesmo sol, com e sem o seletor U+FE0F
+  'Use: 🌍 GPT-5.6 Terra ◑',
+];
+const RODAPES_USE_SO_EMOJI_E_SIGLA = ['Use: 🪶 S5.5', 'Use: 🍃 H5', 'Use: 🎼 O5', 'Use: 🦊 F5.1'];
+const RODAPES_USE_EM_NEGRITO = ['**Use: 🪶 S5.5 ◑**', '*Use: 🎼 O5.5 ◕*', '__Use: ⭐ GPT-6 Astra ◕__', '**Use: 🪶 S5.5**', '> Use: 🍃 H5 ◔'];
+const RODAPES_USE_ANTIGOS = ['Use: [s5]', 'Use: [h5]', 'Use: o5.5', 'Use: h5', 'Use: GPT-6 Astra', '**Use: Claude Opus 5**'];
+const RODAPES_USE = [...RODAPES_USE_NOVOS, ...RODAPES_USE_SO_EMOJI_E_SIGLA, ...RODAPES_USE_EM_NEGRITO, ...RODAPES_USE_ANTIGOS];
+
+test('semRodape: o rodapé "Use:" novo (emoji + sigla + anel), em negrito ou só com emoji e sigla, e o antigo saem do FIM da fala', () => {
+  const { semRodape } = require('../src/cockpit-debate');
+  for (const rodape of RODAPES_USE) {
+    const msg = JSON.stringify(rodape);
+    assert.equal(semRodape('Proposta concreta.\n\n' + rodape), 'Proposta concreta.', msg);
+    assert.equal(semRodape('Proposta concreta.\n' + rodape + '\n\n'), 'Proposta concreta.', msg + ' (com linhas em branco depois)');
+    assert.equal(semRodape('Proposta concreta.\r\n\r\n' + rodape + '\r\n'), 'Proposta concreta.', msg + ' (CRLF)');
+    assert.equal(semRodape('Vou usar: leitura direta dos arquivos.\n\nProposta concreta.\n\n' + rodape), 'Proposta concreta.', msg + ' (com a linha de roteamento no começo)');
+  }
+});
+
+test('semRodape: frase que só COMEÇA com "Use:" fica; rodapé no meio ou no começo do texto fica; só o do fim sai', () => {
+  const { semRodape } = require('../src/cockpit-debate');
+  for (const frase of ['Use: o comando abaixo para instalar.', 'Use: S5.5 quando precisar', 'Use: `npm test`', 'Use: 🪶 S5.5 ◑ para este caso',
+    'Use: o5.5 como referência', 'Use: [s5] como exemplo de rodapé', 'Use: ◑', 'Use: 🪶']) {
+    const texto = 'Resposta.\n\n' + frase;
+    assert.equal(semRodape(texto), texto, frase);
+  }
+  const meio = 'Antes.\nUse: 🪶 S5.5 ◑\nDepois.';
+  assert.equal(semRodape(meio), meio, 'no meio do texto não é rodapé');
+  assert.equal(semRodape(meio + '\n\nUse: 🪶 S5.5 ◑'), meio, 'o do meio fica e só o do fim sai');
+  assert.equal(semRodape('Use: 🪶 S5.5 ◑\nDepois.'), 'Use: 🪶 S5.5 ◑\nDepois.', 'no começo do texto também não');
+});
+
+/* Leva 5f, auditoria rodada 2: a sigla do rodapé era "[hsof]\d+(?:\.\d+)?", ou seja, h/s/o/f com QUALQUER número. "Use: S3" (o bucket da
+   Amazon), "Use: O365", "Use: H100" (a GPU), "Use: H2" (a empresa do Hugo) e "Use: F1" no fim da fala sumiam: o outro participante nunca lia
+   a recomendação. Agora a sigla é a de um modelo de verdade: h/s/o/f + versão de 4 a 9 (+ ".dígito"). A mesma regra mora no RODAPE_USE do
+   nome automático (src/titulo-auto.js). */
+test('semRodape: "Use: S3", "Use: O365", "Use: H100", "Use: H2" e "Use: F1" no fim da fala são fala de verdade e ficam; a sigla de modelo segue saindo (leva 5f)', () => {
+  const { semRodape } = require('../src/cockpit-debate');
+  for (const fala of ['Use: S3', 'Use: O365', 'Use: H100', 'Use: H2', 'Use: F1']) {
+    for (const forma of [fala, '**' + fala + '**', '> ' + fala]) {
+      const texto = 'Recomendo o bucket.\n\n' + forma;
+      assert.equal(semRodape(texto), texto, JSON.stringify(forma));
+    }
+  }
+  for (const rodape of ['Use: H5', 'Use: 🪶 S5.5 ◑', 'Use: 🎼 O5.5 ◕', 'Use: 🦊 F5.1 ●', 'Use: [s5]', 'Use: o5.5']) {
+    assert.equal(semRodape('Recomendo o bucket.\n\n' + rodape), 'Recomendo o bucket.', rodape);
+  }
+});
+
+/* Leva 5f, auditoria rodada 2: o prefixo do rodapé era "\n[ \t]*[*_>]*[ \t]*Use:", com DOIS "[ \t]*" separados por um "[*_>]*" que pode ser vazio. Numa
+   corrida de N espaços depois de uma quebra de linha a regex testava as N²/2 maneiras de repartir os espaços entre os dois (80 mil caracteres: 2,8 s,
+   e o debate inteiro esperando). Agora é "\n[ \t]*(?:[*_>]+[ \t]*)?Use:": a mesma linguagem, em tempo linear. */
+test('semRodape: 100 mil espaços depois de uma quebra de linha levam menos de 100 ms (tempo linear, não quadrático); o recuo e as marcas do rodapé seguem valendo (leva 5f)', () => {
+  const { semRodape } = require('../src/cockpit-debate');
+  semRodape('aquece\n  Use: H5');   // a 1ª execução compila as regex
+  for (const unidade of [' ', '\t ']) {
+    const texto = 'Proposta concreta.\n' + unidade.repeat(100000 / unidade.length) + 'e mais texto.';
+    let melhor = Infinity, saida;
+    for (let i = 0; i < 3 && melhor >= 100; i++) {   // o melhor de até 3: um tranco da máquina não reprova, e o retrocesso quadrático passa de 1 s em todas
+      const ini = process.hrtime.bigint();
+      saida = semRodape(texto);
+      melhor = Math.min(melhor, Number(process.hrtime.bigint() - ini) / 1e6);
+    }
+    assert.ok(melhor < 100, 'levou ' + melhor.toFixed(1) + ' ms em ' + texto.length + ' caracteres de ' + JSON.stringify(unidade));
+    assert.equal(saida, texto, 'a fala sem rodapé sai inteira');
+  }
+  // a linguagem aceita é a mesma de antes: recuo (espaço ou tab), as marcas de negrito, itálico e citação, e espaços entre elas e o "Use:"
+  for (const rodape of ['  Use: H5', '\tUse: H5', '>Use: H5', ' > Use: H5', '**Use: H5**', '  **  Use: H5  **', '_>*Use: 🪶 S5.5 ◑', ' \t>Use: 🎼 O5.5 ◕']) {
+    assert.equal(semRodape('Proposta concreta.\n' + rodape), 'Proposta concreta.', JSON.stringify(rodape));
+  }
+  // marcas separadas por espaço ("* *", "> **") nunca valeram: a linha continua na fala
+  for (const nao of ['* *Use: H5', '> **  Use: H5']) {
+    assert.equal(semRodape('Proposta concreta.\n' + nao), 'Proposta concreta.\n' + nao, JSON.stringify(nao));
+  }
+});
+
+test('rodapé novo ("Use: ⭐ GPT-6 Astra ◕", "**Use: 🎼 O5.5 ◕**") sai da fala gravada e do prompt do outro participante', async t => {
+  const calls = [];
+  const { manager } = fixture(t, async o => { calls.push(o); return { text: o.engine === 'codex' ? 'Proposta concreta.\n\nUse: ⭐ GPT-6 Astra ◕' : 'Contesto.\n\n**Use: 🎼 O5.5 ◕**' }; });
+  const s = manager.start(input({ first: 'codex' }));
+  const fim = await complete(manager, s.id);
+  assert.equal(fim.status, 'completed');
+  assert.equal(fim.messages[0].text, 'Proposta concreta.');
+  assert.equal(fim.messages[1].text, 'Contesto.');
+  assert.match(calls[1].prompt, /### Codex\nProposta concreta\./);
+  assert.doesNotMatch(calls[1].prompt, /Astra ◕/);
+});
+
 test('cada fala grava fim, duração, esforço efetivo, tokens e o que leu', async t => {
   const { manager } = fixture(t, async o => {
     o.onActivity({ kind: 'lendo', ferramenta: 'Read', alvo: 'src/a.js', leu: 'src/a.js' });

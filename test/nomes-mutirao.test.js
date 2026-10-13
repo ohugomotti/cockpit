@@ -297,6 +297,9 @@ test('mutirao: bandeiras da linha de comando', () => {
   const o = M.lerArgumentos(['--dias', '14', '--limite', '30', '--robos']);
   assert.equal(o.dias, 14); assert.equal(o.limite, 30); assert.equal(o.robos, true); assert.equal(o.simular, false);
   assert.equal(M.lerArgumentos(['--dias', 'abacaxi']).dias, M.DIAS_PADRAO, 'valor torto volta pro padrao');
+  // Tarefa 6 (27/09): --help so' mostra o uso (antes caia no mutirao de verdade: chamava o modelo e gravava)
+  assert.equal(M.lerArgumentos(['--help']).ajuda, true);
+  assert.match(M.USO, /--simular/);
 });
 
 /* o titulo tem que sair IGUAL ao da tela: se alguem escrever um segundo prompt
@@ -308,10 +311,16 @@ test('mutirao: usa o gerador do app, sem prompt proprio nem pos-processamento pr
   assert.ok(!src.includes('EXATAMENTE 3 palavras'), 'prompt proprio: nao');
   assert.ok(!/function\s+posProcessar/.test(src), 'pos-processamento proprio: nao');
   assert.ok(!src.includes('claude-haiku'), 'o modelo e escolha do titulo-auto.js, nao daqui');
-  // e o dep entregue ao gerador tem tudo que o rodarUmaVez pede
+  /* Tarefa 6 (27/09), mudado de proposito: o gerador do app passou pro executor
+     unico do claude -p rapido (src/claude-rapido.js: pedido pelo stdin, ambiente
+     limpo, so' com a assinatura) -- a emenda do plano de 26/09. O dep entregue ao
+     gerador agora e' esse executor (o spawn, o claude, o ambiente e o settings
+     sao dele); antes eram as pecas do executor antigo do titulo-auto.js
+     (spawn/bin/env/matar/arqSettings/cwd), que nao existe mais. */
   const dep = M.dependencias(RAIZ);
-  for (const k of ['spawn', 'bin', 'env', 'matar', 'arqSettings', 'cwd']) assert.ok(dep[k], 'falta dep.' + k);
-  assert.deepEqual(JSON.parse(fs.readFileSync(dep.arqSettings(), 'utf8')), { disableAllHooks: true, alwaysThinkingEnabled: false });
+  assert.ok(dep.claudeRapido, 'falta dep.claudeRapido');
+  for (const k of ['perguntar', 'cancelar', 'contaDeAssinatura']) assert.equal(typeof dep.claudeRapido[k], 'function', 'falta claudeRapido.' + k);
+  assert.match(src, /criarClaudeRapido\(\{/, 'pelo executor unico, sem spawn proprio');
 });
 
 /* =====================================================================
@@ -339,6 +348,10 @@ function telaDoMotor() {
       sessionTitulo: async () => '',
     } },
     $: () => null, loadHist: () => {}, savePanes: () => {}, pintarNome: () => {}, remotoDoPane: () => null,
+    /* Tarefa 6 (27/09): o que conta como pedido mora no arquivo compartilhado
+       src/renderer/nome-conversa.js (no app, window.NomeConversa pelo <script>);
+       o podeGerarTituloAuto pergunta a ele. */
+    NomeConversa: require('../src/renderer/nome-conversa'),
     setTimeout, clearTimeout, Promise, Date, Math, String, JSON, Object, Array, Set, Map, RegExp, console,
   });
   const i = APP.indexOf('const PALAVRA_VAZIA'), j = APP.indexOf('function tituloCurto(');
@@ -436,4 +449,79 @@ test('main: na lista do Codex o nome de 3 palavras do Cockpit vence o nome que o
   assert.equal(l.title, 'primeira mensagem do arquivo');
   assert.equal(l.tituloAuto, undefined);
   assert.equal(l.id, 'thread-1', 'a chave do nomes.json e o id de dentro do arquivo');
+});
+
+/* =====================================================================
+   Rodada 2 da leva 5 (item 4b): depois de uma queda o nomes.json fica vazio (ou com zeros, ou pela metade) e o .bak guarda os
+   nomes seus, que o Cockpit le (lerNomesSeguro, rodada final). O mutirao lia {} e o gravarSeguro dele copiava o arquivo estragado
+   por cima do .bak, sem validar: no 1o lote os nomes sumiam dos dois. Agora o lerNomes dele faz como o do main.js (sem arquivo = {};
+   existe mas nao abre como objeto = null, e quem grava recusa) e o .bak so recebe um arquivo antigo que abre, como no salvarNomes.
+   O main.js nao chama o mutirao: ele roda a mao (node tools/nomes/mutirao.js), com o Cockpit aberto ou nao.
+   ===================================================================== */
+const { pegarBloco, lerFonte } = require('../testes/raiz');
+const TRES = { 'id-1': 'Contrato da Cicrana', 'id-2': 'Fechamento PAQ', 'id-3': 'Robo do canal' };
+const ESTRAGADOS = { vazio: '', zeros: Buffer.alloc(4096), 'pela metade': JSON.stringify(TRES).slice(0, 30) };
+function cockpitLe(arq) {   // o leitor de verdade do Cockpit (main.js), sem o _auto
+  const ctx = vm.createContext({ fs, path, NOMES_PATH: () => arq });
+  for (const nome of ['lerNomesSeguro', 'lerNomes']) vm.runInContext(pegarBloco(lerFonte('main.js'), 'function ' + nome + '(', nome), ctx);
+  return Object.keys(ctx.lerNomes()).filter((k) => k !== '_auto');
+}
+const pastaNova = (prefixo) => fs.mkdtempSync(path.join(RAIZ, prefixo));
+function umaConversaSemNome(id) {
+  fs.rmSync(CLAUDE, { recursive: true, force: true }); fs.mkdirSync(CLAUDE, { recursive: true });
+  fs.rmSync(CODEX, { recursive: true, force: true }); fs.mkdirSync(CODEX, { recursive: true });
+  arquivoClaude(id, [falaClaude('conversa antiga que ainda nao tem nome')], DIAS(1));
+}
+
+for (const [estado, bytes] of Object.entries(ESTRAGADOS)) {
+  test('mutirao depois da queda (nomes.json ' + estado + ', .bak com 3 nomes seus): nao grava nada e o Cockpit segue lendo os 3 (rodada 2)', async () => {
+    const arq = path.join(pastaNova('queda-'), 'nomes.json');
+    fs.writeFileSync(arq + '.bak', JSON.stringify(TRES));
+    fs.writeFileSync(arq, bytes);
+    umaConversaSemNome(U(9));
+    assert.deepEqual(cockpitLe(arq), Object.keys(TRES), 'antes: o Cockpit le os 3 do .bak');
+    let chamadas = 0;
+    const linhas = [];
+    const r = await rodar({ nomes: arq, fala: (s) => linhas.push(s), gerar: async () => { chamadas++; return { titulo: 'Conversa Antiga', motivo: 'ok', ms: 1 }; } });
+    assert.equal(r.nomeadas, 0);
+    assert.equal(chamadas, 0, 'nem chama o modelo');
+    assert.match(linhas.join('\n'), /nomes\.json existe mas nao abriu/);
+    assert.equal(fs.readFileSync(arq + '.bak', 'utf8'), JSON.stringify(TRES), 'o .bak continua com os 3');
+    assert.deepEqual(fs.readFileSync(arq), Buffer.from(bytes), 'e o nomes.json nao foi trocado');
+    assert.deepEqual(cockpitLe(arq), Object.keys(TRES), 'depois: o Cockpit continua lendo os 3');
+  });
+}
+
+test('mutirao: nomes.json estragado no meio do mutirao (o Cockpit caiu gravando): o lote nao grava e o .bak fica (rodada 2)', async () => {
+  const arq = path.join(pastaNova('meio-'), 'nomes.json');
+  fs.writeFileSync(arq, JSON.stringify(TRES));
+  fs.writeFileSync(arq + '.bak', JSON.stringify(TRES));
+  umaConversaSemNome(U(8));
+  const linhas = [];
+  const r = await rodar({ nomes: arq, fala: (s) => linhas.push(s), gerar: async () => { fs.writeFileSync(arq, Buffer.alloc(2048)); return { titulo: 'Nome Do Lote', motivo: 'ok', ms: 1 }; } });
+  assert.equal(r.nomeadas, 0);
+  assert.match(linhas.join('\n'), /nao abriu neste lote/);
+  assert.equal(fs.readFileSync(arq + '.bak', 'utf8'), JSON.stringify(TRES), 'o .bak continua com os 3');
+  assert.deepEqual(fs.readFileSync(arq), Buffer.alloc(2048), 'nada gravado por cima');
+  assert.deepEqual(cockpitLe(arq), Object.keys(TRES), 'o Cockpit le os 3 do .bak');
+});
+
+test('gravarSeguro e lerNomes do mutirao: arquivo que existe mas nao abre como objeto nao e trocado nem vira .bak; o que abre vira .bak (rodada 2)', () => {
+  const dir = pastaNova('grava2-'), arq = path.join(dir, 'nomes.json');
+  fs.writeFileSync(arq + '.bak', JSON.stringify(TRES));
+  for (const [estado, bytes] of Object.entries({ ...ESTRAGADOS, lista: '[]', nulo: 'null' })) {
+    fs.writeFileSync(arq, bytes);
+    assert.equal(M.lerNomes(arq), null, estado + ': existe mas nao abre = null');
+    assert.equal(M.gravarSeguro(arq, JSON.stringify({ _auto: { x: 'Novo' } })), false, estado + ': recusa');
+    assert.deepEqual(fs.readFileSync(arq), Buffer.from(bytes), estado + ': o nomes.json ficou como estava');
+    assert.equal(fs.readFileSync(arq + '.bak', 'utf8'), JSON.stringify(TRES), estado + ': o .bak ficou com os 3');
+  }
+  fs.mkdirSync(path.join(dir, 'pasta.json'));
+  assert.equal(M.lerNomes(path.join(dir, 'pasta.json')), null, 'uma pasta no lugar tambem nao abre');
+  fs.rmSync(arq);
+  assert.deepEqual(M.lerNomes(arq), {}, 'sem arquivo: nenhum nome ainda');
+  assert.equal(M.gravarSeguro(arq, JSON.stringify({ 'id-1': 'Um' })), true, 'sem arquivo: grava');
+  assert.equal(M.gravarSeguro(arq, JSON.stringify(TRES)), true);
+  assert.equal(fs.readFileSync(arq + '.bak', 'utf8'), JSON.stringify({ 'id-1': 'Um' }), 'o antigo que abre vira .bak, como sempre');
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [], 'nenhum temporario sobrando');
 });

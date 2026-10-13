@@ -221,12 +221,59 @@
 .p-plus:active, .p-slash:active, .p-mic:active, .p-fluxo:active,
 .cont-chip:active, .sug-chip:active { transform: scale(.94); }
 
+/* ---------------------------------------------------------------------------
+   13. O DESTAQUE DA PASTA ATIVA VIAJA
+   Trocar de pasta apagava o destaque de uma aba e acendia o da outra. O
+   cockpit-anim.js poe um fantasma com o fundo, o sublinhado e o raio da aba
+   ativa (lidos do estilo computado: os 4 temas valem) e o leva ate' a aba
+   nova em 220 ms, so' em transform -- Web Animations, por isso nao ha
+   @keyframes aqui. Nada entra na tela: e' o estado mudando de lugar.
+   z-index 0 porque ele mora DENTRO da faixa, que vira contexto de
+   empilhamento so' durante a viagem: fica acima do fundo da faixa E do fundo
+   das abas (desde a leva 5e as abas inativas tem fundo proprio, opaco: com o
+   fantasma em -1 ele sumia por baixo delas) e ABAIXO dos nomes (o icone e o
+   nome da aba sobem para o nivel 1 em cockpit-ui.css; por cima, apagaria os
+   nomes). Movimento reduzido: o JS nem cria o fantasma.
+   --------------------------------------------------------------------------- */
+.mv-aba-fantasma {
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
 /* ============================================================================
    GUARDA FINAL — quem pediu menos movimento recebe menos movimento.
    Todo loop para. A informacao continua: cor, contagem e estado nao dependem
    de animacao nenhuma pra serem lidos.
    ============================================================================ */
+/* 29/09 (Hugo): as janelinhas (camadas e modais) aparecem e somem com um fade
+   curto e uma escala leve. Nada desliza (guia de marca). Na saída o JS põe
+   .ck-saindo e só tira da tela no fim (closeLayer no cockpit-ui.js, sairDoModal
+   no app.js); o "sem clique" da saída mora no cockpit-ui.css (esta camada só
+   declara movimento). */
+@keyframes mv-veu-entra { from { opacity: 0; } }
+@keyframes mv-veu-sai { to { opacity: 0; } }
+@keyframes mv-caixa-entra { from { opacity: 0; transform: scale(.97); } }
+@keyframes mv-caixa-sai { to { opacity: 0; transform: scale(.98); } }
+.ck-overlay { animation: mv-veu-entra 160ms ease-out both; }
+.ck-overlay > .ck-layer { animation: mv-caixa-entra 200ms cubic-bezier(.2, .8, .2, 1) both; }
+.ck-overlay.ck-saindo { animation: mv-veu-sai 140ms ease-in both; }
+.ck-overlay.ck-saindo > .ck-layer { animation: mv-caixa-sai 140ms ease-in both; }
+.modal:not(.hidden) { animation: mv-veu-entra 160ms ease-out both; }
+.modal:not(.hidden) > .modal-cx { animation: mv-caixa-entra 200ms cubic-bezier(.2, .8, .2, 1) both; }
+.modal.ck-saindo { animation: mv-veu-sai 140ms ease-in both; }
+.modal.ck-saindo > .modal-cx { animation: mv-caixa-sai 140ms ease-in both; }
+
 @media (prefers-reduced-motion: reduce) {
+  .ck-overlay,
+  .ck-overlay > .ck-layer,
+  .ck-overlay.ck-saindo,
+  .ck-overlay.ck-saindo > .ck-layer,
+  .modal:not(.hidden),
+  .modal:not(.hidden) > .modal-cx,
+  .modal.ck-saindo,
+  .modal.ck-saindo > .modal-cx { animation: none !important; }
   .ck-plan,
   .ck-plan-segment.current,
   .ck-plan-segment.mv-feito,

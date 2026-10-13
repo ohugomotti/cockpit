@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, globalShortcut, desktopCapturer, screen, crashReporter } = require('electron');
+const { app, BrowserWindow, ipcMain: electronIpcMain, dialog, Menu, shell, clipboard, globalShortcut, desktopCapturer, screen, crashReporter, nativeTheme, systemPreferences, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -16,13 +16,41 @@ const WINDOWS_APP_ID = app.isPackaged ? 'com.homeromotti.cockpit' : 'com.homerom
    porque e' a parte que MUDA quando o Codex muda - e a unica que da' pra
    testar sem subir o Electron (test/codex-protocol.test.js). */
 const proto = require('./codex-protocol');
+const capabilities = require('./cockpit-capabilities');
+const historyPages = require('./cockpit-history');
+const cockpitInteractions = require('./cockpit-interactions');
+const { createRemoteHostBridge } = require('./cockpit-remote-host');
+const { createExperiments, imageData: validateGeneratedImage } = require('./cockpit-experiments');
 const { codexApprovalDetails } = require('./cockpit-approval');
 const { criarObservabilidade, resultadoFerramenta, listarRuntimeCodex } = require('./cockpit-observability');
 const cockpitWorktrees = require('./cockpit-worktrees');
-// leva 41 (B6): nome de 3 palavras da conversa nova + regra dos nomes (seu > automatico)
+// leva 41 (B6) + Tarefa 6: nome automatico da conversa (acompanha o trabalho) + regra dos nomes (seu > automatico)
 const tituloAuto = require('./titulo-auto');
+// Tarefas 1 e 3 (26/09): o executor unico do "claude -p" rapido e o Mais detalhes que o usa
+const { criarClaudeRapido } = require('./claude-rapido');
+const { criarMaisDetalhes } = require('./mais-detalhes');
+// Tarefa 7 (27/09): nome dos agentes em portugues de gente (2 palavras + uma linha), pelo mesmo executor
+const nomesAgentes = require('./nomes-agentes');
+// Tarefa 5 (26/09): reabrir traz a conversa inteira (leitura em blocos, corte por contagem de falas)
+const { varrerLinhas, cortarHistorico, historicoParaTela } = require('./historico-leitura');
+// Tarefa 8 (26/09): pergunta (AskUserQuestion) e plano pronto (ExitPlanMode) do Claude, em funcoes puras
+const interacao = require('./claude-interacao');
+// Tarefa 9 (27/09): desfazer a edicao da IA direto no passo (o nucleo puro que decide o conteudo)
+const desfazerEdicao = require('./desfazer-edicao');
+const { createVisualMacNative } = require('./visual-mac-native');
+const { createEngineUpdater } = require('./engine-updates');
+const modelBenchmarks = require('./model-benchmarks').createModelBenchmarks({ directory: () => app.getPath('userData') });
 
 const HOME = os.homedir();
+/* JANELA DE TESTE (rodada 2 da leva 5i). Com COCKPIT_JANELA_TESTE=1 no ambiente, o app abre marcado como TESTE: o titulo da janela diz isso, a tela
+   poe uma faixa vermelha no topo (window.api.janelaDeTeste, vindo do preload) e NENHUMA mensagem sai para motor nenhum (pane:send, pane:steer,
+   pane:compactar, o Debater e o Mais detalhes recusam com o aviso abaixo). Nasceu de um incidente: a janela de teste de uma auditoria abriu as
+   conversas REAIS do Hugo, e ele digitou numa delas achando que era o Cockpit dele. Quem abre o candidato por tools/auditoria/abrir-candidato-teste.ps1
+   (ou pelo rodada1-vital.ps1) ja' ganha isso, numa copia do perfil sem conversas. So' o valor "1" vale; sem a variavel nada muda. */
+const JANELA_DE_TESTE = process.env.COCKPIT_JANELA_TESTE === '1';
+const TITULO_JANELA_DE_TESTE = 'TESTE — não use';
+const AVISO_JANELA_DE_TESTE = 'Janela de teste: o envio de mensagens aos motores está desligado aqui.';
+const barrarNaJanelaDeTeste = () => { if (JANELA_DE_TESTE) throw new Error(AVISO_JANELA_DE_TESTE); };
 // Perfil explícito para prévias/testes: o mesmo ASAR pode ser conferido sem
 // abrir ou gravar o config.json da instalação em uso. Sem a opção, nada muda.
 const explicitUserData = app.commandLine?.getSwitchValue('user-data-dir');
@@ -35,9 +63,9 @@ if (explicitUserData) {
    bem antes da RAM da maquina acabar; com 20 paineis e conversas longas isso
    vira queda da tela, e a tela que cai leva todos os motores junto. Tem que vir
    antes do 'ready'. O Hugo autorizou gastar RAM (pedido de 14/09). */
-try { app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096'); } catch {}
+try { app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096'); } catch (e) { logMain('js-flags', e); }
 // se a tela (ou outro processo do app) cair, fica o dump local pra investigar; nada sobe pra rede
-try { if (crashReporter && crashReporter.start) crashReporter.start({ uploadToServer: false }); } catch {}
+try { if (crashReporter && crashReporter.start) crashReporter.start({ uploadToServer: false }); } catch (e) { logMain('crashReporter', e); }
 // no Mac o Claude mora sempre no mesmo lugar; no Windows a gente procura.
 // FUNCAO, nao const: congelado no boot, o caminho ficava preso no binario
 // velho se o instalador do Claude trocasse de pasta com o app aberto - e o
@@ -65,31 +93,200 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win = null;
+const ipcSecurity = require('./cockpit-ipc-security').createIpcSecurity({
+  ipcMain: electronIpcMain,
+  getMainWindow: () => win,
+  getCaptureWindow: () => recorte?.janela,
+  mainFile: path.join(__dirname, 'renderer/index.html'),
+  captureFile: path.join(__dirname, 'renderer/recorte.html'),
+  log: logMain,   // logMain é function (içada): já vale aqui, antes da linha que a define
+});
+const ipcMain = ipcSecurity.ipcMain;
+
+/* ======================= log de erros da tela ======================= */
+/* userData/logs/tela.log (src/log-tela.js). O que quebra na tela (erro de script,
+   promessa sem tratamento, console.error) chega pelo canal 'tela:log'; os catch
+   do main usam logMain(contexto, erro). Antes, quem quebrava calado nao deixava
+   rastro em lugar nenhum (colar imagem parou de funcionar e ninguem viu). So'
+   REGISTRA: nao mexe em tela, em motores nem na rotina de quedas (quedas.js). */
+/* O require fica DENTRO das funcoes e o estado e' `var` sem valor inicial (nao const/let):
+   o logMain tem de funcionar tambem num catch que roda ANTES deste bloco (js-flags e
+   crashReporter, nas primeiras linhas do arquivo; a leva 1 troca por logMain). Com const/let
+   ele cairia na zona morta e o try/catch do registrarNoMain engoliria o erro; e um `= null`
+   aqui zeraria o log que uma chamada de antes ja abriu. */
+var logTelaAtual;
+// criado no primeiro uso (o 'ready' abre uma vez): o userData so' vale depois do --user-data-dir la' em cima
+function logDaTela() {
+  if (!logTelaAtual) logTelaAtual = require('./log-tela').criarLogTela({ dir: path.join(app.getPath('userData'), 'logs') });
+  return logTelaAtual;
+}
+function registrarNoMain(tipo, contexto, erro) {
+  try {
+    const d = require('./log-tela').descreverErro(erro);
+    logDaTela().registrar({ origem: 'main', tipo, contexto, msg: d.msg, stack: d.stack });
+  } catch {}
+}
+/* contexto = onde foi ('colar', 'config:set'...); erro = o que o catch pegou (Error,
+   texto, objeto, o que for). Nunca lanca: pode ir dentro de qualquer catch. */
+function logMain(contexto, erro) { registrarNoMain('erro', contexto, erro); }
+/* promessa sem catch: so' anota, o resto segue como esta. So' no Electron de verdade:
+   os testes que carregam este arquivo com um Electron falso nao herdam um ouvinte
+   global no processo deles. */
+if (process.versions && process.versions.electron) {
+  process.on('unhandledRejection', (motivo) => registrarNoMain('promessa', 'unhandledRejection', motivo));
+}
+const TIPOS_DA_TELA = ['erro', 'promessa', 'console'];
+ipcMain.on('tela:log', (_e, entrada) => {
+  try {
+    if (!entrada || typeof entrada !== 'object' || Array.isArray(entrada)) return;
+    // a tela nao escolhe a origem nem inventa tipo; so' estes campos entram (o modulo corta e mascara)
+    logDaTela().registrar({
+      origem: 'tela', tipo: TIPOS_DA_TELA.includes(entrada.tipo) ? entrada.tipo : 'erro',
+      msg: entrada.msg, stack: entrada.stack, fonte: entrada.fonte, linha: entrada.linha, coluna: entrada.coluna,
+    });
+  } catch {}
+});
 
 /* ======================= util ======================= */
+/* Leva 5 (tela azul de 05/10: o Cockpit voltou do padrao, 2 abas e sem tema, e a 2a gravacao regravou o .bak com ele).
+   Arquivo que nao abre por CONTEUDO (JSON ruim, vazio, zeros de queda, null, lista) sai do caminho com a data no nome
+   (config.json.corrompido-AAAAMMDD-HHMMSS; nunca e' apagado) e o .bak entra no lugar. Erro de LEITURA (EBUSY, EPERM: o
+   antivirus) nao renomeia nada. Se nenhum dos dois abrir, a sessao comeca do padrao e loadConfig.semCopia fica ligado:
+   o saveConfig desta sessao nao regrava o .bak (o padrao nunca toma o lugar da ultima copia boa).
+   Onda 1 (revisao): arquivo PRESO (EBUSY, EPERM, EACCES: o antivirus) e' lido de novo 3 vezes (20, 40 e 60 ms, como o gravarSeguro)
+   e nao liga o semCopia, que so' liga por conteudo ruim. Preso o tempo todo: o .bak entra no lugar; sem .bak a sessao abre do
+   padrao e loadConfig.naoLido fica ligado: o saveConfig nao grava por cima do config.json que nao foi lido (volta a gravar quando
+   uma leitura der certo). A tela le so' uma vez (config:get): se recebeu o padrao, fica com ele na mao e so' volta a gravar
+   relendo (loadConfig.telaComPadrao), senao gravaria o padrao por cima do original assim que o antivirus o soltasse.
+   Rodada final: o .bak PRESO tambem liga o naoLido (antes so' o config.json). Com o config ruim ou sumido e o .bak preso, a
+   sessao abria do padrao e gravava: o padrao tomava o lugar do .bak bom na 2a gravacao (config sumido) ou na 1a da sessao
+   seguinte (config ruim). Primeira execucao (os dois ENOENT) continua gravando. */
 function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH(), 'utf8')); }
-  catch {
-    // arquivo corrompido (queda no meio de uma gravacao antiga): usa o backup
-    try { return JSON.parse(fs.readFileSync(CONFIG_PATH() + '.bak', 'utf8')); }
-    catch { return {}; }
+  const arquivo = CONFIG_PATH();
+  const ler = (alvo) => {
+    const cfg = JSON.parse(fs.readFileSync(alvo, 'utf8'));
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('Configuração inválida.');
+    return cfg;
+  };
+  const lerInsistindo = (alvo) => {
+    for (let i = 1; ; i++) {
+      try { return ler(alvo); }
+      catch (e) {
+        if (i > 3 || !(e && (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'EACCES'))) throw e;
+        try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * i); } catch {}
+      }
+    }
+  };
+  const anotar = (onde, e) => { if (typeof logMain === 'function') logMain(onde, e); };
+  const guardarRuim = (alvo) => {
+    const d = new Date(), z = (n) => String(n).padStart(2, '0');
+    const base = alvo + '.corrompido-' + d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+    let nome = base;
+    for (let i = 2; fs.existsSync(nome); i++) nome = base + '-' + i;
+    try { fs.renameSync(alvo, nome); anotar('config', new Error(path.basename(alvo) + ' não abriu; guardado como ' + path.basename(nome))); }
+    catch (e) { anotar('config:guardar-corrompido', e); }
+  };
+  const avisou = loadConfig.naoLido === true;
+  loadConfig.naoLido = false;   // cada leitura reavalia: so' o padrao devolvido por um config preso volta a ligar
+  let perdeu = false, preso = false;
+  const falhou = (alvo, e) => {
+    if (e && e.code === 'ENOENT') return;
+    if (e && e.code) { preso = true; return; }   // erro de LEITURA (preso), do config ou do .bak: o arquivo fica onde esta e nao e' arquivo ruim
+    perdeu = true; guardarRuim(alvo);   // conteudo ruim
+  };
+  try { return lerInsistindo(arquivo); } catch (e) { falhou(arquivo, e); }
+  // arquivo corrompido (queda no meio de uma gravacao antiga): usa o backup
+  try { return lerInsistindo(arquivo + '.bak'); } catch (e) { falhou(arquivo + '.bak', e); }
+  if (perdeu) loadConfig.semCopia = true;
+  if (preso) {
+    loadConfig.naoLido = true;
+    if (!avisou) anotar('config', new Error('config.json e config.json.bak não abriram (um deles preso?): a sessão começa do padrão e não grava por cima deles até um ser lido'));
   }
+  return {};
 }
 /* grava em arquivo temporario e so' depois troca pelo bom: se a maquina cair
-   no meio, o config antigo continua inteiro (antes perdia tudo de uma vez) */
-function gravarSeguro(destino, texto) {
+   no meio, o config antigo continua inteiro (antes perdia tudo de uma vez).
+   Leva 5: o temporario vai ao disco (fsync) ANTES do rename, e a copia de seguranca tambem sai por temporario + fsync +
+   rename. Sem o fsync o rename chegava ao disco antes dos dados: na tela azul de 05/10 o config e o .bak viraram zeros.
+   Antivirus e indexador seguram um arquivo recem-criado ou renomeado por alguns ms (EBUSY, EPERM, EACCES): o temporario e
+   o rename final insistem 3 vezes (20, 40 e 60 ms) antes de desistir; outro erro sobe na hora.
+   Onda 1 (revisao): sem validador proprio o arquivo antigo so' vira .bak se abre como JSON (o indice, as versoes e o
+   cockpit-prompts.json guardavam o vazio ou os zeros de uma queda e perdiam a copia boa). */
+function gravarSeguro(destino, texto, validarAnterior) {
+  const abreComoJson = (anterior) => { try { JSON.parse(anterior); return true; } catch { return false; } };
+  const escrever = (alvo, dados) => {
+    const fd = fs.openSync(alvo, 'w');
+    try { fs.writeFileSync(fd, dados); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  };
+  const insistir = (fn) => {
+    for (let i = 1; ; i++) {
+      try { return fn(); }
+      catch (e) {
+        if (i > 3 || !(e && (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'EACCES'))) throw e;
+        try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * i); } catch {}
+      }
+    }
+  };
   const tmp = destino + '.tmp';
   try {
-    fs.writeFileSync(tmp, texto);
-    try { if (fs.existsSync(destino)) fs.copyFileSync(destino, destino + '.bak'); } catch {}
-    fs.renameSync(tmp, destino);
+    insistir(() => escrever(tmp, texto));
+    try {
+      if (fs.existsSync(destino)) {
+        const anterior = fs.readFileSync(destino);
+        if ((validarAnterior || abreComoJson)(anterior.toString('utf8'))) {
+          const tmpBak = destino + '.bak.tmp';
+          try { escrever(tmpBak, anterior); fs.renameSync(tmpBak, destino + '.bak'); }
+          catch { try { fs.unlinkSync(tmpBak); } catch {} }
+        }
+      }
+    } catch {}
+    insistir(() => fs.renameSync(tmp, destino));
     return true;
   } catch { try { fs.unlinkSync(tmp); } catch {} return false; }
 }
-function saveConfig(cfg) { gravarSeguro(CONFIG_PATH(), JSON.stringify(cfg, null, 2)); }
+function saveConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return false;
+  // onda 1: config.json preso que nao foi lido (sem .bak) nao e' sobrescrito pelo padrao (ver loadConfig.naoLido e telaComPadrao)
+  if (typeof loadConfig === 'function' && (loadConfig.naoLido === true || loadConfig.telaComPadrao === true)) return false;
+  // leva 5: a sessao que comecou do padrao (config e .bak ruins) nao regrava o .bak (ver loadConfig)
+  const semCopia = typeof loadConfig === 'function' && loadConfig.semCopia === true;
+  try {
+    return gravarSeguro(CONFIG_PATH(), JSON.stringify(cfg, null, 2), (anterior) => {
+      if (semCopia) return false;
+      const value = JSON.parse(anterior);
+      return value && typeof value === 'object' && !Array.isArray(value);
+    });
+  } catch { return false; }
+}
 
 // app GUI nao herda o PATH do shell: monta um PATH completo (ver plataforma.js)
 const buildEnv = plataforma.buildEnv;
+
+// Só a instalação normal atualiza motores. Prévias, testes e perfis isolados não
+// executam instaladores nem alteram os CLIs da máquina.
+let engineUpdateQuitting = false;
+const engineUpdates = createEngineUpdater({
+  // rodada 2 da leva 5: com o config nao lido o padrao nao e' o "ligado" seu: nao atualiza desta vez (naoLido, ou semCopia com esta
+  // leitura devolvendo o padrao). O semCopia nao desliga na sessao: se o .bak soltou e esta leitura trouxe um config de verdade
+  // (alguma chave), vale o que foi lido. O start() roda uma vez, no whenReady: sem isso nem o recover() do Codex rodava na sessao.
+  enabled: () => app.isPackaged && !explicitUserData && ((c) => c.autoUpdateEngines !== false && loadConfig.naoLido !== true && (loadConfig.semCopia !== true || Object.keys(c).length > 0))(loadConfig()),
+  directory: () => path.join(app.getPath('userData'), 'engine-updates'),
+  findBin: acharBin, spawnBin, stopProcess: matarProcesso, env: buildEnv,
+  onUpdated: () => {
+    try { fs.unlinkSync(path.join(app.getPath('userData'), 'versoes-motores.json')); } catch (e) { if (e?.code !== 'ENOENT') logMain('versoes-motores', e); }
+  },
+});
+ipcMain.handle('motores:atualizacoes', () => engineUpdates.snapshot());
+let engineUpdatesClosing = false;
+app.on('before-quit', event => {
+  engineUpdateQuitting = true;
+  if (!engineUpdates.running) return;
+  event.preventDefault();
+  if (engineUpdatesClosing) return;
+  engineUpdatesClosing = true;
+  // Não sair no meio de uma troca: cancelar o instalador e terminar a restauração.
+  engineUpdates.stop().then(() => app.quit(), () => app.quit());
+});
 
 /* Leva 41 (B2): quem esta no meio de um turno, que tipo de queda foi, o
    registro em userData/logs/motores.log e o retomar.json (quedas.js). */
@@ -99,11 +296,88 @@ const vigiaTurno = quedas.criarVigiaDeTurno({ registrar: registrarQueda });
 const retomada = quedas.criarRetomada(() => app.getPath('userData'));
 
 const debateListeners = new Map();
+
+/* Tarefa 9 (27/09): o que o PROPRIO main mandou pra tela como mudanca de
+   arquivo (o tool-start do Claude e do ACP, e o diff tardio tool-mudanca do
+   ACP), por painel e passo, e como o passo terminou (tool-end). O "Desfazer
+   esta mudança" (arquivo:desfazer) usa SO' isto: a tela manda { paneId, id },
+   nunca o antes/depois, e so' passo que o main viu terminar ok se desfaz
+   (negado ou com erro nao mudou nada). Painel remoto nao entra (o caminho e'
+   do servidor). Guarda uma COPIA, com teto de 300 passos e ~8 milhoes de
+   letras por painel (o mais velho sai primeiro). O 'busy' ate' o 'turn-end'
+   marca o painel trabalhando: o ACP nao passa pelo vigiaTurno.
+   Revisao 1: id repetido no painel (um segundo tool-start, ou uma segunda
+   mudanca pro mesmo passo) vira marca de "nao desfaz": a tela acharia o passo
+   mais novo e o registro teria o primeiro. Os ids vistos sem mudanca (Bash,
+   Read...) ficam num mapa leve, com o mesmo teto, so' pra achar a repeticao e
+   dar o fim ao diff tardio do ACP. O registro so' e' esquecido quando o
+   painel fecha ou a conversa troca (pane:stop com esquecerMudancas): parada
+   comum (fim de turno no fundo, troca de aba, conta) mantem o desfazer. */
+const mudancasEmitidas = new Map();   // paneId -> { itens: Map(id -> registro), letras, vistos: Map(id -> ''|'ok'|'erro') }
+const paineisEmTrabalho = new Set();  // paneId
+const MUDANCAS_POR_PAINEL = 300;
+const LETRAS_POR_PAINEL = 8 * 1024 * 1024;
+function guardarMudancaEmitida(paneId, kind, data) {
+  const chave = String(paneId);
+  if (kind === 'busy') { paineisEmTrabalho.add(chave); return; }
+  if (kind === 'turn-end' || kind === 'engine-down') { paineisEmTrabalho.delete(chave); return; }
+  if (kind !== 'tool-start' && kind !== 'tool-mudanca' && kind !== 'tool-end') return;
+  if (!data || data.id == null || data.id === '') return;
+  if (data.remoto || remotePaneTargets.has(paneId) || claudeRemoto.has(paneId)) return;
+  const id = String(data.id);
+  let doPainel = mudancasEmitidas.get(chave);
+  if (!doPainel) { doPainel = { itens: new Map(), letras: 0, vistos: new Map() }; mudancasEmitidas.set(chave, doPainel); }
+  const { itens, vistos } = doPainel;
+  const registro = itens.get(id);
+  if (kind === 'tool-end') {
+    const fim = data.error ? 'erro' : 'ok';
+    if (registro) { if (!registro.fim) registro.fim = fim; return; }
+    if (!vistos.get(id)) vistos.set(id, fim);   // o primeiro fim vale
+  } else if (registro || (kind === 'tool-start' && vistos.has(id))) {
+    // id repetido: nenhum dos dois passos se desfaz (e um terceiro aviso nao ressuscita)
+    if (registro) doPainel.letras -= registro.letras;
+    vistos.delete(id);
+    itens.set(id, { repetido: true, letras: 0, fim: '' });
+    return;
+  } else {
+    const m = data.mudanca;
+    if (!m || typeof m !== 'object') { if (kind === 'tool-start') vistos.set(id, ''); }
+    else {
+      const mudanca = desfazerEdicao.daMudancaEmitida(m);
+      const letras = mudanca.partes.reduce((n, p) => n + p.antes.length + p.depois.length, 0);
+      const fim = vistos.get(id) || '';   // o diff tardio do ACP herda o fim que ja' chegou
+      vistos.delete(id);
+      itens.set(id, { path: String(m.path || ''), tipo: mudanca.tipo, mudanca, letras, fim });
+      doPainel.letras += letras;
+    }
+  }
+  while (itens.size > MUDANCAS_POR_PAINEL || (doPainel.letras > LETRAS_POR_PAINEL && itens.size > 1)) {
+    const [velho, reg] = itens.entries().next().value;
+    itens.delete(velho);
+    doPainel.letras -= reg.letras;
+  }
+  while (vistos.size > MUDANCAS_POR_PAINEL) vistos.delete(vistos.keys().next().value);
+}
+/* parou: nao esta mais trabalhando. O que dava pra desfazer so' some quando o
+   painel fecha ou a conversa troca (a tela avisa com esquecerMudancas) */
+function esquecerMudancasDoPainel(paneId, conversaAcabou) {
+  paineisEmTrabalho.delete(String(paneId));
+  if (conversaAcabou) mudancasEmitidas.delete(String(paneId));
+}
+
 function emit(paneId, kind, data) {
   // fim de turno desliga o "em turno"; 'engine-down' sai dizendo se estava em turno e que tipo de queda foi
   data = vigiaTurno.passar(paneId, kind, data);
+  // Identidade do acontecimento, independente do texto e dos rerenders da tela.
+  if (['aviso-agente', 'turn-end', 'engine-down'].includes(kind)) {
+    emit.origem ||= Date.now().toString(36);
+    emit.sequencia = (emit.sequencia || 0) + 1;
+    data = { ...data, occurrence: data?.occurrence || `${emit.origem}:${paneId}:${kind}:${emit.sequencia}`, replay: data?.replay === true };
+  }
   const debateListener = debateListeners.get(paneId);
   if (debateListener) { debateListener({ paneId, kind, ...data, ...(kind === 'busy' ? { turnId: codex.paneTurn.get(paneId) } : {}) }); return; }
+  // Tarefa 9: guarda a mudanca de arquivo que vai pra tela; um erro aqui nunca segura o evento
+  try { guardarMudancaEmitida(paneId, kind, data); } catch {}
   if (win && !win.isDestroyed()) win.webContents.send('pane:event', { paneId, kind, ...data });
 }
 
@@ -122,8 +396,97 @@ const codex = {
   paneTurn: new Map(),       // paneId -> turnId em andamento
   paneErrors: new Map(),     // aviso transitório/erro já exibido no turno
   paneMsgId: new Map(),      // paneId -> id da fala que esta chegando letra a letra
+  paneCwd: new Map(), generation: 0,
   derrubando: null,          // processo que o proprio app esta derrubando (troca de conta, fechar)
 };
+/* Onde o agente pode oferecer um arquivo no leitor (apresentar_artefato), ALEM da pasta da propria sessao: o Drive
+   (G:\), as Projetos-* da home e as pastas das abas. Lido do config a cada chamada: aba nova vale na hora. Rede nunca. */
+const pastasDeTrabalho = () => cockpitInteractions.workRoots({ home: HOME, abas: loadConfig().abas });
+const interactionBroker = cockpitInteractions.createInteractionBroker({
+  emit: (paneId, kind, data) => emit(paneId, kind, data),
+  onHostAction: (scope, kind, data) => {
+    const current = scope.engine === 'claude' ? claudePanes.get(scope.paneId) : remoteEngines.panes.get(scope.paneId);
+    const valid = scope.engine === 'claude' ? !!current && !current.parandoDeProposito && String(current.geracao) === String(scope.generation)
+      : scope.origin.kind === 'remote' ? current?.generation === scope.generation && !current.stopped
+      : String(codex.generation) === String(scope.generation) && codex.paneToThread.has(scope.paneId)
+        && (codex.paneToThread.get(scope.paneId) === scope.threadId || observabilidade.ownerOfThread(scope.threadId) === scope.paneId);
+    if (!valid) return { ok: false };
+    emit(scope.paneId, kind, data); return { ok: true };
+  },
+  validateRemoteFile: async ({ origin, cwd, file, paneId }) => {
+    const remote = remotePaneTargets.get(paneId)?.remoto || claudeRemoto.get(paneId);
+    if (!remote || String(remote.host).toLowerCase() !== origin.host || remote.usuario !== origin.user || Number(remote.porta || 22) !== Number(origin.port || 22)) throw Error('Destino mudou.');
+    const result = await remoteTransport.run(remote, 'test -f ' + qLinux(file) + ' && realpath -- ' + qLinux(cwd) + ' ' + qLinux(file));
+    const lines = result.trim().split('\n');
+    return { root: lines[0], path: lines[1], isFile: lines.length === 2 };
+  },
+  workRoots: pastasDeTrabalho,
+});
+function codexScope(paneId, params = {}) {
+  return { paneId, generation: codex.generation, engine: 'codex', origin: { kind: 'local' },
+    threadId: params.threadId || params.thread?.id || codex.paneToThread.get(paneId) || '',
+    turnId: params.turnId || params.turn?.id || codex.paneTurn.get(paneId) || '', cwd: codex.paneCwd.get(paneId) || HOME };
+}
+function claudeScope(paneId, m = {}) {
+  const st = claudePanes.get(paneId), remote = claudeRemoto.get(paneId);
+  return { paneId, generation: st?.geracao || 0, engine: 'claude', threadId: m.session_id || st?.sessionId || String(paneId),
+    origin: remote ? { kind: 'remote', host: remote.host, user: remote.usuario, port: remote.porta || 22 } : { kind: 'local' },
+    cwd: remote ? (st?.remoteHostCwd || '') : (claudeCwd.get(paneId) || HOME) };
+}
+ipcMain.handle('connector:respond', (_e, o) => interactionBroker.respond(o));
+ipcMain.handle('connector:list', (_e, paneId) => interactionBroker.list(paneId));
+const experiments = createExperiments({ folder: () => path.join(app.getPath('userData'), 'experiments'), safeStorage: require('electron').safeStorage, log: logMain });
+const liveVoice = require('./cockpit-live').createLive({ request: experiments.request, authorize: experiments.authorize,
+  resolveSession: o => {
+    let current;
+    if (remoteEngines.owns(o.paneId)) { const st = remoteEngines.panes.get(o.paneId); current = { engine: st.engine, threadId: st.session }; }
+    else if (o.engine === 'codex') current = { engine: 'codex', threadId: codex.paneToThread.get(o.paneId) };
+    else if (o.engine === 'claude') current = { engine: 'claude', threadId: claudePanes.get(o.paneId)?.sessionId };
+    if (!current?.threadId || current.threadId !== o.threadId || current.engine !== o.engine) throw Error('Ligue esta sessão antes de conectar a voz.');
+    return { paneId: o.paneId, ...current };
+  } });
+const experimentHandler = fn => async (_e, o) => { try { return await fn(o); } catch (e) { return { error: e.message }; } };
+ipcMain.handle('experiments:liveOffer', experimentHandler(o => liveVoice.offer(o)));
+ipcMain.handle('experiments:status', experimentHandler(() => experiments.status()));
+ipcMain.handle('experiments:key', experimentHandler(key => experiments.setKey(key)));
+ipcMain.handle('experiments:grant', experimentHandler(o => ({ grant: experiments.grant(o.feature, o.costAccepted) })));
+ipcMain.handle('experiments:image', experimentHandler(o => experiments.generateImage(o)));
+ipcMain.handle('experiments:cloudStart', experimentHandler(o => experiments.cloudStart(o)));
+ipcMain.handle('experiments:cloudList', experimentHandler(() => experiments.cloudList()));
+ipcMain.handle('experiments:cloudRead', experimentHandler(id => experiments.cloudRead(id)));
+ipcMain.handle('experiments:cloudCancel', experimentHandler(id => experiments.cloudCancel(id)));
+ipcMain.handle('experiments:cloudApprove', experimentHandler(o => experiments.cloudApprove(o)));
+/* "Salvar como" no Electron 43+: com SÓ o nome no defaultPath o diálogo abre em Downloads e o Windows deixa de lembrar
+   a última pasta. Por isso o defaultPath vai sempre ABSOLUTO: a pasta da conversa (se existir) ou Documentos, mais o
+   nome. Só monta as opções; quem abre o diálogo é o handler. Caminho de rede (\\servidor) não é tocado no disco: o
+   statSync travaria o app ~21 s e o Windows tentaria autenticar por SMB (a mesma trava do ehCaminhoDeRede). */
+function opcoesSalvarComo(nome, pastaPreferida, extras) {
+  let pasta = '';
+  if (typeof pastaPreferida === 'string' && path.isAbsolute(pastaPreferida) && !ehCaminhoDeRede(pastaPreferida)) {
+    try { if (fs.statSync(pastaPreferida).isDirectory()) pasta = pastaPreferida; } catch {}
+  }
+  if (!pasta) {
+    try { pasta = app.getPath('documents'); } catch (e) { logMain('salvar-como', e); pasta = HOME; }
+  }
+  return { ...extras, defaultPath: path.join(pasta, path.basename(String(nome || '')) || 'arquivo') };
+}
+ipcMain.handle('experiments:saveImage', experimentHandler(async o => {
+  const im = validateGeneratedImage(o.image);
+  const r = await dialog.showSaveDialog(win, opcoesSalvarComo('imagem-' + Date.now() + '.png', o.cwd, { filters: [{ name: 'Imagem PNG', extensions: ['png'] }] }));
+  if (r.canceled || !r.filePath) return { cancelled: true };
+  await fs.promises.writeFile(r.filePath, im.buffer); return { file: r.filePath };
+}));
+ipcMain.handle('experiments:cloudArtifact', experimentHandler(async o => {
+  const r = await dialog.showSaveDialog(win, opcoesSalvarComo(o.name, o.cwd));
+  if (r.canceled || !r.filePath) return { cancelled: true };
+  const data = await experiments.cloudArtifact(o.sessionId, o.artifactId);
+  await fs.promises.writeFile(r.filePath, data); return { file: r.filePath };
+}));
+app.on('before-quit', () => experiments.close());
+ipcMain.handle('connector:openUrl', async (_e, o) => {
+  try { const result = interactionBroker.urlFor(o); if (!result.ok) throw Error(result.error); await shell.openExternal(result.url); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
 
 /* o app-server ja usou nomes diferentes pro id do item (itemId, item_id, id).
    Ler so' um deles fazia o texto que chega letra a letra ficar com id
@@ -135,6 +498,9 @@ function idDoItem(o) {
 }
 
 function codexStart() {
+  if (engineUpdateQuitting) return Promise.reject(new Error('O Cockpit está fechando.'));
+  if (!engineUpdates.codexReady) return engineUpdates.waitForCodex().then(codexStart);
+  if (engineUpdates.codexError) return Promise.reject(engineUpdates.codexError);
   if (codex.ready) return codex.ready;
   codex.ready = new Promise((resolve, reject) => {
     let p;
@@ -143,6 +509,8 @@ function codexStart() {
       p.stdin.on('error', () => {});   // escrever apos o processo morrer nao pode derrubar o app inteiro
     } catch (e) { return reject(e); }
     codex.proc = p;
+    codex.generation++;
+    const generation = codex.generation;
 
     let buf = '';   // proprio deste processo: dois app-servers nao podem se misturar
     p.stdout.setEncoding?.('utf8');    p.stdout.on('data', (chunk) => {
@@ -162,6 +530,7 @@ function codexStart() {
     let cauda = '';
     p.stderr.setEncoding?.('utf8');    p.stderr.on('data', (d) => { cauda = (cauda + d.toString('utf8')).slice(-2000); });
     p.on('close', (codigo, sinal) => {
+      interactionBroker.cancelScope({ engine: 'codex', generation }, 'O motor foi encerrado.');
       // pendencia deste processo morre com ele, seja ele o atual ou nao: senao
       // quem chamou ficava esperando ate o prazo de 30s sem motivo
       for (const [k, pend] of [...codex.pend]) {
@@ -192,8 +561,8 @@ function codexStart() {
       codex.ready = null; reject(e);
     });
 
-    codexReq('initialize', { clientInfo: { name: 'cockpit', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true } })
-      .then(() => { codexNote('initialized', {}); codex.pronto = true; resolve(true); })
+    codexReq('initialize', { clientInfo: { name: 'cockpit', version: '1.0.0', title: 'Cockpit' }, capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true } })
+      .then((info) => { codex.info = capabilities.serverInfo(info); codexNote('initialized', {}); codex.pronto = true; resolve(true); })
       .catch((e) => {
         // sem zerar o 'ready', TODA chamada seguinte recebia esta mesma promessa
         // recusada: o Codex ficava fora do ar ate fechar o app
@@ -246,6 +615,13 @@ const autoLiberadas = new Map();     // paneId -> Set de ferramentas liberadas "
    memoria, nao em disco como a caixa de perguntas do MCP: o outro lado aqui e'
    uma chamada JSON-RPC esperando resposta, e ela morre com o processo. */
 const perguntasCodex = new Map();    // idDoCartao -> {rpcId, paneId, questions}
+/* Tarefa 8 (26/09): pergunta (AskUserQuestion) e plano (ExitPlanMode) do
+   proprio Claude esperando voce. Mapa proprio, fora do pendingApprovals: la'
+   dentro a queda do Codex e o serverRequest/resolved apagam o que nao e' deles.
+   A chave leva a geracao do processo (claudeGeracao); o pedido guarda o
+   PROCESSO que perguntou, e so' ele recebe a resposta. */
+const pedidosClaude = new Map();     // chave -> {tipo:'perguntas'|'plano', paneId, processo, reqId, input}
+let claudeGeracao = 0;               // sobe a cada processo do Claude (claudeStart)
 
 /* pergunta nativa que nao vale mais (painel parou, processo caiu, turno acabou):
    responde ao Codex pra ele nao ficar esperando e tira o cartao da tela */
@@ -309,7 +685,7 @@ function paneOf(params) {
 }
 
 function codexServerRequest(m) {
-  const pane = paneOf(m.params || {});
+  const pane = paneOf(m.params || {}) ?? observabilidade.ownerOfThread(m.params?.threadId);
   const meth = m.method;
   const key = 'ap_' + m.id;
   // pedido de APROVACAO sem painel dono nao aparece pra ninguem: recusa na hora
@@ -376,19 +752,27 @@ function codexServerRequest(m) {
   /* pedidos que EXIGEM campos na resposta: um {} vazio nao desserializa do
      outro lado e o turno para. Aqui a resposta e' "nao", mas valida. */
   if (meth === 'mcpServer/elicitation/request') {
-    if (pane !== undefined) emit(pane, 'note', { text: 'O MCP pediu um formulário ou autenticação que o Cockpit ainda não apresenta. O pedido foi recusado; nenhuma informação foi enviada.', error: true });
-    codexReply(m.id, { action: 'decline' }); return;
+    if (pane === undefined) { codexReply(m.id, { action: 'cancel' }); return; }
+    const proc = codex.proc;
+    interactionBroker.request(codexScope(pane, m.params), m.id, m.params || {}, result => {
+      if (codex.proc === proc) codexReply(m.id, result);
+    }); return;
   }
   if (meth === 'item/tool/call') {
-    const text = 'O Cockpit não implementa esta ferramenta dinâmica do host: ' + String(m.params?.tool || 'desconhecida');
-    if (pane !== undefined) emit(pane, 'note', { text, error: true });
-    codexReply(m.id, { success: false, contentItems: [{ type: 'inputText', text }] }); return;
+    if (pane === undefined) { codexReply(m.id, { success: false, contentItems: [{ type: 'inputText', text: 'Sessão não encontrada.' }] }); return; }
+    const proc = codex.proc;
+    void interactionBroker.callTool(codexScope(pane, m.params), m.params || {}).then(result => { if (codex.proc === proc) codexReply(m.id, result); }); return;
   }
   // qualquer outro pedido: diz que nao atende, em vez de fingir uma resposta
   codexErro(m.id, 'o Cockpit não atende "' + String(meth).slice(0, 60) + '"');
 }
 
 function codexNotification(method, params) {
+  const requestOwner = paneOf(params) ?? observabilidade.ownerOfThread(params.threadId);
+  if (requestOwner !== undefined) {
+    if (method === 'serverRequest/resolved') interactionBroker.resolved(codexScope(requestOwner, params), params.requestId);
+    if (method === 'turn/completed') interactionBroker.cancelScope({ engine: 'codex', generation: codex.generation, threadId: params.threadId, turnId: params.turn?.id || params.turnId }, 'Turno encerrado.');
+  }
   // Também observa threads filhas conhecidas, sem misturar suas falas no chat
   // do pai. A Torre recebe dados próprios e não ganha controles inventados.
   observabilidade.observarCodex(method, params, paneOf(params));
@@ -443,6 +827,11 @@ function codexNotification(method, params) {
       else if (it.type === 'fileChange') emit(pane, 'tool-start', { id: it.id, name: 'Editando arquivo', arg: fileChangeArg(it) });
       else if (it.type === 'mcpToolCall') emit(pane, 'tool-start', { id: it.id, name: mcpName(it), arg: shortJson(it.arguments) });
       else if (it.type === 'webSearch') emit(pane, 'tool-start', { id: it.id, name: 'Pesquisando na web', arg: it.query || '' });
+      else if (it.type === 'imageGeneration') emit(pane, 'tool-start', { id: it.id, name: 'Gerando imagem', arg: it.revisedPrompt || '' });
+      /* leva 5i: o agente do Codex (spawnAgent) vira o passo "Chamando um agente", como o Task/Agent do Claude (antes nao virava passo
+         nenhum). O id do passo e' o do item: a thread filha so' aparece no fim da chamada. O registro guarda esse id em passoId, para o
+         nome em portugues (app.js, aplicarNomesDosAgentes) achar o passo. As outras chamadas (esperar, mandar mensagem, fechar) nao viram passo. */
+      else if (it.type === 'collabAgentToolCall' && it.tool === 'spawnAgent' && it.id) emit(pane, 'tool-start', { id: it.id, name: 'Agent', arg: pedidoDoAgente(it) });
       break;
     }
 
@@ -459,6 +848,11 @@ function codexNotification(method, params) {
 
     case 'item/completed': {
       const it = params.item || {};
+      if (it.type === 'imageGeneration') {
+        const image = require('./cockpit-media').nativeImage(it);
+        emit(pane, 'tool-end', { id: it.id, output: image.text || 'Imagem gerada', error: !!image.error });
+        emit(pane, 'generated-image', image); break;
+      }
       if (it.type === 'agentMessage') {
         // Mensagens assíncronas podem intercalar: o id real identifica a fala.
         const idFim = idDoItem(it) || codex.paneMsgId.get(pane) || 'msg';
@@ -477,6 +871,9 @@ function codexNotification(method, params) {
           error: it.status === 'failed' || !!it.error || !!it.result?.isError });
       } else if (it.type === 'webSearch') {
         emit(pane, 'tool-end', { id: it.id, output: it.query || '', error: false });
+      } else if (it.type === 'collabAgentToolCall' && it.tool === 'spawnAgent' && it.id) {
+        // leva 5i: acabou a CHAMADA (o agente nasceu). O que ele faz depois e' do registro (Torre e Workflow), nao do passo
+        emit(pane, 'tool-end', { id: it.id, output: '', error: it.status === 'failed' });
       } else if (it.type === 'error') {
         emit(pane, 'note', { text: proto.normalizeError(it), error: true });
       }
@@ -556,6 +953,8 @@ function codexNotification(method, params) {
 }
 
 function mcpName(it) { return (it.server ? it.server + ' · ' : '') + (it.tool || 'MCP'); }
+// leva 5i: o pedido que o Codex mandou ao agente, numa linha so' e cortado (o passo mostra so' o comeco)
+function pedidoDoAgente(it) { return String(it.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 300); }
 function shortJson(v) { if (v == null) return ''; try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }
 function fileChangeArg(it) {
   const ch = it.changes || it.fileChanges || [];
@@ -613,7 +1012,7 @@ function claudeTravaDoModo(paneId, modo) {
     fs.writeFileSync(tmp, JSON.stringify({ permissions: { defaultMode: dm } }), { mode: 0o600 });
     fs.renameSync(tmp, out);
     return out;
-  } catch { return null; }
+  } catch (e) { logMain('claude-modo', e); return null; }
 }
 /* O init do stream-json diz o modo que o CLI REALMENTE subiu (o Haiku, por
    exemplo, nao tem modo Auto e cai em default calado). */
@@ -783,6 +1182,10 @@ function claudeStart(paneId, opts) {
   } else {
     // canal para ele perguntar antes de agir
     args.push('--permission-prompt-tool', 'stdio');
+    /* Tarefa 8: no Plano que veio do "Sem pedir permissao", o bypass fica
+       DISPONIVEL (sem ligar): o Executar do plano volta pra ele na mesma sessao
+       (setMode). So' nesse caso -- nunca libera mais do que o modo de antes. */
+    if (interacao.liberaBypassNoPlano(modo, opts.modoAntesDoPlano)) args.push('--allow-dangerously-skip-permissions');
     const sf = claudeTravaDoModo(paneId, modo);
     if (sf) args.push('--settings', sf);
   }
@@ -848,11 +1251,18 @@ function claudeStart(paneId, opts) {
   /* com -w o CLI entra em .claude/worktrees/<nome> ANTES de resolver a sessao:
      o .jsonl nasce na pasta do worktree, e o caminho emitido tem que ser esse */
   if (!remoto && nomeWt && args.includes('-w')) claudeCwd.set(paneId, path.join(opts.cwd || HOME, '.claude', 'worktrees', nomeWt));
-  let proc;
+  let proc, st, remoteHost;
   if (remoto) {
     if (!ssgValido(remoto)) { emit(paneId, 'note', { text: 'Servidor com endereço ou usuário inválido. Edite a aba.', error: true }); return false; }
+    remoteHost = createRemoteHostBridge({ broker: interactionBroker,
+      resolveScope: () => claudeScope(paneId),
+      isCurrent: () => !!st && claudePanes.get(paneId) === st && !st.parandoDeProposito,
+      write: line => proc.stdin.write(line),
+      onReady: ({ cwd }) => { if (st) st.remoteHostCwd = cwd; },
+      onUnavailable: message => emit(paneId, 'note', { text: message }),
+    });
     // '|| exit 1': se a pasta nao existir, o painel avisa em vez de rodar no lugar errado
-    const comando = cdRemoto(remoto.caminhoRemoto) + ' || exit 1; claude ' + args.map(qLinux).join(' ');
+    const comando = cdRemoto(remoto.caminhoRemoto) + ' || exit 1; ' + remoteHost.command(args);
     /* Sinal de vida a cada 20s. Sem isto o canal fica em silencio absoluto
        entre um turno e outro - e um turno longo, mais o tempo que voce leva
        lendo a resposta, passa de dez minutos. Conexao parada e' descartada por
@@ -869,8 +1279,16 @@ function claudeStart(paneId, opts) {
     proc = spawnBin(claudeBin(), args, { cwd: opts.cwd || HOME, env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   }
   proc.stdin.on('error', () => {});   // escrever apos o processo morrer nao pode derrubar o app inteiro
-  const st = { proc, buf: '' };
+  /* Tarefa 8: geracao (a chave dos pedidos de pergunta/plano muda junto), o
+     modo em que ele subiu, o modo de antes do Plano (so' os 4 de executar; o
+     Executar volta pra ele) e se ha' o canal de permissao (stdio). */
+  st = {
+    proc, remoteHost, buf: '', geracao: ++claudeGeracao, modo,
+    modoAntesDoPlano: (modo === 'plan' && Object.prototype.hasOwnProperty.call(interacao.MODO_DO_CLI, opts.modoAntesDoPlano)) ? opts.modoAntesDoPlano : null,
+    comCanal: modo !== 'bypass',
+  };
   claudePanes.set(paneId, st);
+  st.hostCapability = hostCapabilities.get(String(paneId)) || '';
 
   // o endereco ja e' nosso (--session-id): tela e config ficam sabendo AGORA.
   // O 'system init' vem depois com o mesmo id, e o caminho ja bate.
@@ -897,6 +1315,7 @@ function claudeStart(paneId, opts) {
       if (!line) continue;
       let m; try { m = JSON.parse(line); } catch { continue; }
       if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
+      if (remoteHost) { m = remoteHost.route(m); if (!m) continue; }
       claudeMessage(paneId, m);
     }
   });
@@ -910,6 +1329,8 @@ function claudeStart(paneId, opts) {
   // handshake que liga o canal de permissao (e devolve a lista de skills)
   try { proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'init-' + paneId, request: { subtype: 'initialize', hooks: {} } }) + '\n'); } catch {}
   proc.on('close', (codigo) => {
+    remoteHost?.dispose();
+    interactionBroker.cancelScope({ paneId: String(paneId), generation: st.geracao, engine: 'claude' }, 'Processo encerrado.');
     // usa o "st" deste processo, nao o que estiver no mapa agora: se o
     // usuario trocou de processo rapido, o mapa ja pode apontar para o novo
     const atual = claudePanes.get(paneId) === st;
@@ -927,6 +1348,8 @@ function claudeStart(paneId, opts) {
     emit(paneId, 'engine-down', { motivo, engine: 'claude', codigo, sinal: proc.signalCode || null, cauda: st.erro || '', remoto: !!remoto });
   });
   proc.on('error', (e) => {
+    remoteHost?.dispose();
+    interactionBroker.cancelScope({ paneId: String(paneId), generation: st.geracao, engine: 'claude' }, 'Processo encerrado.');
     if (claudePanes.get(paneId) !== st) return;
     observabilidade.encerrarPainel(paneId, 'claude', 'O processo Claude falhou.');
     claudePanes.delete(paneId);
@@ -938,6 +1361,7 @@ function claudeStart(paneId, opts) {
 /* pedido de permissao que nao vale mais: responde ao motor (senao a thread do
    Codex fica esperando pra sempre) e manda a tela tirar o cartao */
 function descartarPermissoes(paneId) {
+  interactionBroker.cancelScope({ paneId: String(paneId) }, 'Sessão encerrada.');
   let tinha = false;
   for (const [k, a] of [...pendingApprovals]) {
     if (!a || a.paneId !== paneId) continue;
@@ -947,6 +1371,8 @@ function descartarPermissoes(paneId) {
   }
   // pergunta nativa do Codex segue o mesmo destino do cartao de permissao
   descartarPerguntasCodex(paneId);
+  // Tarefa 8: e a pergunta e o plano do Claude (a caixa e o cartao saem da tela)
+  descartarPedidosClaude(paneId);
   if (tinha) emit(paneId, 'permissao-cancelada', {});
 }
 
@@ -964,6 +1390,7 @@ function claudeStop(paneId) {
   descartarPermissoes(paneId);
   const st = claudePanes.get(paneId);
   if (st) {
+    st.remoteHost?.dispose();
     st.parandoDeProposito = true;
     // solta o ouvinte antes de matar: entre o SIGTERM e a morte de verdade ele
     // ainda despejaria texto do processo velho
@@ -1291,6 +1718,16 @@ const LIM_IMG_PASSO = 3 * 1024 * 1024;   // em base64 (~2,2 MB de png)
 
 function claudeMessage(paneId, m) {
   observabilidade.observarClaude(paneId, m);
+  if (m.type === 'system' && m.subtype === 'init') { const st = claudePanes.get(paneId); if (st) st.sessionId = m.session_id; }
+  if (m.type === 'control_cancel_request') { interactionBroker.resolved(claudeScope(paneId, m), m.request_id); return; }
+  if (m.type === 'control_request' && m.request?.subtype === 'elicitation') {
+    const st = claudePanes.get(paneId);
+    if (st) interactionBroker.requestClaude(claudeScope(paneId, m), m, response => {
+      if (claudePanes.get(paneId) === st) try { st.proc.stdin.write(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response } }) + '\n'); } catch {}
+    });
+    return;
+  }
+  if (m.type === 'result') { claudePanes.get(paneId)?.remoteHost?.cancelTurn(); interactionBroker.cancelScope({ paneId: String(paneId), engine: 'claude' }, 'Turno encerrado.'); }
   if (m.type === 'control_response') return;
   /* sugestao de proxima mensagem (--prompt-suggestions). O campo exato pode
      variar entre versoes do CLI: le os nomes conhecidos e descarta o resto. */
@@ -1307,6 +1744,11 @@ function claudeMessage(paneId, m) {
     return;
   }
   if (m.type === 'control_request' && m.request && m.request.subtype === 'can_use_tool') {
+    /* Tarefa 8: a pergunta (AskUserQuestion), o plano (ExitPlanMode) e o pedido
+       que o CLI marca como "precisa do usuario" saem daqui ANTES do
+       auto-liberar: nem o "Sempre permitir" nem o Permitir de um clique
+       respondem por eles. */
+    if (pedidoDeInteracaoClaude(paneId, m)) return;
     // ferramenta que voce liberou "sempre" neste painel: responde sozinho.
     // As do proprio Cockpit (perguntar, plano) tambem: so' desenham na tela, e
     // no modo manual um cartao por atualizacao do plano travaria o turno.
@@ -1411,6 +1853,12 @@ function claudeMessage(paneId, m) {
         if (texto) emit(paneId, 'aviso-agente', { texto });
         emit(paneId, 'tool-start', { id: c.id, name: c.name, arg: texto, mudanca: null });
       }
+      else if (c.type === 'tool_use' && (c.name === 'AskUserQuestion' || c.name === 'ExitPlanMode')
+        && (claudePanes.get(paneId) || {}).comCanal) {
+        /* Tarefa 8: com o canal de permissao, pergunta e plano tem tela propria
+           (a caixa de perguntas e o cartao "Plano pronto"): nao viram passo.
+           Sem o canal (Sem pedir permissao, servidor) segue como era. */
+      }
       else if (c.type === 'tool_use') emit(paneId, 'tool-start', { id: c.id, name: c.name, arg: claudeToolArg(c.name, c.input), mudanca: mudancaDaFerramenta(c.name, c.input, paneId) });
     });
     return;
@@ -1485,6 +1933,90 @@ function claudeMessage(paneId, m) {
   }
 }
 
+/* ============ Tarefa 8 (26/09): pergunta e plano do proprio Claude ============
+   O can_use_tool que precisa de VOCE e nao cabe no Permitir/Negar:
+   - AskUserQuestion vai pra caixa de perguntas (a mesma do mcp__cockpit__perguntar);
+     a resposta volta pelo pergunta:responder;
+   - ExitPlanMode vira o cartao "Plano pronto" (evento 'plano-pronto'); a
+     resposta volta pelo pane:plano;
+   - pedido desconhecido que o CLI marca com requires_user_interaction e'
+     recusado na hora, com recado: um clique em Permitir aprovaria sem a
+     interacao que ele pede.
+   UMA resposta por pedido: quem responde (pergunta:responder, pane:plano,
+   descartarPedidosClaude) tira o pedido do mapa ANTES de escrever, e so'
+   escreve no processo que perguntou (escreverRespostaClaude).
+   Devolve true quando o pedido foi tratado aqui. */
+function pedidoDeInteracaoClaude(paneId, m) {
+  const req = m.request || {};
+  const nome = String(req.tool_name || '');
+  const nossa = nome === 'AskUserQuestion' || nome === 'ExitPlanMode';
+  const pedeVoce = req.requires_user_interaction === true && !/^mcp__cockpit__/.test(nome);
+  if (!nossa && !pedeVoce) return false;
+  const st = claudePanes.get(paneId);
+  const pedido = { paneId, processo: st || null, reqId: m.request_id,
+    input: (req.input && typeof req.input === 'object' && !Array.isArray(req.input)) ? req.input : {} };
+  const recusar = (nota) => {
+    escreverRespostaClaude(pedido, interacao.respostaSemTela(nome));
+    emit(paneId, 'note', { text: nota, error: true });
+    return true;
+  };
+  const geracao = st ? st.geracao : 0;
+  if (nome === 'AskUserQuestion') {
+    const perguntas = interacao.perguntasDoAsk(pedido.input);
+    // sem pergunta que de pra mostrar, a caixa nao abre: o motor nao pode ficar esperando por ela
+    if (!perguntas.length) return recusar('Ele tentou perguntar algo, mas as perguntas vieram num formato que o Cockpit não mostra. Recusei; ele segue sem elas.');
+    const chave = interacao.chaveDoPedido('claude_q_', geracao, m.request_id);
+    pedidosClaude.set(chave, { ...pedido, tipo: 'perguntas' });
+    emit(paneId, 'pergunta', { id: chave, perguntas, bloqueante: true });
+    return true;
+  }
+  if (nome === 'ExitPlanMode') {
+    /* um plano por painel, como na tela (P.planoPendente): um pedido novo
+       substitui o velho, que recebe um "nao" -- senao sobraria um pedido que
+       nenhum cartao responde e o motor poderia ficar esperando por ele */
+    for (const [k, velho] of [...pedidosClaude]) {
+      if (!velho || velho.paneId !== paneId || velho.tipo !== 'plano') continue;
+      pedidosClaude.delete(k);
+      escreverRespostaClaude(velho, interacao.respostaDeDescarte('plano'));
+      emit(paneId, 'plano-cancelado', { chave: k });
+    }
+    const chave = interacao.chaveDoPedido('claude_p_', geracao, m.request_id);
+    pedidosClaude.set(chave, { ...pedido, tipo: 'plano' });
+    emit(paneId, 'plano-pronto', { chave, plano: String(pedido.input.plan || ''), arquivoDoPlano: String(pedido.input.planFilePath || '') });
+    return true;
+  }
+  return recusar('Ele pediu uma confirmação que o Cockpit ainda não sabe mostrar (' + nome.slice(0, 80) + '). Recusei; ele segue sem ela.');
+}
+
+/* Escreve a control_response SO' no processo que perguntou: se o painel ja'
+   subiu outro processo (ou este esta' parando), nada sai. try/catch: stdin de
+   processo morrendo nao derruba o app. */
+function escreverRespostaClaude(a, resposta) {
+  const st = a && claudePanes.get(a.paneId);
+  if (!st || st !== a.processo || st.parandoDeProposito) return false;
+  try {
+    st.proc.stdin.write(JSON.stringify({
+      type: 'control_response',
+      response: { request_id: a.reqId, subtype: 'success', response: resposta },
+    }) + '\n');
+    return true;
+  } catch { return false; }
+}
+
+/* Fim de turno, parar, fechar o painel (descartarPermissoes): cada pedido
+   pendurado deste painel recebe um "nao" (se o processo que perguntou ainda
+   estiver ai') e a tela tira a caixa e o cartao. */
+function descartarPedidosClaude(paneId) {
+  for (const [chave, a] of [...pedidosClaude]) {
+    // filtro ESTRITO: um paneId indefinido nao pode significar "cancela tudo"
+    if (!a || a.paneId !== paneId) continue;
+    pedidosClaude.delete(chave);
+    escreverRespostaClaude(a, interacao.respostaDeDescarte(a.tipo));
+    if (a.tipo === 'plano') emit(paneId, 'plano-cancelado', { chave });
+    else emit(paneId, 'pergunta-cancelada', { id: chave, texto: 'A pergunta foi encerrada: o turno acabou ou o painel parou.' });
+  }
+}
+
 /* o que a ferramenta vai mudar no arquivo, pra desenhar o diff na tela.
    O dado ja vinha no input da ferramenta - era so' parar de jogar fora. */
 const LIM_DIFF = 100 * 1024;
@@ -1494,13 +2026,16 @@ function mudancaDaFerramenta(name, inp, paneId) {
   const ehRemoto = paneId ? claudeRemoto.has(paneId) : false;
   const corta = (s) => { const t = String(s == null ? '' : s); return t.length > LIM_DIFF ? t.slice(0, LIM_DIFF) + '\n…(cortado)' : t; };
   const caminho = inp.file_path || inp.notebook_path || inp.path || '';
+  // Tarefa 9: "todas" (replace_all) vai junto; o desfazer recusa troca de todas as ocorrencias
   if (name === 'Edit' && (inp.old_string !== undefined || inp.new_string !== undefined)) {
-    return { path: caminho, antes: corta(inp.old_string), depois: corta(inp.new_string), tipo: 'edit' };
+    return { path: caminho, antes: corta(inp.old_string), depois: corta(inp.new_string), tipo: 'edit', todas: !!inp.replace_all };
   }
   if (name === 'MultiEdit' && Array.isArray(inp.edits)) {
     return {
       path: caminho, tipo: 'multi',
       partes: inp.edits.slice(0, 20).map((e) => ({ antes: corta(e.old_string), depois: corta(e.new_string) })),
+      // a tela ve no maximo 20 trocas; o desfazer precisa saber se a lista veio inteira
+      todas: inp.edits.some((e) => !!(e && e.replace_all)), total: inp.edits.length,
     };
   }
   if (name === 'Write' && inp.content !== undefined) {
@@ -1508,23 +2043,126 @@ function mudancaDaFerramenta(name, inp, paneId) {
     // Sem isso, sobrescrever 2000 linhas aparecia como "+50, nada removido".
     let antes = '';
     let existia = false;
+    let incerto = !caminho;
+    let antesInexato = false;
     // caminho de rede (\\servidor\...) pode demorar muito: nao vale travar o app
     const ehRede = /^\\\\/.test(String(caminho || ''));
     if (!ehRemoto && !ehRede) {
       try {
         if (caminho && fs.existsSync(caminho)) {
+          existia = true;
+          incerto = true;   // visto no disco: erro/non-file nunca significa arquivo novo
           const st = fs.statSync(caminho);
-          if (st.isFile() && st.size <= LIM_DIFF) { antes = fs.readFileSync(caminho, 'utf8'); existia = true; }
+          if (st.isFile() && st.size <= LIM_DIFF) {
+            const bruto = fs.readFileSync(caminho);
+            antes = bruto.toString('utf8'); existia = true;
+            incerto = false;
+            /* Tarefa 9: o desfazer so' devolve o antes se ele for o arquivo de ANTES do motor gravar, byte
+               a byte. Sem cartao de permissao (auto, auto-edit, sem pedir permissao, regra "allow") o CLI
+               grava sem esperar o main, entao nao confia quando: o arquivo foi mexido desde o comeco do
+               turno (pode ja' ser o da IA) ou nao ha' turno conhecido; leu 0 bytes (truncado e ainda nao
+               escrito); o tamanho ou a hora mudaram durante a leitura; o UTF-8 nao volta igual. */
+            const inicio = paneId ? vigiaTurno.inicioDoTurno(paneId) : 0;
+            let depoisDeLer = null;
+            try { depoisDeLer = fs.statSync(caminho); } catch {}
+            antesInexato = !inicio || st.mtimeMs >= inicio || bruto.length === 0 || bruto.length !== st.size
+              || !depoisDeLer || depoisDeLer.size !== st.size || depoisDeLer.mtimeMs !== st.mtimeMs
+              || !Buffer.from(antes, 'utf8').equals(bruto);
+          }
           else if (st.isFile()) return { path: caminho, tipo: 'write-grande', depois: corta(inp.content), bytes: st.size };
+        } else if (caminho) {
+          // existsSync tambem devolve false em falhas de acesso. So ENOENT prova ausencia.
+          try { fs.lstatSync(caminho); incerto = true; }
+          catch (e) { incerto = !e || e.code !== 'ENOENT'; }
         }
-      } catch {}
+      } catch { incerto = true; }
     }
     // sem poder olhar o arquivo, nao afirma que e' novo
-    const tipo = (ehRemoto || ehRede) ? 'write-incerto' : (existia ? 'write' : 'write-novo');
-    return { path: caminho, antes: corta(antes), depois: corta(inp.content), tipo };
+    const tipo = (ehRemoto || ehRede || incerto) ? 'write-incerto' : (existia ? 'write' : 'write-novo');
+    return { path: caminho, antes: corta(antes), depois: corta(inp.content), tipo, ...(antesInexato ? { antesInexato: true } : {}) };
   }
   return null;
 }
+
+/* Tarefa 9 (27/09): "Desfazer esta mudança" no passo. A tela manda SO'
+   { paneId, id }; o resto vem do registro do que o proprio main emitiu
+   (guardarMudancaEmitida). Recusa sem tocar no disco: painel remoto ou
+   trabalhando, passo que o main nao emitiu (ou ja' desfeito, ou com id
+   repetido), Write grande ou incerto, caminho relativo ou de rede, "trocar
+   todas", passo com varios arquivos, texto cortado ou vazio.
+   Depois: atalho (symlink) resolvido pro arquivo de verdade, ate' 5 MB, sem
+   link fisico, UTF-8 que volta byte a byte; o nucleo puro (desfazer-edicao.js)
+   decide o conteudo; grava por temporario + rename na mesma pasta e so' se o
+   arquivo nao mudou desde a leitura. Write de arquivo novo vai pra Lixeira.
+   Qualquer duvida: nada muda. */
+ipcMain.handle('arquivo:desfazer', async (_e, pedido) => {
+  const { MOTIVOS, LIMITE_BYTES } = desfazerEdicao;
+  const nao = (codigo, detalhe) => ({ ok: false, erro: (MOTIVOS[codigo] || MOTIVOS.falhou) + (detalhe ? ' (' + detalhe + ')' : '') });
+  const o = (pedido && typeof pedido === 'object') ? pedido : {};
+  const paneId = typeof o.paneId === 'string' ? o.paneId : '';
+  const id = typeof o.id === 'string' ? o.id : '';
+  if (!paneId || !id) return nao('sumiu');
+  if (remotePaneTargets.has(paneId) || claudeRemoto.has(paneId)) return nao('remoto');
+  // o agente trabalhando pode estar mexendo no mesmo arquivo agora
+  if (vigiaTurno.esta(paneId) || paineisEmTrabalho.has(paneId)) return nao('trabalhando');
+  const doPainel = mudancasEmitidas.get(paneId);
+  const reg = doPainel ? doPainel.itens.get(id) : null;
+  if (!reg) return nao('sumiu');
+  if (reg.repetido) return nao('idRepetido');
+  if (reg.desfeita) return nao('desfeita');
+  if (reg.andando) return nao('andando');
+  // so' o passo que o main viu terminar ok: negado ou com erro nao mudou o arquivo
+  if (reg.fim === 'erro') return nao('passoErro');
+  if (reg.fim !== 'ok') return nao('passoAberto');
+  if (reg.tipo === 'write-grande') return nao('grande');
+  if (reg.tipo === 'write-incerto') return nao('incerto');
+  if (/^[\\/]{2}/.test(reg.path)) return nao('rede');
+  if (!desfazerEdicao.caminhoLocal(reg.path, EH_WIN)) return nao('caminho');
+  const recusa = desfazerEdicao.validarMudanca(reg.mudanca);
+  if (recusa) return { ok: false, erro: recusa.motivo };
+  // daqui pra frente toca no disco; o registro fica preso ate' acabar (dois cliques nao desfazem duas vezes)
+  reg.andando = true;
+  try {
+    let real;
+    try { real = fs.realpathSync.native(reg.path); } catch { return nao('naoExiste'); }
+    if (/^[\\/]{2}/.test(real)) return nao('rede');   // unidade mapeada que aponta pra rede
+    const st = fs.statSync(real);
+    if (!st.isFile()) return nao('naoArquivo');
+    if (st.size > LIMITE_BYTES) return nao('grandeDemais');
+    // link fisico: o temporario + rename quebraria o link, e gravar no lugar nao e' atomico (revisao 1)
+    if (st.nlink > 1) return nao('linkFisico');
+    const bruto = fs.readFileSync(real);
+    const atual = bruto.toString('utf8');
+    if (!Buffer.from(atual, 'utf8').equals(bruto)) return nao('naoUtf8');
+    const plano = desfazerEdicao.planejarDesfazer(atual, reg.mudanca);
+    if (!plano.ok) return { ok: false, erro: plano.motivo };
+    // outro programa gravou depois da leitura: nao pisa em cima
+    const mexeram = () => { const agora = fs.statSync(real); return agora.size !== st.size || agora.mtimeMs !== st.mtimeMs; };
+    if (plano.lixeira) {
+      if (mexeram()) return nao('mudou');
+      try { await shell.trashItem(real); }
+      catch (e) { return nao(e && (e.code === 'EBUSY' || e.code === 'EPERM') ? 'aberto' : 'lixeira'); }
+    } else {
+      // na MESMA pasta (o rename fica no mesmo disco); nome curto, pra nao estourar o limite do nome
+      const tmp = path.join(path.dirname(real), '.' + path.basename(real).slice(0, 60) + '.desfazer-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + '.tmp');
+      let trocou = false;
+      try {
+        fs.writeFileSync(tmp, plano.novoConteudo, { encoding: 'utf8', flag: 'wx' });
+        try { fs.chmodSync(tmp, st.mode & 0o7777); } catch {}   // as permissoes do arquivo de verdade
+        if (mexeram()) return nao('mudou');
+        fs.renameSync(tmp, real);
+        trocou = true;
+      } finally { if (!trocou) { try { fs.unlinkSync(tmp); } catch {} } }
+    }
+    reg.desfeita = true;
+    return { ok: true };
+  } catch (e) {
+    const codigo = e && e.code;
+    if (codigo === 'EBUSY' || codigo === 'EPERM') return nao('aberto');
+    if (codigo === 'ENOENT') return nao('naoExiste');
+    return nao('falhou', codigo || String(e && e.message || e).slice(0, 120));
+  } finally { reg.andando = false; }
+});
 
 function claudeToolArg(name, inp) {
   if (!inp) return '';
@@ -1543,15 +2181,15 @@ const escondido = (nome) => nome.startsWith('.') && !PONTO_OK.includes(nome);
 // ordem da arvore: pasta antes de arquivo, e dentro de cada grupo por nome
 const ordemDaArvore = (a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1);
 
-function listDir(dir) {
+async function listDir(dir) {
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return { error: e.message }; }
+  try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return { error: e.message }; }
   const out = [];
   for (const e of entries) {
     if (escondido(e.name)) continue;
     if (IGNORE.has(e.name)) continue;
     let isDir = e.isDirectory();
-    if (e.isSymbolicLink()) { try { isDir = fs.statSync(path.join(dir, e.name)).isDirectory(); } catch { continue; } }
+    if (e.isSymbolicLink()) { try { isDir = (await fs.promises.stat(path.join(dir, e.name))).isDirectory(); } catch { continue; } }
     out.push({ name: e.name, dir: isDir, path: path.join(dir, e.name) });
   }
   out.sort(ordemDaArvore);
@@ -1629,28 +2267,116 @@ function registrosNul(b64) {
 /* ======================= conversas recentes ======================= */
 const CLAUDE_PROJ = path.join(HOME, '.claude/projects');
 const NOMES_PATH = () => path.join(app.getPath('userData'), 'nomes.json');
-function lerNomes() { try { return JSON.parse(fs.readFileSync(NOMES_PATH(), 'utf8')); } catch { return {}; } }
-function salvarNomes(o) { gravarSeguro(NOMES_PATH(), JSON.stringify(o)); }
+/* Tarefa 6 (revisao): o nomes.json guarda o nome que voce deu a TODAS as
+   conversas. Arquivo que nao existe (ou vazio) = nenhum nome ainda ({}).
+   Arquivo que existe mas nao deu pra ler (preso por outro programa, uma pasta
+   no lugar) ou que nao e' JSON = null: quem GRAVA recusa -- gravar em cima do
+   {} apagava todo nome seu, e o nome automatico grava bem mais vezes agora --
+   e quem confere nome seu trata como "nao sei", nunca como "nao ha'". A lista
+   (lerNomes) segue lendo {} nesse caso: mostra o nome do motor.
+   Rodada final da leva 5: vazio, so' espaco ou zeros, ou JSON quebrado (queda no meio da gravacao) le o .bak que o
+   gravarSeguro guarda; sem .bak que abra, fica como era. O {} de verdade (voce apagou os nomes) nao cai no .bak. */
+function lerNomesSeguro() {
+  const objeto = (o) => ((o && typeof o === 'object' && !Array.isArray(o)) ? o : null);
+  const daCopia = () => { try { return objeto(JSON.parse(fs.readFileSync(NOMES_PATH() + '.bak', 'utf8'))); } catch { return null; } };
+  let texto;
+  try { texto = fs.readFileSync(NOMES_PATH(), 'utf8'); }
+  catch (e) { return e && e.code === 'ENOENT' ? {} : null; }
+  if (/^[\s\0]*$/.test(texto)) return daCopia() || (texto.trim() ? null : {});
+  try { return objeto(JSON.parse(texto)); }
+  catch { return daCopia(); }
+}
+function lerNomes() { return lerNomesSeguro() || {}; }
+// leva 5: o .bak so' sai de um nomes.json que abre (um vazio de queda tomava o lugar da copia boa)
+function salvarNomes(o) { return gravarSeguro(NOMES_PATH(), JSON.stringify(o), (anterior) => { try { const v = JSON.parse(anterior); return !!v && typeof v === 'object' && !Array.isArray(v); } catch { return false; } }); }
+const NOMES_ILEGIVEIS = 'Não consegui ler os nomes das conversas (nomes.json). Nada foi gravado, pra não apagar os nomes que você deu.';
 
-ipcMain.handle('sessao:renomear', async (_e, { engine, id, nome, auto, remoto }) => {
-  if (remoto != null) return remoteEngines.rename(engine, remoto, id, nome);
-  const todos = lerNomes();
-  /* leva 41 (B6): o nome de 3 palavras do Cockpit mora em "_auto", separado do
-     seu. Nao mexe no nome que voce deu nem no do Codex (la' seria "seu"). */
-  if (auto) { if (id) { tituloAuto.gravarNomeAuto(todos, id, nome); salvarNomes(todos); } return true; }
+ipcMain.handle('sessao:renomear', async (_e, { engine, id, nome, auto, remoto } = {}) => {
+  /* Tarefa 6 (27/09): o nome que VOCE deu vence sempre. Ele cancela a revisao
+     automatica que estiver rodando pra esta conversa (o claude -p morre), e o
+     automatico que chegar depois e' recusado -- a resposta traz o seu nome, e
+     a tela adota ele. (revisorDeNomes nasce mais abaixo, com o claude-rapido:
+     este canal so' e' chamado depois que o arquivo inteiro carregou.) */
+  if (!auto && id) revisorDeNomes.cancelarDaConversa(engine, id);
+  // o automatico no servidor fica marcado como automatico (nunca vira nome seu)
+  if (remoto != null) return remoteEngines.rename(engine, remoto, id, nome, { auto: !!auto });
+  if (auto && !id) return true;
+  // nomes.json que existe mas nao deu pra ler: nada e' gravado por cima (apagaria os nomes seus)
+  const todos = lerNomesSeguro();
+  if (!todos) return { ok: false, error: NOMES_ILEGIVEIS };
+  /* leva 41 (B6): o nome do Cockpit mora em "_auto", separado do seu. Nao mexe
+     no nome que voce deu nem no do Codex (la' seria "seu"). */
+  if (auto) {
+    const meu = tituloAuto.nomeDaConversa(todos, id);
+    if (meu.manual) return { ok: false, conflito: true, manual: true, nome: meu.nome };
+    tituloAuto.gravarNomeAuto(todos, id, nome);
+    return salvarNomes(todos) ? true : { ok: false, error: 'Não consegui gravar o nome da conversa.' };
+  }
   if (nome && nome.trim()) todos[id] = nome.trim(); else delete todos[id];
-  salvarNomes(todos);
+  if (!salvarNomes(todos)) return { ok: false, error: 'Não consegui gravar o nome da conversa.' };
   if (engine === 'codex' && id) {
     try { await codexStart(); await codexReq('thread/name/set', { threadId: id, name: nome || null }); } catch {}
   }
   return true;
 });
 
-/* leva 41 (B6): 'titulo:gerar' -- o Haiku resume a 1a mensagem em 3 palavras.
-   Roda aqui no PC mesmo pra painel da VPS (so' texto); falhou = titulo vazio. */
-tituloAuto.registrar(ipcMain, {
-  spawnBin, claudeBin, buildEnv: () => buildEnv(), matarProcesso,
-  pastaDados: () => app.getPath('userData'),
+/* Tarefa 1 (26/09): o executor UNICO do "claude -p" rapido fora de painel
+   (src/claude-rapido.js: stdin, ambiente limpo, so' com a assinatura). UMA
+   instancia, compartilhada por todas as funcoes -- o Mais detalhes, o nome
+   da conversa (Tarefa 6) e o dos agentes depois --, para o cache de 10 min do
+   "claude auth status" valer para todas. Quem chegar depois usa ESTA; nao
+   cria outra. Nasce ANTES do tituloAuto.registrar, que usa esta mesma
+   instancia (depois dela, daria erro de TDZ). spawnBin (e nao o spawn
+   cru): Claude instalado pelo npm e' um .cmd, que o Node nao deixa chamar
+   direto no Windows. */
+const claudeRapido = criarClaudeRapido({
+  acharBin, spawn: spawnBin, buildEnv: () => buildEnv(), pastaDados: () => app.getPath('userData'),
+});
+
+/* Tarefa 3 (26/09): Mais detalhes de um trecho (src/mais-detalhes.js). A
+   pergunta roda aqui no PC mesmo pra painel da VPS: e' so' texto. */
+const maisDetalhes = criarMaisDetalhes({ claudeRapido });
+ipcMain.handle('detalhe:perguntar', (_e, o) => (JANELA_DE_TESTE ? { ok: false, erro: AVISO_JANELA_DE_TESTE } : maisDetalhes.perguntar(o)));   // janela de teste: nada sobe para o claude -p
+ipcMain.handle('detalhe:cancelar', (_e, o) => maisDetalhes.cancelar(o));
+
+/* Tarefa 6 (27/09): 'titulo:revisar' e 'titulo:cancelar' -- o nome automatico
+   da conversa acompanha o trabalho (src/titulo-auto.js). Usa a instancia UNICA
+   do claude-rapido (logo acima): pedido pelo stdin, ambiente limpo, so' com a
+   assinatura. Roda aqui no PC mesmo pra painel da VPS (so' texto). O nome seu
+   e' conferido antes e depois da chamada: no nomes.json (conversa do PC) ou no
+   registro das conversas remotas (remoteStore, criado mais abaixo). */
+/* conferencia da rodada 2 da leva 5i (achado A): na janela de teste o nome automatico e o nome dos agentes nao chamam o Haiku. A
+   lateral lista as conversas reais e, sem o nomes.json (o saneador tira), a fila mandaria ate' 90 pedidos por abertura. O claudeRapido e'
+   um OBJETO ({ perguntar, cancelar, contaDeAssinatura }): na janela de teste vai uma copia em que so' o perguntar recusa, no formato de
+   falha que ele ja' devolve. A trava fica DENTRO de cada chamada (e com typeof) porque os testes recortam so' o registrar num vm. */
+const revisorDeNomes = tituloAuto.registrar(ipcMain, {
+  claudeRapido: (typeof JANELA_DE_TESTE !== 'undefined' && JANELA_DE_TESTE) ? { ...claudeRapido, perguntar: async () => ({ ok: false, erro: 'janela-de-teste', motivo: 'janela-de-teste' }) } : claudeRapido,
+  nomeManual: ({ engine, id, remoto }) => {
+    if (remoto != null) {
+      try { const r = remoteStore.read(remoto, engine, id); return r && r.nomeCustomizado ? String(r.title || '') : ''; } catch { return ''; }
+    }
+    // null = nao deu pra ler o nomes.json: "nao sei" (o revisor nem chama nem aplica), nunca "nao ha'"
+    const todos = lerNomesSeguro();
+    if (!todos) return null;
+    const meu = tituloAuto.nomeDaConversa(todos, id);
+    return meu.manual ? meu.nome : '';
+  },
+});
+
+/* Tarefa 7 (27/09): 'agentes:nomes' -- o nome dos agentes em portugues de
+   gente (src/nomes-agentes.js). A tela junta os agentes que nascem juntos e
+   manda UM lote; aqui vai uma chamada so' ao Haiku, pela instancia UNICA do
+   claude-rapido (logo acima: stdin, ambiente limpo, so' com a assinatura).
+   Liga e desliga junto com o nome automatico da conversa (cfg.tituloAuto,
+   ligado por padrao): desligado nos Ajustes, nada sobe. Roda aqui no PC mesmo
+   pra painel da VPS (so' texto). */
+const nomeadorDeAgentes = nomesAgentes.registrar(ipcMain, {
+  claudeRapido: (typeof JANELA_DE_TESTE !== 'undefined' && JANELA_DE_TESTE) ? { ...claudeRapido, perguntar: async () => ({ ok: false, erro: 'janela-de-teste', motivo: 'janela-de-teste' }) } : claudeRapido,
+  // rodada 2 da leva 5: com o config nao lido o padrao nao e' o "ligado" seu: nao nomeia desta vez. Duas excecoes:
+  // - a tela que leu bem (telaComPadrao false) vale mesmo com a leitura presa agora: ela confere cfg.tituloAuto antes de mandar o
+  //   lote, e sem isso o agente, ja' marcado como pedido, ficava em ingles pra sempre;
+  // - o semCopia (nao desliga na sessao) so' segura se ESTA leitura deu o padrao (sem chave nenhuma).
+  ligado: () => { const c = loadConfig(); return c.tituloAuto !== false && (loadConfig.naoLido !== true || loadConfig.telaComPadrao === false) && (loadConfig.semCopia !== true || Object.keys(c).length > 0); },
 });
 
 /* ===== ramificar (fork) de verdade =====
@@ -1741,7 +2467,8 @@ function forkClaudeCortado({ id, doFim, alvo, repetidasDepois, cwd }) {
     bruto = fs.readFileSync(src, 'utf8');
   } catch (e) { return { error: 'Não consegui ler a conversa: ' + e.message }; }
   const novo = crypto.randomUUID();
-  const r = ramoClaude.cortarConversa(bruto, { idVelho: id, idNovo: novo, doFim, alvo, repetidasDepois, ehTecnico, semContexto });
+  // o alvo e' o texto inteiro do balao (com o trecho citado, se houver): o corte le o arquivo com a mesma regra
+  const r = ramoClaude.cortarConversa(bruto, { idVelho: id, idNovo: novo, doFim, alvo, repetidasDepois, ehTecnico, semContexto: textoDoBalao });
   if (r.erro) return { error: r.erro };
   if (r.vazio) return { vazio: true };
   const destino = path.join(path.dirname(src), novo + '.jsonl');
@@ -1762,7 +2489,7 @@ async function forkClaudeRemoto({ remoto, id, doFim, alvo, repetidasDepois }) {
     const file = await arquivoClaudeNoServidor(remoto, id);
     const bruto = await remoteTransport.run(remoto, 'cat -- ' + qLinux(file));
     const novo = crypto.randomUUID();
-    const r = ramoClaude.cortarConversa(bruto, { idVelho: id, idNovo: novo, doFim, alvo, repetidasDepois, ehTecnico, semContexto });
+    const r = ramoClaude.cortarConversa(bruto, { idVelho: id, idNovo: novo, doFim, alvo, repetidasDepois, ehTecnico, semContexto: textoDoBalao });
     if (r.erro) return { error: r.erro }; if (r.vazio) return { vazio: true };
     const destino = path.posix.join(path.posix.dirname(file), novo + '.jsonl');
     await remoteTransport.run(remoto, 'umask 077; set -C; cat > ' + qLinux(destino), { input: r.texto });
@@ -1831,24 +2558,19 @@ function acharNaConversa(file, alvo, engine) {
 }
 
 const respira = () => new Promise((r) => setImmediate(r));
+const buscaLocal = require('./cockpit-search');
+const consultasConteudo = new WeakMap();
 ipcMain.handle('sessions:buscar', async (_e, { engine, termo, itens }) => {
-  const alvo = String(termo || '').toLowerCase().trim();
-  if (!alvo) return { achados: [], truncado: false };
-  const achados = [];
-  let truncado = false;
-  let lidos = 0;
-  // so as 400 mais recentes: passar de 5000 arquivos travava a lateral
-  for (const it of (itens || []).slice(0, 400)) {
-    if (!it.file) continue;
-    // devolve o controle ao app a cada 10 arquivos: sem isso a janela inteira
-    // congelava enquanto a busca lia centenas de megabytes
-    if (++lidos % 10 === 0) await respira();
-    try { if (fs.statSync(it.file).size > 3 * 1024 * 1024) truncado = true; } catch {}
-    const t = acharNaConversa(it.file, alvo, engine);
-    if (t) achados.push({ id: it.id, trecho: t });
-    if (achados.length >= 40) break;
-  }
-  return { achados, truncado };
+  const owner = _e.sender || _e;
+  let pending = consultasConteudo.get(owner);
+  if (!pending) { pending = new Map(); consultasConteudo.set(owner, pending); owner.once?.('destroyed', () => { for (const c of pending.values()) c.abort(); }); }
+  pending.get(engine)?.abort();
+  const controller = new AbortController(); pending.set(engine, controller);
+  const allowedRoots = engine === 'claude' ? [CLAUDE_PROJ] : engine === 'codex' ? [CODEX_SESS]
+    : engine === 'acp' ? [path.join(app.getPath('userData'), 'acp')] : CLIS[engine]?.conversas ? [CLIS[engine].pastaSessoes()] : [];
+  try { return await buscaLocal.searchContents(Array.isArray(itens) ? itens : [], termo, { signal: controller.signal, allowedRoots }); }
+  catch (error) { return error.name === 'AbortError' ? { achados: [], cancelled: true } : { error: error.message }; }
+  finally { if (pending.get(engine) === controller) pending.delete(engine); }
 });
 
 function tailRead(file, bytes) {
@@ -1951,72 +2673,13 @@ function fichaConversa(it) {
    buscar por SSH, nao da pra so' olhar o disco local. Um comando so' traz tudo
    (path + data + conteudo em base64 de cada sessao recente), pra nao abrir uma
    conexao SSH por arquivo. */
-function claudeSessionsRemoto(remoto) {
-  return new Promise((resolve) => {
-    if (!remoto || !remoto.host || !remoto.chave || !ssgValido(remoto)) {
-      return resolve({ error: 'Servidor desta aba está incompleto ou com endereço inválido. Edite a aba.' });
-    }
-    const script = "cd ~/.claude/projects 2>/dev/null && find . -name '*.jsonl' "
-      + "-not -path '*/subagents/*' -not -path '*/workflows/*' -printf '%T@ %s %p\\n' 2>/dev/null "
-      + "| sort -rn | head -80 | while IFS=' ' read -r mtime size path; do "
-      + "tb=$(tail -c 65536 \"$path\" 2>/dev/null | base64 -w0); "
-      + "hb=$(head -c 65536 \"$path\" 2>/dev/null | base64 -w0); "
-      + "printf '%s|~|%s|~|%s|~|%s|~|%s\\n' \"$path\" \"$mtime\" \"$size\" \"$tb\" \"$hb\"; done";
-    let proc;
-    try {
-      proc = spawnBin('ssh', ['-i', remoto.chave, '-p', String(remoto.porta || 22), '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=10', remoto.usuario + '@' + remoto.host, '--', script],
-        { env: buildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (e) { return resolve({ error: 'Não consegui rodar o ssh: ' + (e && e.message || e) }); }
-    let out = '';
-    let erroSsh = '';
-    const limite = setTimeout(() => {
-      try { proc.kill(); } catch {}
-      resolve({ error: 'O servidor não respondeu a tempo (25s). Conexão lenta ou servidor ocupado.' });
-    }, 25000);
-    proc.stdout.setEncoding?.('utf8');    proc.stdout.on('data', (d) => { out += d.toString('utf8'); });
-    proc.stderr.setEncoding?.('utf8');    proc.stderr.on('data', (d) => { erroSsh += d.toString('utf8'); });
-    proc.on('error', (e) => { clearTimeout(limite); resolve({ error: 'Não consegui chamar o ssh: ' + (e && e.message || e) }); });
-    proc.on('close', (code) => {
-      clearTimeout(limite);
-      /* o ssh saiu com erro: diz o motivo em vez de devolver lista vazia.
-         Mas "servidor onde o Claude nunca rodou" tambem sai com codigo 1 e sem
-         dizer nada (o `cd ~/.claude/projects` nao acha a pasta) -- e isso NAO e'
-         falha: e' so' nao ter conversa ainda. */
-      if (code !== 0 && !out.trim()) {
-        const motivo = motivoDoSsh(erroSsh, remoto);
-        if (motivo) return resolve({ error: motivo });
-        if (erroSsh.trim()) return resolve({ error: 'Não consegui falar com o servidor (o ssh saiu com código ' + code + ').' });
-        return resolve([]);   // conectou e nao ha' o que listar
-      }
-      const nomesMeus = Object.fromEntries(remoteStore.list('claude', remoto).filter(s => s.nomeCustomizado).map(s => [s.id, s.title]));
-      const out2 = [];
-      for (const linha of out.split('\n')) {
-        if (!linha) continue;
-        const partes = linha.split('|~|');
-        if (partes.length < 5) continue;
-        const [pathRel, mtimeStr, sizeStr, tailB64, headB64] = partes;
-        if ((Number(sizeStr) || 0) < 300) continue;
-        let tail = '', head = '';
-        try { tail = Buffer.from(tailB64, 'base64').toString('utf8'); } catch {}
-        try { head = Buffer.from(headB64, 'base64').toString('utf8'); } catch {}
-        const { title: tituloBruto, cwd: cwdReal, entrada } = analisarCabecaCauda(head, tail);
-        if (entrada && !ENTRADAS_DE_GENTE.includes(entrada)) continue;
-        const nomeArq = pathRel.split('/').pop() || pathRel;
-        const id = nomeArq.replace(/\.jsonl$/, '');
-        if (!tituloAuto.nomeDaConversa(nomesMeus, id).nome && !tituloBruto) continue;
-        const mtimeMs = Math.round((parseFloat(mtimeStr) || 0) * 1000);
-        /* a pasta VERDADEIRA da conversa, nao a da aba. O arquivo diz onde ela
-           rodou; carimbar a pasta da aba em todas fazia voce abrir uma conversa
-           de outro projeto achando que era deste. */
-        // seu nome > o de 3 palavras do Cockpit > o do arquivo (aiTitle / 1a fala)
-        out2.push(tituloAuto.aplicarNome({ engine: 'claude', id, title: tituloBruto, cwd: cwdReal || remoto.caminhoRemoto || '~', when: mtimeMs,
-          file: '', entrada, remoto: true }, nomesMeus));
-      }
-      out2.sort((a, b) => b.when - a.when);
-      resolve(out2);
-    });
-  });
+async function claudeSessionsRemoto(remoto, incluirRobos = false) {
+  try {
+    const rows = await require('./sessions-list').listClaudeAll(async page =>
+      JSON.parse(await remoteTransport.run(remoto, require('./claude-sessions-scan').script({ ...page, incluirRobos: !!incluirRobos }), { timeout: 45000 })));
+    const nomesMeus = tituloAuto.nomesDoRegistro(remoteStore.list('claude', remoto));
+    return rows.map(s => tituloAuto.aplicarNome(s, nomesMeus)).sort((a, b) => b.when - a.when);
+  } catch (e) { return { error: 'Não consegui ler todas as conversas do Claude na VPS: ' + e.message }; }
 }
 
 function claudeSessions(limit, incluirRobos) {
@@ -2041,40 +2704,62 @@ function claudeSessions(limit, incluirRobos) {
   return out;
 }
 
-function claudeHistory(file, maxMsgs) {
-  let data = '';
-  try {
-    const st = fs.statSync(file);
-    // arquivos gigantes: le so o final
-    data = st.size > 6 * 1024 * 1024 ? tailRead(file, 6 * 1024 * 1024) : fs.readFileSync(file, 'utf8');
-  } catch { return []; }
-  return mensagensDoJsonl(data, maxMsgs);
+/* Tarefa 5 (26/09): a conversa INTEIRA do arquivo, lida em blocos (antes: so'
+   os ultimos 6 MB, e dali so' os ultimos 60 itens). O corte e' de quem chama
+   (cortarHistorico): a tela leva 600 falas, o exportar 5000. */
+async function claudeHistory(file) {
+  const leitor = leitorDoJsonl();
+  await varrerLinhas(file, leitor.linha);
+  return leitor.fim();
 }
 
 /* o mesmo parse serve pro arquivo local e pro conteudo que veio do servidor */
-function mensagensDoJsonl(data, maxMsgs) {
+function mensagensDoJsonl(data) {
+  const leitor = leitorDoJsonl();
+  for (const line of String(data || '').split('\n')) leitor.linha(line);
+  return leitor.fim();
+}
+
+/* UMA linha do .jsonl do Claude vira mensagem(ns) da tela. O leitor guarda o
+   que vale entre as linhas (as mensagens e o teto de imagem) e serve aos dois
+   caminhos: o arquivo local lido em blocos (claudeHistory) e o texto que veio
+   do servidor (mensagensDoJsonl).
+   Imagem: o teto total da conversa (LIM_IMG_TOTAL) e' gasto do FIM pro
+   comeco -- as recentes ficam. Lendo do comeco, cada imagem nova entra e as
+   mais velhas saem ate' caber de novo. Gasto do comeco (como era), com a
+   conversa inteira voltando, os 8 MB iam todos pros prints mais antigos. */
+function leitorDoJsonl() {
   const msgs = [];
-  let gastoEmImagem = 0;
-  for (const line of String(data || '').split('\n')) {
-    if (!line.startsWith('{')) continue;
-    let d; try { d = JSON.parse(line); } catch { continue; }
+  const fila = [];   // imagens aceitas, da mais velha pra mais nova: { m, im }
+  let primeira = 0, gastoEmImagem = 0;
+  const linha = (line) => {
+    if (line.charCodeAt(0) !== 123) return;   // so' linha de JSON (comeca com chave)
+    let d; try { d = JSON.parse(line); } catch { return; }
     if (d.type === 'user' && d.message) {
       const c = d.message.content;
       let t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x && x.type === 'text').map(x => x.text).join('\n') : '';
       t = (t || '').trim();
       // as imagens que voce colou ficam gravadas aqui dentro: sem devolver, elas
-      // sumiam da conversa toda vez que o app reabria
-      let imgs = Array.isArray(c) ? c.filter(x => x && x.type === 'image' && x.source
+      // sumiam da conversa toda vez que o app reabria (6 por fala, no maximo)
+      const imgs = Array.isArray(c) ? c.filter(x => x && x.type === 'image' && x.source
         && x.source.type === 'base64' && x.source.data).map(x => ({
           mime: x.source.media_type || 'image/png', dados: x.source.data,
-        })).filter(x => x.dados.length <= LIM_IMG_HIST) : [];
-      // respeita o teto total da conversa
-      imgs = imgs.filter((im) => {
-        if (gastoEmImagem + im.dados.length > LIM_IMG_TOTAL) return false;
-        gastoEmImagem += im.dados.length; return true;
-      });
+        })).filter(x => x.dados.length <= LIM_IMG_HIST).slice(0, 6) : [];
       if ((t && !ehTecnico(t)) || imgs.length) {
-        msgs.push({ role: 'user', text: (t && !ehTecnico(t)) ? (semContexto(t) || t) : '', imagens: imgs.slice(0, 6) });
+        // o trecho citado (Responder) fica: a tela desenha ele em cima da fala
+        const m = { role: 'user', text: (t && !ehTecnico(t)) ? (textoDoBalao(t) || t) : '', imagens: imgs };
+        msgs.push(m);
+        for (const im of imgs) {
+          fila.push({ m, im });
+          gastoEmImagem += im.dados.length;
+          // passou do teto total: sai a mais velha (a da frente da fila)
+          while (gastoEmImagem > LIM_IMG_TOTAL && primeira < fila.length) {
+            const velha = fila[primeira]; fila[primeira++] = null;
+            gastoEmImagem -= velha.im.dados.length;
+            const k = velha.m.imagens.indexOf(velha.im);
+            if (k >= 0) velha.m.imagens.splice(k, 1);
+          }
+        }
       }
     } else if (d.type === 'assistant' && d.message) {
       // content as vezes vem como texto puro: percorrer a string letra a letra
@@ -2089,36 +2774,84 @@ function mensagensDoJsonl(data, maxMsgs) {
         else if (x.type === 'tool_use') msgs.push({ role: 'tool', name: x.name, arg: claudeToolArg(x.name, x.input) });
       }
     }
-  }
-  return msgs.slice(-(maxMsgs || 60));
+  };
+  // fala que era SO' imagem e perdeu as imagens pro teto nao vira balao vazio
+  const fim = () => msgs.filter((m) => m.role !== 'user' || m.text || m.imagens.length);
+  return { linha, fim };
 }
 
-function codexHistory(file, maxMsgs) {
+/* Tarefa 5: o arquivo inteiro do Codex, em blocos (antes: readFileSync de
+   uma vez so' e os ultimos 60 itens). O corte e' de quem chama. */
+async function codexHistory(file) {
   const msgs = [];
-  let data = '';
-  try { data = fs.readFileSync(file, 'utf8'); } catch { return msgs; }
-  for (const line of data.split('\n')) {
-    if (!line.startsWith('{')) continue;
-    let d; try { d = JSON.parse(line); } catch { continue; }
-    if (d.type !== 'response_item') continue;
+  await varrerLinhas(file, (line) => {
+    if (line.charCodeAt(0) !== 123) return;   // so' linha de JSON (comeca com chave)
+    let d; try { d = JSON.parse(line); } catch { return; }
+    if (d.type !== 'response_item') return;
     const p = d.payload || {};
     if (p.type === 'message') {
-      if (p.role === 'developer' || p.role === 'system') continue;
+      if (p.role === 'developer' || p.role === 'system') return;
       const t = (p.content || []).map(c => c.text || '').join('\n').trim();
-      if (!t) continue;
+      if (!t) return;
       // pula o contexto tecnico que o Codex injeta como se fosse fala do usuario
-      if (ehTecnico(t) || t.includes('<workspace_roots>')) continue;
-      msgs.push({ role: p.role === 'user' ? 'user' : 'bot', text: p.role === 'user' ? (semContexto(t) || t) : t });
+      if (ehTecnico(t) || t.includes('<workspace_roots>')) return;
+      msgs.push({ role: p.role === 'user' ? 'user' : 'bot', text: p.role === 'user' ? (textoDoBalao(t) || t) : t });
     } else if (p.type === 'function_call' || p.type === 'local_shell_call') {
       let arg = '';
       try { const a = typeof p.arguments === 'string' ? JSON.parse(p.arguments) : (p.action || p.arguments || {}); arg = a.command ? (Array.isArray(a.command) ? a.command.join(' ') : a.command) : JSON.stringify(a).slice(0, 120); } catch { arg = String(p.arguments || '').slice(0, 120); }
       msgs.push({ role: 'tool', name: p.name === 'shell' || p.type === 'local_shell_call' ? 'Terminal' : (p.name || 'Ferramenta'), arg });
     }
-  }
-  return msgs.slice(-(maxMsgs || 60));
+  });
+  return msgs;
 }
 
-ipcMain.handle('sessions:claude', (_e, incluirRobos) => claudeSessions(5000, incluirRobos));
+const sessionScanModule = require('./cockpit-session-scan');
+const sessionScanner = sessionScanModule.createScanner();
+async function nomesCodex(options = {}) {
+  const nomes = Object.create(null);
+  try {
+    await buscaLocal.untilCancelled(codexStart(), options.signal);
+    const threads = await require('./sessions-list').listAll(codexReq, { signal: options.signal });
+    for (const thread of threads) if (typeof thread.name === 'string' && thread.name) nomes[thread.id] = thread.name;
+  } catch { /* Nomes do app são opcionais; o histórico local continua disponível. */ }
+  return nomes;
+}
+async function sessionsLocaisAsync(engine, incluirRobos, options = {}) {
+  let nomes = {};
+  // rodada 2 da leva 5: o nomes.json que nao abre (vazio, zeros ou pela metade de uma queda) vai pelo lerNomes, que le o .bak
+  try { const read = await buscaLocal.readWindow(NOMES_PATH(), 8 * 1024 * 1024, { signal: options.signal }); if (!read.truncated) nomes = JSON.parse(read.text); }
+  catch (error) { if (error.name === 'AbortError') throw error; if (typeof lerNomes === 'function') nomes = lerNomes(); }
+  if (!nomes || typeof nomes !== 'object' || Array.isArray(nomes)) nomes = {};
+  /* Codex: o titulo e' o pedido, sem o embrulho que o Codex poe em volta dele (imagem
+     colada, arquivo mencionado). Ficam FORA do TECNICO de proposito: o pedido vem no
+     mesmo turno, e fala tecnica some da conversa reaberta. */
+  return sessionScanner.scan({ root: engine === 'claude' ? CLAUDE_PROJ : CODEX_SESS, engine,
+    ...options, parse: engine === 'claude' ? analisarCabecaCauda : parseCodexDoHistorico,
+    decorate: item => {
+      const origins = engine === 'claude' ? ENTRADAS_DE_GENTE : ORIGENS_DE_GENTE;
+      if (!incluirRobos && item.entrada && !origins.includes(item.entrada)) return null;
+      const name = tituloAuto.nomeDaConversa(nomes, item.id), fromApp = options.nomesDoApp?.[item.id];
+      if (engine === 'claude') return name.nome || item.title ? tituloAuto.aplicarNome({ ...item, cwd: item.cwd || HOME }, nomes) : null;
+      const title = name.nome || fromApp || item.title;
+      return title ? { ...item, title: title.slice(0, 120), cwd: item.cwd || HOME,
+        ...(name.manual ? { nome: title } : (name.auto || fromApp) ? { tituloAuto: true } : {}) } : null;
+    } });
+}
+const sessionsScanBroker = sessionScanModule.createBroker(async (request, options) => {
+  if (!['claude', 'codex'].includes(request.engine) || request.remoto) return { error: 'Varredura progressiva disponível para Claude e Codex locais.' };
+  // Primeiras linhas saem antes de consultar os nomes do app-server. Essa
+  // consulta não roda nenhum turno; o resultado final preserva os nomes dele.
+  const names = request.engine === 'codex' ? nomesCodex(options) : Promise.resolve({});
+  const result = await sessionsLocaisAsync(request.engine, !!request.incluirRobos, options);
+  const appNames = await buscaLocal.untilCancelled(names, options.signal); buscaLocal.check(options.signal);
+  if (request.engine === 'codex') result.items = result.items.map(item => !item.nome && !item.tituloAuto && appNames[item.id] ? { ...item, title: String(appNames[item.id]).slice(0, 120), tituloAuto: true } : item);
+  return result;
+});
+ipcMain.handle('sessions:scan', (event, request) => sessionsScanBroker.start(event.sender, request));
+ipcMain.handle('sessions:scan-cancel', (event, id) => sessionsScanBroker.cancel(event.sender, id));
+ipcMain.handle('sessions:claude', async (_e, incluirRobos) => {
+  try { return (await sessionsLocaisAsync('claude', incluirRobos)).items; } catch (error) { return { error: error.message }; }
+});
 const CODEX_SESS = path.join(HOME, '.codex/sessions');
 const ORIGENS_DE_GENTE = ['cockpit', 'codex-tui', 'codex_tui', 'codex_vscode', 'codex-vscode', 'codex_app', 'codex-app', 'vscode'];
 
@@ -2131,17 +2864,65 @@ const LIM_IMG_HIST = 900 * 1024;
 const LIM_IMG_TOTAL = 8 * 1024 * 1024;
 /* Lista FECHADA, nao curinga. O '^<[a-z_-]+>' pegava qualquer coisa que
    comecasse com uma tag - '<meta-tag>', '<mat-icon>', '<b>negrito</b> revisa
-   isso' - e sumia com a mensagem inteira, da tela E do historico. */
-const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^<(task-notification|local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)>/i;
-const ehTecnico = (t) => !t || TECNICO.test(t.trim().slice(0, 400));
+   isso' - e sumia com a mensagem inteira, da tela E do historico.
+   '# AGENTS.md instructions for <pasta>': o Codex grava o AGENTS.md da pasta
+   como a 1a fala do usuario; sem isso ele virava o titulo de toda conversa do
+   Codex no Historico (e um balao enorme na conversa reaberta).
+   O sub-agente "guardian" do Codex (a conversa que ele sobe pra avaliar cada
+   acao) tambem entra: a fala dele e' o prompt todo e virava o titulo de dezenas
+   de conversas. O padrao mora no titulo-auto.js, que o mutirao dos nomes le. */
+const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|^Caveat:|^#[ \t]*AGENTS\.md instructions for\b|^<(task-notification|local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)>/i;
+const ehTecnico = (t) => {
+  if (!t) return true;
+  const s = t.trim().slice(0, 400);
+  return TECNICO.test(s) || tituloAuto.FALA_SUBAGENTE_CODEX.test(s);
+};
 
-function semContexto(t) {
+/* Titulo das conversas do Codex no Historico: o pedido, sem o embrulho de imagem e arquivo (semEnvelopeCodex).
+   O guardian (acima) e' a conversa que o Codex sobe pra avaliar cada acao: toda fala de usuario dela e' tecnica,
+   entao o titulo caia na 1a resposta, que e' o JSON do veredito ({"risk_level":"low",...}). Quando a conversa e'
+   dele E nao tem nenhum pedido real, ganha um titulo fixo; ela CONTINUA na lista (nada filtra). Pedido de
+   verdade vence sempre, e o nome que voce deu (nomes.json) vence no decorate, como em toda conversa.
+   3 palavras de proposito: a lista (HistoricoLista.preparar), com o nome automatico ligado, encurta titulo de mais de
+   3 palavras, e "Guardião do Codex (revisão de risco)" aparecia como "Guardião Codex (revisão".
+   A ficha vai com guardiao:true: a lista (HistoricoLista.preparar / fila) o tira da fila do Haiku. Sem assunto, ele so'
+   gastava uma das 30 vagas da pasta (e lia a conversa inteira) para o Haiku voltar "sem-assunto". */
+const TITULO_GUARDIAO = 'Guardião do Codex';
+const ehFalaDoGuardiao = (t) => !!t && tituloAuto.FALA_SUBAGENTE_CODEX.test(t.trim().slice(0, 400));
+async function parseCodexDoHistorico(head, tail, meta) {
+  let guardiao = false, pedido = false;
+  const ficha = await sessionScanModule.parseCodexFile(head, tail, meta, {
+    technical: (t) => { if (ehFalaDoGuardiao(t)) guardiao = true; return ehTecnico(t); },
+    clean: (t) => { const titulo = limparTitulo(tituloAuto.semEnvelopeCodex(t)); if (titulo) pedido = true; return titulo; },
+  });
+  return guardiao && !pedido ? { ...ficha, title: TITULO_GUARDIAO, guardiao: true } : ficha;
+}
+
+/* O que o balao da tela mostra como fala sua: sem o contexto que a troca de
+   motor cola na frente e sem a lista de anexos. O trecho citado pelo Responder
+   (app.js, comCitacao) FICA: o balao desenha ele em cima da fala, e o "voltar
+   para ca'" do Claude corta pelo texto inteiro do balao (ramo-claude.js). */
+function textoDoBalao(t) {
   if (!t) return t;
   const i = t.indexOf('Agora, o novo pedido:');
   if (i >= 0) return t.slice(i + 'Agora, o novo pedido:'.length).trim();
   const j = t.indexOf('Arquivos que anexei');
   if (j > 0) return t.slice(0, j).trim();
   return t;
+}
+/* So' o que VOCE pediu: o texto do balao sem o trecho citado (o trecho e' da
+   resposta da IA, nao pedido seu). Da' o nome da conversa na lista. A regra do
+   bloco e' a mesma do separarCitacao da tela (app.js). */
+const CITACAO_ABRE = 'Sobre este trecho da sua resposta:';
+function semContexto(t) {
+  const s = textoDoBalao(t);
+  if (!s || !s.startsWith(CITACAO_ABRE + '\n')) return s;
+  const resto = s.slice(CITACAO_ABRE.length + 1);
+  const fim = resto.indexOf('\n\n');
+  if (fim < 0) return s;
+  const linhas = resto.slice(0, fim).split('\n');
+  if (!linhas.every((l) => l.startsWith('> ') || l === '>')) return s;
+  return resto.slice(fim + 2).trim();
 }
 const limparTitulo = (t) => (semContexto(t) || '').slice(0, 90);
 
@@ -2219,13 +3000,8 @@ function codexSessions(incluirRobos, nomesDoApp) {
 ipcMain.handle('sessions:codex', async (_e, incluirRobos) => {
   if (incluirRobos?.remoto != null) return remoteEngines.sessions('codex', incluirRobos.remoto);
   // nomes que o proprio Codex guarda (renomeadas por lá)
-  const nomesDoApp = {};
-  try {
-    await codexStart();
-    const r = await codexReq('thread/list', { pageSize: 500 });
-    for (const t of ((r && (r.data || r.threads)) || [])) if (t.name) nomesDoApp[t.id] = t.name;
-  } catch {}
-  try { return codexSessions(incluirRobos, nomesDoApp); }
+  const nomesDoApp = await nomesCodex();
+  try { return (await sessionsLocaisAsync('codex', incluirRobos, { nomesDoApp })).items; }
   catch (e) { return { error: e.message }; }
 });
 
@@ -2252,8 +3028,11 @@ ipcMain.handle('sessions:titulo', (_e, { engine, file, id }) => {
 });
 
 /* le o .jsonl de uma conversa que rodou no servidor. Procura pelo id em
-   ~/.claude/projects e traz o conteudo em base64 (uma conexao so'). */
-function claudeHistoryRemoto(remoto, id, maxMsgs) {
+   ~/.claude/projects e traz o conteudo em base64 (uma conexao so').
+   Tarefa 5: continua trazendo so' os ultimos 6 MB (subir o teto estoura o
+   prazo de 25 s), mas volta TUDO o que veio neles: o corte de 60 itens saiu,
+   quem chama aplica o cortarHistorico. */
+function claudeHistoryRemoto(remoto, id) {
   return new Promise((resolve) => {
     if (!remoto || !id || !ssgValido(remoto)) return resolve([]);
     const idSeguro = String(id).replace(/[^\w-]/g, '');
@@ -2289,19 +3068,27 @@ function claudeHistoryRemoto(remoto, id, maxMsgs) {
       }
       let texto = '';
       try { texto = Buffer.from(b64, 'base64').toString('utf8'); } catch { return resolve({ error: 'A resposta do servidor veio corrompida.' }); }
-      resolve(mensagensDoJsonl(texto, maxMsgs || 60));
+      resolve(mensagensDoJsonl(texto));
     });
   });
 }
 
+/* Tarefa 5: o que volta pra tela passa pelo historicoParaTela -- as ultimas
+   600 falas (das ferramentas, 250) e, se fala ficou de fora, a nota na frente.
+   Antes: os ultimos 60 itens, ferramenta contando como item. */
 ipcMain.handle('sessions:historyRemoto', async (_e, { remoto, id }) => {
-  try { return await claudeHistoryRemoto(remoto, id, 60); }
+  try { return historicoParaTela(await claudeHistoryRemoto(remoto, id)); }
   catch (e) { return { error: 'Não consegui ler a conversa no servidor: ' + (e && e.message || e) }; }
 });
 
-ipcMain.handle('sessions:history', async (_e, { engine, file, id, remoto }) => {
-  if (remoto != null) return engine === 'claude' ? claudeHistoryRemoto(remoto, id) : remoteEngines.history(engine, remoto, id);
-  if (engine === 'acp') return acp.historico(id, file);
+ipcMain.handle('sessions:history', async (_e, { engine, file, id, remoto, inteiro = false }) => {
+  const finish = msgs => historicoParaTela(msgs, inteiro ? Infinity : 600);
+  if (remoto != null) {
+    const fallback = () => engine === 'claude' ? claudeHistoryRemoto(remoto, id) : remoteEngines.history(engine, remoto, id);
+    return finish(inteiro && engine === 'codex' && id
+      ? await historyPages.readAll((m, p) => remoteEngines.query(remoto, m, p), id, fallback) : await fallback());
+  }
+  if (engine === 'acp') return finish(await acp.historico(id, file));
   let f = file;
   // caminho salvo errado ou de outra maquina: procura pelo id da conversa
   if (engine === 'claude' && id && (!f || !fs.existsSync(f))) {
@@ -2311,12 +3098,12 @@ ipcMain.handle('sessions:history', async (_e, { engine, file, id, remoto }) => {
     if (it) f = it.f;
   }
   if (!f || !fs.existsSync(f)) return [];
-  // deixa a janela respirar antes de ler e montar (pode ser MB de base64)
-  await new Promise((r) => setImmediate(r));
-  if (engine === 'claude') return claudeHistory(f, 60);
+  // o arquivo inteiro, em blocos: a leitura devolve o controle a cada 8 ms
+  // (outro IPC responde enquanto uma conversa de 50 MB e' lida)
+  if (engine === 'claude') return finish(await claudeHistory(f));
   // sem isto, conversa de Gemini caia no leitor do Codex e voltava vazia
-  if (ehCli(engine)) return cliHistory(f, 60);
-  return codexHistory(f, 60);
+  if (ehCli(engine)) return finish(await cliHistory(f));
+  return finish(inteiro && id && codex.pronto ? await historyPages.readAll(codexReq, id, () => codexHistory(f)) : await codexHistory(f));
 });
 
 /* ======================= comandos e skills ======================= */
@@ -2471,12 +3258,22 @@ ipcMain.handle('skills:list', async (_e, pedido) => {
 
 /* ---------- conectores (MCP) ---------- */
 function rodar(bin, args, timeout) {
+  if ((bin === 'codex' || bin === acharBin('codex')) && !engineUpdates.codexReady) {
+    return engineUpdates.waitForCodex().then(() => rodar(bin, args, timeout));
+  }
   // spawnBin em vez de execFile porque no Windows o binario pode ser um .cmd,
   // que o Node se recusa a chamar direto desde a correcao de seguranca do Node 20
   return new Promise((res) => {
     let out = '', errout = '', acabou = false;
     const p = spawnBin(bin, args, { env: buildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-    const t = setTimeout(() => { try { p.kill(); } catch {} }, timeout || 60000);
+    const t = setTimeout(() => {
+      const error = new Error('O comando excedeu o tempo de espera.');
+      error.code = 'ETIMEDOUT';
+      // Fechar um filho pode não fechar seus pipes (netos ainda os seguram).
+      // O prazo precisa resolver o pedido mesmo sem o evento close.
+      fim(error);
+      try { matarProcesso(p); } catch { try { p.kill(); } catch {} }
+    }, timeout || 60000);
     const fim = (err) => { if (acabou) return; acabou = true; clearTimeout(t); res({ err, out, errout }); };
     p.stdout.setEncoding?.('utf8');    p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d.toString('utf8'); });
     p.stderr.setEncoding?.('utf8');    p.stderr.on('data', (d) => { if (errout.length < 4 * 1024 * 1024) errout += d.toString('utf8'); });
@@ -2688,6 +3485,19 @@ ipcMain.handle('mcp:acao', async (_e, { engine, acao, nome, url, comando, remoto
 const PASTA_PERGUNTAS = () => path.join(app.getPath('userData'), 'perguntas');
 const PASTA_MCP = () => path.join(app.getPath('userData'), 'mcp');
 const MCP_PERGUNTA = path.join(__dirname, 'pergunta-mcp.js');
+const hostCapabilities = new Map();
+let hostMailbox;
+function ensureHostMailbox() {
+  const directory = path.join(app.getPath('userData'), 'host-mailbox');
+  if (!hostMailbox) hostMailbox = cockpitInteractions.createMcpHostMailbox({ directory, broker: interactionBroker,
+    resolveScope: ({ paneId, capability }) => {
+      const st = claudePanes.get(paneId);
+      if (!st || !capability || st.hostCapability !== capability || hostCapabilities.get(String(paneId)) !== capability) return null;
+      return claudeScope(paneId);
+    } });
+  return directory;
+}
+app.on('before-quit', () => { hostMailbox?.dispose(); interactionBroker.dispose(); });
 
 /* Um arquivo de config por painel: e' nele que vai o COCKPIT_PAINEL, e e' assim
    que o pedido que chega sabe de qual painel veio. */
@@ -2698,6 +3508,7 @@ function configMcpDoPainel(paneId) {
     fs.mkdirSync(dir, { recursive: true });
     fs.mkdirSync(PASTA_PERGUNTAS(), { recursive: true });
     const alvo = path.join(dir, 'perguntas-' + String(paneId).replace(/[^a-zA-Z0-9]/g, '') + '.json');
+    const capability = crypto.randomUUID() + crypto.randomUUID(); hostCapabilities.set(String(paneId), capability);
     const cfg = {
       mcpServers: {
         cockpit: {
@@ -2709,6 +3520,8 @@ function configMcpDoPainel(paneId) {
             ELECTRON_RUN_AS_NODE: '1',
             COCKPIT_PERGUNTAS: PASTA_PERGUNTAS(),
             COCKPIT_PAINEL: String(paneId),
+            COCKPIT_HOST_MAILBOX: ensureHostMailbox(),
+            COCKPIT_HOST_CAPABILITY: capability,
           },
         },
       },
@@ -2810,25 +3623,52 @@ function ligarVigiaPerguntas() {
   varrerPerguntas();
 }
 
-ipcMain.handle('pergunta:responder', (_e, { id, respostas, cancelado }) => {
-  if (remoteEngines.questionOwns(id)) return remoteEngines.answer(id, respostas, cancelado);
+ipcMain.handle('pergunta:responder', (_e, { id, respostas, cancelado, textoLivre }) => {
+  /* Leva 5h: o X do cartao ("a minha proxima mensagem vira a resposta"). O texto livre responde o pedido INTEIRO: cada caminho
+     o transforma no formato que ja' usa, sem mudar protocolo nenhum. Cancelar ("Decide voce") vale mais que o texto. */
+  const texto = (!cancelado && typeof textoLivre === 'string') ? textoLivre.trim() : '';
+  if (remoteEngines.questionOwns(id)) return remoteEngines.answer(id, respostas, cancelado, texto);
   const seguro = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (!seguro) return { error: 'pergunta sem identificação' };
+  /* Tarefa 8: pergunta do proprio Claude (AskUserQuestion). O outro lado e' o
+     can_use_tool parado esperando: a resposta vai por control_response, pro
+     processo que perguntou. O pedido sai do mapa ANTES de escrever (um segundo
+     envio nao acha nada), e id "claude_q_" sem pedido nunca cai no caminho dos
+     arquivos do MCP. */
+  if (seguro.startsWith('claude_q_')) {
+    const a = pedidosClaude.get(seguro);
+    if (!a || a.tipo !== 'perguntas') return { error: 'Esta pergunta já foi encerrada.' };
+    pedidosClaude.delete(seguro);
+    // o texto livre vira a resposta de cada pergunta que a tela mostrou (as mesmas que o respostaDoAsk le por posicao)
+    const doAsk = texto ? interacao.perguntasDoAsk(a.input).map(() => texto) : respostas;
+    if (!escreverRespostaClaude(a, interacao.respostaDoAsk(a.input, doAsk, !!cancelado))) {
+      emit(a.paneId, 'pergunta-cancelada', { id: seguro, texto: 'A pergunta foi encerrada: o motor deste painel não está mais esperando.' });
+      return { error: 'O motor deste painel não está mais esperando esta resposta.' };
+    }
+    return { ok: true };
+  }
   /* pergunta NATIVA do Codex nao passa por arquivo: o outro lado e' uma chamada
      JSON-RPC parada esperando. Responde direto e sai. */
   const nativa = perguntasCodex.get(seguro);
   if (nativa) {
     perguntasCodex.delete(seguro);
-    try { codexReply(nativa.rpcId, proto.buildUserInputResponse(nativa.questions, respostas, !!cancelado)); }
+    // todas as perguntas do pedido (nativa.questions), nao so' as 4 do cartao: o texto responde o pedido inteiro
+    const doCodex = texto ? nativa.questions.map(() => texto) : respostas;
+    try { codexReply(nativa.rpcId, proto.buildUserInputResponse(nativa.questions, doCodex, !!cancelado)); }
     catch (e) { return { error: String((e && e.message) || e) }; }
     return { ok: true };
   }
   try {
     const dir = PASTA_PERGUNTAS();
     fs.mkdirSync(dir, { recursive: true });
+    /* Rodada 2 da leva 5h: sem o pedido na pasta ninguem espera esta resposta (o painel parou, o motor desistiu no teto de 30 min, ou ela
+       ja' foi respondida: quem responde apaga o pedido). Gravar a resposta so' deixaria um arquivo orfao, e a tela acreditaria que o texto
+       chegou - o X do cartao engolia a mensagem seguinte assim. Devolve o erro: a tela devolve o texto a caixa (responderPerguntaPelaCaixa). */
+    if (!fs.existsSync(path.join(dir, seguro + '.pedido.json'))) return { error: 'Esta pergunta já foi encerrada: o motor deste painel não está mais esperando.' };
     const alvo = path.join(dir, seguro + '.resposta.json');
     const tmp = alvo + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ respostas: respostas || [], cancelado: !!cancelado }), 'utf8');
+    // com o texto livre o arquivo leva so' ele: quem le (pergunta-mcp.js, textoDaResposta) conta ao modelo que foi por texto
+    fs.writeFileSync(tmp, JSON.stringify(texto ? { textoLivre: texto } : { respostas: respostas || [], cancelado: !!cancelado }), 'utf8');
     fs.renameSync(tmp, alvo);
     /* O pedido sai daqui, nao la do servidor. Deixar essa limpeza pro processo
        do outro lado significava que, se ele morresse antes de ler (o painel
@@ -2842,9 +3682,15 @@ ipcMain.handle('pergunta:responder', (_e, { id, respostas, cancelado }) => {
 });
 
 /* pergunta que ficou pendurada de um painel que morreu nao pode voltar
-   assombrando a tela na proxima abertura */
+   assombrando a tela na proxima abertura.
+   Rodada 2 da leva 5h: o pedido (ou o cancelar) que sai da pasta TAMBEM avisa a tela, com o mesmo pergunta-cancelada que a pergunta nativa
+   do Codex e o AskUserQuestion ja' mandam (descartarPerguntasCodex, descartarPedidosClaude). Sem o aviso, o X do cartao ("a minha proxima
+   mensagem vira a resposta") deixava o selo vivo depois de uma troca de modelo, de esforco, de Sonnet reserva ou de motor, que param o
+   Claude: a mensagem seguinte virava resposta de uma pergunta morta e nao chegava a lugar nenhum. Painel que ja' fechou nao quebra nada:
+   a tela ignora evento de painel que nao existe mais. A limpeza da abertura do app (paneId vazio) nao avisa: ainda nao ha tela. */
 function limparPerguntasDoPainel(paneId) {
   const marca = String(paneId || '');
+  const encerradas = new Set();
   try {
     const dir = PASTA_PERGUNTAS();
     if (!fs.existsSync(dir)) return;
@@ -2860,9 +3706,12 @@ function limparPerguntasDoPainel(paneId) {
         try { if (agora - fs.statSync(cheio).mtimeMs < 15000) continue; } catch {}
       }
       try { fs.unlinkSync(cheio); } catch {}
-      perguntasVistas.delete(nome.replace(/\.(pedido|resposta)\.json$|\.cancelar$/, ''));
+      const id = nome.replace(/\.(pedido|resposta)\.json$|\.cancelar$/, '');
+      perguntasVistas.delete(id);
+      if (marca && /\.(pedido\.json|cancelar)$/.test(nome)) encerradas.add(id);
     }
   } catch {}
+  for (const id of encerradas) emit(paneId, 'pergunta-cancelada', { id, texto: 'A pergunta foi encerrada: o turno acabou ou o painel parou.' });
 }
 
 /* ---------- audio virando texto, tudo aqui no PC ----------
@@ -3377,23 +4226,30 @@ ipcMain.handle('contas:listar', (_e, o) => {
 ipcMain.handle('codex:reiniciar', async () => {
   observabilidade.encerrarMotor('codex', 'O servidor Codex está sendo reiniciado.');
   const p = codex.proc;
-  if (!p) { codex.ready = null; return { ok: true }; }
+  if (!p) { codex.ready = null; codex.pronto = false; return { ok: true }; }
+  let cancelarEspera;
   const caiu = new Promise((r) => {
-    const pronto = setTimeout(r, 4000);          // nao trava a interface se ele emperrar
-    const fim = () => { clearTimeout(pronto); r(); };
+    let terminou = false;
+    const concluir = (fechado) => {
+      if (terminou) return;
+      terminou = true; clearTimeout(prazo); p.removeListener('close', fim); r(fechado);
+    };
+    const fim = () => concluir(true);
+    const prazo = setTimeout(() => concluir(false), 4000);
+    cancelarEspera = () => concluir(false);
     p.once('close', fim);
-    // se o prazo vencer, o ouvinte tem que sair junto, senao vaza
-    setTimeout(() => p.removeListener('close', fim), 4000);
   });
   // de proposito: o 'close' avisa a tela sem "estava em turno", e nada religa sozinho
   codex.derrubando = p;
   for (const paneId of codex.paneToThread.keys()) vigiaTurno.desligar(paneId);
-  matarProcesso(p);
-  await caiu;
+  try { matarProcesso(p); } catch { cancelarEspera(); }
+  if (!await caiu) return { error: 'O Codex ainda não confirmou o encerramento. A conta não foi alterada. Aguarde e tente novamente.' };
+  // Uma consulta de conta/modelos pode ter iniciado outro servidor durante o
+  // close. Nunca apagar seus mapas nem anunciar que está parado nesse caso.
+  if (codex.proc && codex.proc !== p) return { error: 'Outra consulta reabriu o Codex durante a troca. A conta não foi alterada. Tente novamente.' };
   if (codex.proc === p) codex.proc = null;
-  codex.ready = null;
-  // pelo prazo pode ter escapado sem passar pelo 'close': solta o ouvinte do
-  // processo velho pra ele nao continuar despejando resposta na nossa fila
+  codex.ready = null; codex.pronto = false;
+  // O processo terminou de verdade: solta qualquer ouvinte remanescente.
   try { p.stdout.removeAllListeners('data'); } catch {}
   codex.paneToThread.clear(); codex.threadToPane.clear(); codex.paneTurn.clear(); codex.paneErrors?.clear(); codex.paneMsgId.clear();
   return { ok: true };
@@ -3402,6 +4258,10 @@ ipcMain.handle('codex:reiniciar', async () => {
 for (const [acao, method] of [['salvar', 'save'], ['trocar', 'change'], ['esquecer', 'forget']]) {
   ipcMain.handle('contas:' + acao, (_e, o) => {
     if (remotoDaConta(o)) return contasRemotas(acao, o);
+    // Entre o pedido de parada e esta chamada uma consulta pode ter aberto
+    // outro app-server. Nunca trocar o arquivo por baixo de um Codex vivo.
+    if (acao === 'trocar' && o?.engine === 'codex' && codex.proc)
+      return { error: 'O Codex voltou a abrir durante a troca. A conta não foi alterada. Tente novamente.' };
     try { return credentialStore[method](o?.engine, o?.apelido); }
     catch (e) { return { error: /EBUSY|EPERM|EACCES/.test(String(e.code))
       ? 'O arquivo da conta está em uso ou sem permissão. A operação não foi concluída.'
@@ -3435,7 +4295,7 @@ function buscarNaRede(url, opcoes) {
   try {
     const { net } = require('electron');
     if (net && typeof net.fetch === 'function' && app.isReady && app.isReady()) return net.fetch(url, opcoes);
-  } catch {}
+  } catch (e) { logMain('uso:rede', e); }
   return fetch(url, opcoes);
 }
 async function usoComToken(t) {
@@ -3459,7 +4319,7 @@ async function usoComToken(t) {
     if (cacheUso.size > 20) cacheUso.clear();
     cacheUso.set(t, { t: Date.now(), u });
     return u;
-  } catch { return null; }
+  } catch (e) { logMain('uso:conta', e); return null; }
 }
 function usoDoClaude() { return usoComToken(tokenDoClaude()); }
 
@@ -3605,61 +4465,106 @@ ipcMain.handle('user:pickPhoto', async () => {
 });
 
 const EXT_IMG = ['png','jpg','jpeg','gif','webp','bmp','heic','svg'];
-/* o que estiver na area de transferencia: arquivos copiados no Finder ou imagem/print */
-function arquivosColados() {
+/* O colar de verdade nasce na tela (app.js, evento "paste": arquivo com caminho ou os bytes da imagem
+   pela ponte colarSalvarImagem). Isto aqui e' a RESERVA, quando o evento nao trouxe nada: o main le a
+   area de transferencia sozinho. No Electron 44 o clipboard do main e' assincrono (read, readText,
+   writeText e has devolvem Promise) e perdeu readImage, readBuffer e availableFormats; read() devolve
+   ClipboardItems (types + getType -> Blob). Nenhum catch aqui fica calado: tudo vai pro tela.log. */
+/* arquivos copiados no Explorer/Finder: o 44 entrega a lista inteira como text/uri-list (um file: por linha) */
+async function arquivosColados() {
   const achados = [];
   try {
-    const buf = clipboard.readBuffer('NSFilenamesPboardType');
-    if (buf && buf.length) {
-      const txt = buf.toString('utf8');
-      for (const m of txt.matchAll(/<string>([^<]+)<\/string>/g)) achados.push(m[1]);
+    const { fileURLToPath } = require('url');
+    for (const item of (await clipboard.read()) || []) {
+      if (!Array.from((item && item.types) || []).includes('text/uri-list')) continue;
+      const lista = await (await item.getType('text/uri-list')).text();
+      for (const linha of String(lista).split(/\r?\n/)) {
+        const l = linha.trim();
+        if (!/^file:/i.test(l)) continue;   // linha vazia, comentario (#) ou outro esquema
+        try {
+          const p = fileURLToPath(l);
+          // \\servidor: o existsSync abaixo travaria o app ~21 s e o Windows tentaria SMB sozinho
+          if (!ehCaminhoDeRede(p)) achados.push(p);
+        } catch (e) { logMain('colar', e); }
+      }
     }
-  } catch {}
-  // Explorer do Windows: o caminho vem em UTF-16, no formato FileNameW
-  if (!achados.length && process.platform === 'win32') {
-    for (const fmt of ['FileNameW', 'FileName']) {
-      try {
-        const b = clipboard.readBuffer(fmt);
-        if (b && b.length) {
-          const s = (fmt === 'FileNameW' ? b.toString('ucs2') : b.toString('utf8')).replace(/\0+$/, '').trim();
-          if (s) { achados.push(s); break; }
-        }
-      } catch {}
-    }
+  } catch (e) { logMain('colar', e); }
+  return [...new Set(achados)].filter(f => fs.existsSync(f));
+}
+/* o print (Win+Shift+S) na area de transferencia: image/png, ou o formato bruto "PNG" do Windows */
+async function pngDaAreaDeTransferencia() {
+  for (const item of (await clipboard.read()) || []) {
+    const tipos = Array.from((item && item.types) || []);
+    const tipo = tipos.find(t => t === 'image/png') || tipos.find(t => /format="PNG"/i.test(t));
+    if (!tipo) continue;
+    const png = Buffer.from(await (await item.getType(tipo)).arrayBuffer());
+    if (png.length) return png;
   }
-  if (!achados.length) {
-    for (const fmt of ['public.file-url', 'text/uri-list']) {
-      try {
-        const u = clipboard.read(fmt);
-        if (u) for (const linha of String(u).split(/\r?\n/)) {
-          const l = linha.trim();
-          if (l.startsWith('file://')) achados.push(decodeURIComponent(l.replace(/^file:\/\//, '')));
-        }
-      } catch {}
-    }
-  }
-  return [...new Set(achados)].filter(f => { try { return fs.existsSync(f); } catch { return false; } });
+  return null;
 }
 
 const EXT_VIS_IMG = ['png','jpg','jpeg','gif','webp','bmp','svg'];
-const EXT_VIS_TXT = /^(txt|md|json|js|ts|py|html|css|csv|log|sh|yml|yaml|toml|xml)$/;
+const EXT_VIS_TXT = /^(txt|md|markdown|mdown|mkd|mdx|json|jsonc|js|jsx|mjs|cjs|ts|tsx|py|html|css|scss|csv|log|sh|ps1|yml|yaml|toml|xml|sql|rs|go|java|c|h|cpp|hpp|rb|php|htm|tsv|ini|cfg|bat|cmd)$/;
 const TETO_VIS_IMG = 25 * 1024 * 1024;
 const TETO_VIS_TXT = 600 * 1024;
 const mimeDaImagem = (ext) => (ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext);
+/* Bytes -> texto com o acento certo (UI 7.2-5). BOM UTF-8: sai (o .md perdia o 1o titulo). BOM UTF-16 LE/BE (o
+   Out-File do PowerShell 5, o "Unicode" do Bloco de Notas): decodifica. Sem BOM: UTF-8 ESTRITO e, se nao for UTF-8
+   valido, Windows-1252 (o CSV do Excel virava "Descri��o"). Byte nulo sem BOM UTF-16 = nao e' texto: null. */
+function textoDosBytes(buf) {
+  if (buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return new TextDecoder('utf-8').decode(buf.subarray(3));
+  if (buf[0] === 0xFF && buf[1] === 0xFE) return new TextDecoder('utf-16le').decode(buf.subarray(2));
+  if (buf[0] === 0xFE && buf[1] === 0xFF) return new TextDecoder('utf-16be').decode(buf.subarray(2));
+  if (buf.includes(0)) return null;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch { return new TextDecoder('windows-1252').decode(buf); }
+}
+/* O que o leitor faz com o arquivo, pelo NOME (UI 7.2-3); o conteudo e o tamanho decidem depois. Texto: EXT_VIS_TXT,
+   o .env.example e arquivo sem extensao (LEIAME, Makefile) -- com byte nulo vira 'outro' (textoDosBytes). Word e
+   Excel: a tela diz "abra no programa". PDF: abre numa janela propria (pdf:abrir), nada e' lido aqui.
+   Credencial (.env, .env.*, .npmrc, .git-credentials, .netrc, id_rsa/dsa/ecdsa/ed25519, *.pem, *.key, *.p12, *.pfx):
+   'credencial', decidido pelo NOME antes de qualquer leitura -- o arquivo sem extensao abre como texto e esses nomes
+   (.env, id_rsa...) sao exatamente assim. So' o .env.example (modelo, sem valor) segue como texto. */
+const EXT_VIS_DOC = ['docx', 'xlsx'];
+function tipoDoVisor(nome, ext) {
+  const segredo = /^(?:\.env(?:\..*)?|\.npmrc|\.git-credentials|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519))$|\.(?:pem|key|p12|pfx)$/i;
+  if (segredo.test(nome) && !/^\.env\.example$/i.test(nome)) return 'credencial';
+  if (EXT_VIS_IMG.includes(ext)) return 'imagem';
+  if (!ext || EXT_VIS_TXT.test(ext) || /^\.env\.example$/i.test(nome)) return 'texto';
+  if (ext === 'pdf') return 'pdf';
+  return EXT_VIS_DOC.includes(ext) ? 'documento' : 'outro';
+}
+
+/* Caminho de rede (\\servidor, //servidor, /\servidor). stat/openPath num caminho assim trava o processo
+   principal ~21 s com o servidor fora do ar e, com ele no ar, faz o Windows tentar autenticar por SMB (o hash
+   da senha vai junto). A tela ja' nao monta link assim (file-links.js); esta e' a segunda trava: arquivo:ver,
+   shell:open e shell:link recusam ANTES de encostar no disco. */
+const MSG_CAMINHO_DE_REDE = 'Caminho de rede bloqueado por segurança.';
+const ehCaminhoDeRede = (p) => /^[\\/]{2}/.test(String(p || '').trim());
 
 function verArquivoLocal(file) {
+  // a tela do visor le' "erro"; "error" e' o nome que shell:open e shell:link usam
+  if (ehCaminhoDeRede(file)) return { erro: MSG_CAMINHO_DE_REDE, error: MSG_CAMINHO_DE_REDE, path: file, nome: path.basename(String(file)) };
   try {
     const st = fs.statSync(file);
     const ext = path.extname(file).slice(1).toLowerCase();
     const base = { path: file, nome: path.basename(file), ext, bytes: st.size };
-    if (EXT_VIS_IMG.includes(ext) && st.size <= TETO_VIS_IMG) {
+    // pasta nao e' arquivo: continua 'outro' (sem extensao ela passaria por texto)
+    const tipo = st.isFile() ? tipoDoVisor(base.nome, ext) : 'outro';
+    const teto = tipo === 'imagem' ? TETO_VIS_IMG : tipo === 'texto' ? TETO_VIS_TXT : 0;
+    if (teto && st.size > teto) {
+      // o problema e' o TAMANHO, nao o tipo: a tela diz "Grande demais para o leitor (725 KB; limite 600 KB)" (UI 7.2-5)
+      base.tipo = 'grande';
+      base.limite = teto;
+    } else if (tipo === 'imagem') {
       base.tipo = 'imagem';
       base.dados = 'data:image/' + mimeDaImagem(ext) + ';base64,' + fs.readFileSync(file).toString('base64');
-    } else if (st.size <= TETO_VIS_TXT && EXT_VIS_TXT.test(ext)) {
-      base.tipo = 'texto';
-      base.dados = fs.readFileSync(file, 'utf8');
+    } else if (tipo === 'texto') {
+      const texto = textoDosBytes(fs.readFileSync(file));
+      base.tipo = texto === null ? 'outro' : 'texto';
+      if (texto !== null) base.dados = texto;
     } else {
-      base.tipo = 'outro';
+      base.tipo = tipo;   // 'pdf', 'documento' ou 'outro': nada e' lido
     }
     return base;
   } catch (e) { return { erro: e.message, path: file, nome: path.basename(file) }; }
@@ -3667,17 +4572,19 @@ function verArquivoLocal(file) {
 
 /* O mesmo arquivo, mas no servidor. Um comando so': confere que existe, diz o
    tamanho e - so' se couber no MESMO teto do ramo local - manda o conteudo em
-   base64 (que serve pra imagem e pra texto, sem se preocupar com codificacao).
-   Quem nao cabe, ou nao e' de um tipo que a tela sabe abrir, volta como 'outro'
-   sem gastar rede. O "exit 0" no fim e' o que impede um "nao cabe" de virar
-   codigo de erro e ser lido como falha de conexao. */
-async function verArquivoRemoto(remoto, file) {
+   base64 (que serve pra imagem e pra texto; o acento sai do textoDosBytes, como
+   no ramo local). Quem nao cabe volta como 'grande' (com o limite), e quem nao
+   e' de um tipo que a tela abre volta com o tipo dele ('pdf', 'documento',
+   'outro'), sem gastar rede. O "exit 0" no fim e' o que impede um "nao cabe" de
+   virar codigo de erro e ser lido como falha de conexao. */
+async function verArquivoRemoto(remoto, file, tetoImagem = TETO_VIS_IMG) {   // tetoImagem: a imagem do .md pede 10 MB, o visor segue com 25
   const alvo = String(file || '');
   const nome = path.posix.basename(alvo);
   if (!alvo) return { erro: 'Faltou o caminho do arquivo.', path: alvo, nome };
   const ext = path.posix.extname(alvo).slice(1).toLowerCase();
-  const ehImg = EXT_VIS_IMG.includes(ext);
-  const teto = ehImg ? TETO_VIS_IMG : EXT_VIS_TXT.test(ext) ? TETO_VIS_TXT : 0;
+  const tipo = tipoDoVisor(nome, ext);
+  const ehImg = tipo === 'imagem';
+  const teto = ehImg ? tetoImagem : tipo === 'texto' ? TETO_VIS_TXT : 0;
   const q = qRemoto(alvo);
   const script = '[ -e ' + q + ' ] || { echo COCKPIT_SEM_ARQUIVO; exit 0; }; '
     + 't=$(stat -c %s -- ' + q + ' 2>/dev/null || echo -1); '
@@ -3703,47 +4610,133 @@ async function verArquivoRemoto(remoto, file) {
      em branco -- enquanto o ramo local mostra um <pre> vazio. Agora empatam.
      A distincao que sustenta isso: quem manda e' o TAMANHO que o servidor disse.
        - pacote vazio com tamanho 0  -> conteudo vazio (texto vazio, como local);
-       - pacote vazio com tamanho > 0 -> nao coube no teto, nao e' arquivo comum
-         ou o base64 nao rodou: continua 'outro', que nada afirma;
+       - pacote vazio com tamanho > 0 -> nao e' arquivo comum ou o base64 nao
+         rodou: continua 'outro', que nada afirma (o que nao coube no teto vira
+         'grande', com o limite: o problema e' o tamanho, UI 7.2-5);
        - resposta sem tamanho nenhum (stat falhou, ssh mudo) ja' virou ERRO la'
          em cima, e continua sendo. Falha nunca vira "arquivo vazio". */
-  if (teto === 0 || bytes > teto || (!b64 && bytes > 0)) { base.tipo = 'outro'; return base; }
+  if (teto === 0) { base.tipo = tipo; return base; }   // 'pdf', 'documento' ou 'outro': nada foi baixado
+  if (bytes > teto) { base.tipo = 'grande'; base.limite = teto; return base; }
+  if (!b64 && bytes > 0) { base.tipo = 'outro'; return base; }
   if (ehImg) {
     base.tipo = 'imagem';
     base.dados = 'data:image/' + mimeDaImagem(ext) + ';base64,' + b64;
     return base;
   }
-  base.tipo = 'texto';
-  try { base.dados = Buffer.from(b64, 'base64').toString('utf8'); }
+  let texto;
+  try { texto = textoDosBytes(Buffer.from(b64, 'base64')); }
   catch { return { erro: 'A resposta do servidor veio corrompida.', path: alvo, nome }; }
+  // byte nulo: binario (arquivo sem extensao que nao e' texto), como no ramo local
+  if (texto === null) { base.tipo = 'outro'; return base; }
+  base.tipo = 'texto';
+  base.dados = texto;
   return base;
 }
+
+/* PDF do leitor (UI 7.2-3): abre numa janela PROPRIA, com o visualizador de PDF do Chromium. A janela e' presa:
+   sandbox, contextIsolation, sem preload e sem Node (o PDF nao alcanca o window.api nem o disco). Ela carrega so'
+   o arquivo pedido; janela nova, navegacao (link dentro do PDF) e <webview> sao recusados. Subframe so' navega pro
+   proprio visualizador -- desde o Electron 41 ele mora num subframe chrome-extension:// e, travado, o PDF nao abre
+   (conferido no 44.5.1, com janela oculta) -- e pro PDF pedido. Fecha junto com a janela do Cockpit. */
+const MSG_PDF_SEM_VISUALIZADOR = 'O visualizador de PDF não está disponível aqui.';
+const MSG_PDF_FALHOU = 'Não consegui abrir este PDF aqui.';
+const VISUALIZADOR_PDF = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/';
+function opcoesJanelaPdf(nome) {
+  return {
+    title: nome, width: 960, height: 760, minWidth: 420, minHeight: 320, show: false, autoHideMenuBar: true,
+    webPreferences: {
+      sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false, webviewTag: false, spellcheck: false,
+    },
+  };
+}
+function travarJanelaPdf(wc, url) {
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('will-navigate', (e) => e.preventDefault());
+  wc.on('will-attach-webview', (e) => e.preventDefault());
+  // link pra fora (http, outro arquivo, \\servidor) nao navega nem dentro do quadro do visualizador
+  wc.on('will-frame-navigate', (e) => {
+    const destino = String(e.url || '');
+    if (!e.isMainFrame && !destino.startsWith(VISUALIZADOR_PDF) && destino.split('#')[0] !== url) e.preventDefault();
+  });
+}
+/* Sem o visualizador, o Chromium BAIXA o PDF em vez de mostrar: o loadURL falha e o will-download chega logo
+   depois. Ate' o PDF aparecer, download desta janela e' cortado (nada de "Salvar como") e vira o aviso; depois,
+   o botao de baixar do proprio visualizador volta a valer. */
+async function abrirPdfNaJanela(arquivo) {
+  const url = require('url').pathToFileURL(arquivo).href;
+  const janela = new BrowserWindow(opcoesJanelaPdf(path.basename(arquivo)));
+  const wc = janela.webContents, ses = wc.session;
+  travarJanelaPdf(wc, url);
+  let aberto = false, baixou = false;
+  const aoBaixar = (e, _item, quem) => { if (quem === wc && !aberto) { e.preventDefault(); baixou = true; } };
+  ses.on('will-download', aoBaixar);
+  // aberta depois do Cockpit fechar, ela seguraria o app vivo (e o atalho nao reabriria a janela principal)
+  const principal = win;
+  const fecharJunto = () => { if (!janela.isDestroyed()) janela.close(); };
+  if (principal) principal.once('closed', fecharJunto);
+  janela.once('closed', () => {
+    ses.removeListener('will-download', aoBaixar);
+    if (principal) principal.removeListener('closed', fecharJunto);
+  });
+  try {
+    await janela.loadURL(url);
+    aberto = true;
+    janela.show();
+    return { ok: true };
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 800));   // o will-download chega depois da falha do loadURL
+    if (!janela.isDestroyed()) janela.destroy();
+    if (baixou) return { error: MSG_PDF_SEM_VISUALIZADOR };
+    logMain('pdf:abrir', e);
+    return { error: MSG_PDF_FALHOU };
+  }
+}
+async function abrirPdf(arquivo) {
+  const s = String(arquivo || '');
+  // caminho de rede: recusado ANTES de qualquer fs.* (R5-01), como no arquivo:ver
+  if (ehCaminhoDeRede(s)) return { error: MSG_CAMINHO_DE_REDE };
+  if (!path.isAbsolute(s) || path.extname(s).toLowerCase() !== '.pdf') return { error: 'Só abro PDF deste computador.' };
+  let arquivoComum = false;
+  try { arquivoComum = fs.statSync(s).isFile(); } catch {}
+  if (!arquivoComum) return { error: 'Não achei este PDF.' };
+  try { return await abrirPdfNaJanela(s); }
+  catch (e) { logMain('pdf:abrir', e); return { error: MSG_PDF_FALHOU }; }
+}
+ipcMain.handle('pdf:abrir', (_e, arquivo) => abrirPdf(arquivo));
 
 /* Aceita as duas formas: a string de sempre (o preload e' superficie publica) e
    { file, remoto }. Quem manda o 'remoto' e' a TELA, painel por painel -- de
    proposito, porque anexo colado mora aqui no PC mesmo quando o painel e'
    remoto, e so' o chamador sabe a diferenca. */
+const readerComments = require('./reader-comments').createStore({ directory: () => path.join(app.getPath('userData'), 'reader-comments') });
 ipcMain.handle('arquivo:ver', async (_e, f) => {
   const o = (f && typeof f === 'object') ? f : { file: f };
   const rem = remotoDoPedido(o);
-  if (!rem) return verArquivoLocal(o.file);
-  return await verArquivoRemoto(rem, o.file);
+  const result = rem ? await verArquivoRemoto(rem, o.file) : verArquivoLocal(o.file);
+  if (result.tipo === 'texto' && typeof result.dados === 'string') {
+    try { result.document = readerComments.registerDocument(result.path || o.file, rem, result.dados); }
+    catch { result.annotationError = 'Não consegui identificar este documento para guardar anotações.'; }
+  }
+  return result;
 });
+ipcMain.handle('reader-comments:get', (_e, document) => readerComments.get(document));
+ipcMain.handle('reader-comments:save', (_e, input) => readerComments.save(input));
 
-ipcMain.handle('clipboard:anexos', () => {
-  const arquivos = arquivosColados();
+ipcMain.handle('clipboard:anexos', async () => {
+  const arquivos = await arquivosColados();
   if (arquivos.length) return { arquivos };
   try {
-    const img = clipboard.readImage();
-    if (img && !img.isEmpty()) {
+    const png = await pngDaAreaDeTransferencia();
+    if (png) {
       const dir = path.join(app.getPath('userData'), 'colados');
       fs.mkdirSync(dir, { recursive: true });
       const nome = 'colado-' + Date.now() + '.png';
       const destino = path.join(dir, nome);
-      fs.writeFileSync(destino, img.toPNG());
+      fs.writeFileSync(destino, png);
       return { arquivos: [destino] };
     }
-  } catch {}
+  } catch (e) { logMain('colar', e); }
   return { arquivos: [] };
 });
 
@@ -3752,19 +4745,51 @@ ipcMain.handle('clipboard:anexos', () => {
    renderer depende da janela estar em foco. */
 /* teto de 1 MB: um texto gigante copiado sem querer travaria o terminal (e o
    pty) colando por minutos. Acima disso recusa e a tela avisa. */
-function lerTextoCopiado(ler) {
+/* No 44 o readText devolve Promise: sem o await o main mandava a Promise pelo IPC ("could not be
+   cloned") e o colar no terminal embutido morria. O canal devolve sempre texto, nunca a Promise. */
+async function lerTextoCopiado(ler) {
   let t = '';
-  try { t = ler() || ''; } catch { t = ''; }
+  try { t = (await ler()) || ''; } catch (e) { logMain('clipboard:texto', e); t = ''; }
+  if (typeof t !== 'string') { logMain('clipboard:texto', 'readText devolveu ' + typeof t + ' em vez de texto'); t = ''; }
   if (t.length > 1024 * 1024) return { texto: '', erro: 'grande' };
   return { texto: t };
 }
 ipcMain.handle('clipboard:texto', () => lerTextoCopiado(() => clipboard.readText()));
-ipcMain.handle('clipboard:copiar', (_e, t) => {
+// o writeText tambem e' assincrono no 44: sem o await este canal dizia "copiado" antes de gravar (e o erro sumia)
+ipcMain.handle('clipboard:copiar', async (_e, t) => {
   if (typeof t !== 'string' || !t) return false;
-  try { clipboard.writeText(t.slice(0, 1000000)); return true; } catch { return false; }
+  try { await clipboard.writeText(t.slice(0, 1000000)); return true; } catch (e) { logMain('clipboard:copiar', e); return false; }
+});
+
+/* A tela le os bytes da imagem colada (o File do evento "paste" nao tem caminho no disco) e manda pra ca;
+   o main so' grava em colados/ (mesma limpeza de 7 dias) e devolve o caminho. So' png, jpeg, webp e gif,
+   ate' 25 MB. Nao depende do clipboard do Electron. */
+const IMAGEM_COLADA_EXT = new Map([['image/png', 'png'], ['image/jpeg', 'jpg'], ['image/webp', 'webp'], ['image/gif', 'gif']]);
+const IMAGEM_COLADA_TETO = 25 * 1024 * 1024;
+ipcMain.handle('colar:salvar-imagem', (_e, bytes, tipo) => {
+  try {
+    const ext = IMAGEM_COLADA_EXT.get(String(tipo || '').toLowerCase());
+    if (!ext) return { error: 'Formato de imagem não aceito (use png, jpg, webp ou gif).' };
+    // ArrayBuffer ou Uint8Array, como chegarem pelo IPC; Buffer.from nao copia (o teto vale antes de gravar)
+    const dados = ArrayBuffer.isView(bytes) ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : (Object.prototype.toString.call(bytes) === '[object ArrayBuffer]' ? Buffer.from(bytes) : null);
+    if (!dados || !dados.length) return { error: 'A imagem veio vazia.' };
+    if (dados.length > IMAGEM_COLADA_TETO) return { error: 'Imagem muito pesada (mais de 25 MB). Use uma menor.' };
+    const dir = path.join(app.getPath('userData'), 'colados');
+    fs.mkdirSync(dir, { recursive: true });
+    // dois prints no mesmo milissegundo nao se sobrescrevem
+    let ts = Date.now(), destino;
+    while (fs.existsSync(destino = path.join(dir, 'colado-' + ts + '.' + ext))) ts++;
+    fs.writeFileSync(destino, dados);
+    return { arquivo: destino };
+  } catch (e) { logMain('colar', e); return { error: String(e && e.message || e) }; }
 });
 
 ipcMain.handle('anexo:ler', (_e, file) => {
+  /* Anexar (colar do Explorer, arrastar ou o +) termina aqui: o statSync num \\servidor trava o app ~21 s e o
+     Windows tenta autenticar por SMB. Recusa ANTES de encostar no disco, com o mesmo texto do arquivo:ver (R5-01).
+     "erro" e' o nome que este canal ja' usava; "error", o dos outros canais (shell:open, shell:link). */
+  if (ehCaminhoDeRede(file)) return { erro: MSG_CAMINHO_DE_REDE, error: MSG_CAMINHO_DE_REDE, path: file, nome: path.basename(String(file)) };
   try {
     const st = fs.statSync(file);
     const ext = path.extname(file).slice(1).toLowerCase();
@@ -3777,6 +4802,154 @@ ipcMain.handle('anexo:ler', (_e, file) => {
   } catch (e) { return { path: file, nome: path.basename(file), erro: e.message }; }
 });
 
+/* Imagem dentro de um .md aberto no leitor (UI 7.2-4). A CSP da tela so' aceita img-src 'self' data: e NAO abre
+   pra https: quem busca e' o main, que devolve a imagem como data:. Dois pedidos, os dois com teto de 10 MB:
+   - { arquivo }: a tela ja' resolveu o src relativo a partir da PASTA DO DOCUMENTO. Le' aqui no PC (assincrono: o
+     Drive do G: pode demorar e o main nao trava) ou, com 'remoto', no servidor pelo mesmo canal do arquivo:ver,
+     ja' com o teto de 10 MB no pedido (o servidor nao manda o que passa disso);
+   - { url }: so' https, pelo net.request (a rede do Chromium), 10 s no total, sem cookie, content-type image/*. A tela
+     so' pede isto DEPOIS de um clique (abrir o .md nao faz GET sozinho em endereco escolhido por quem o escreveu). Cada
+     salto de redirecionamento passa pela mesma conferencia do 1o endereco (https, sem login, sem host privado: quem
+     escreve o .md nao faz o PC buscar o roteador, um servico local ou a nuvem de metadados) e sao no maximo 5.
+   Caminho de rede (\\servidor, //servidor, file://servidor) e' recusado ANTES de qualquer fs.* e do ssh, como no
+   arquivo:ver. Falha vira { erro } curto: a tela troca a imagem por "imagem nao carregou" e o documento segue. */
+const TETO_IMG_DOC = 10 * 1024 * 1024;
+const TEMPO_IMG_WEB = 10000;
+const ERRO_IMG_GRANDE = 'Imagem maior que 10 MB.';
+const MAX_SALTOS_IMG = 5;
+
+/* Host que NAO e' da internet publica. Recebe o hostname do new URL(), que ja' normaliza 2130706433 e 0x7f.1 pra
+   127.0.0.1 e escreve o IPv6 comprimido e em minusculo (entre colchetes: aqui saem). Recusa: localhost, *.localhost,
+   *.local, *.internal, host sem ponto; IPv4 em 0/8, 10/8, 127/8, 100.64/10, 169.254/16, 172.16/12 e 192.168/16; IPv6 em
+   0000::/8 (:: , ::1 e o IPv4 mapeado ::ffff:), fc00::/7 e fe80::/10. NAO resolve DNS: um nome publico que aponta pra
+   dentro (tipo nip.io) passa -- mas so' vira imagem se o certificado https dele for valido e a resposta for image/*. */
+function hostPrivado(host) {
+  let h = String(host || '').trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  h = h.replace(/\.+$/, '');   // "localhost." e' o mesmo localhost
+  if (!h) return true;
+  if (h.includes(':')) return h.startsWith('::') || /^[0-9a-f]{1,2}:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h);
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4) {
+    const a = Number(v4[1]), b = Number(v4[2]);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  return !h.includes('.') || /\.(?:localhost|local|internal)$/.test(h);
+}
+
+/* O endereco (um URL) que o main aceita buscar, no 1o pedido e em CADA salto: https, sem login e com host publico.
+   Devolve o motivo da recusa, ou '' se pode. */
+function recusaDoEnderecoDaWeb(alvo) {
+  if (alvo.protocol !== 'https:' || !alvo.hostname || alvo.username || alvo.password) return 'Só imagens por https são buscadas.';
+  if (hostPrivado(alvo.hostname)) return 'Endereço de rede interna: a imagem não é buscada.';
+  return '';
+}
+
+async function imagemDaWeb(url, tempo = TEMPO_IMG_WEB) {
+  let alvo;
+  try { alvo = new URL(String(url)); } catch { return { erro: 'Endereço da imagem inválido.' }; }
+  const recusa = recusaDoEnderecoDaWeb(alvo);
+  if (recusa) return { erro: recusa };
+  return new Promise((resolve) => {
+    const partes = [];
+    let total = 0, saltos = 0, req = null, fim = false, relogio = null;
+    // um resultado so': o primeiro que chegar (imagem, erro, recusa ou o relogio) encerra e corta o pedido
+    const acabar = (r) => {
+      if (fim) return;
+      fim = true;
+      clearTimeout(relogio);
+      if (req) { try { req.abort(); } catch {} }   // resposta que nao foi lida (status ruim, nao e' imagem, grande demais) nao segura a conexao aberta
+      resolve(r);
+    };
+    relogio = setTimeout(() => acabar({ erro: 'A imagem demorou mais de 10 s.' }), tempo);   // o mesmo relogio vale pro caminho todo: saltos, cabecalhos e corpo
+    try {
+      req = require('electron').net.request({ method: 'GET', url: alvo.href, redirect: 'manual', credentials: 'omit' });
+      req.setHeader('accept', 'image/*');
+      /* redirect 'manual': o Electron so' segue se o followRedirect() vier AQUI, sincrono, de dentro do evento; sem ele
+         (ou com abort) o pedido para. O destino passa pela MESMA conferencia do 1o endereco antes de qualquer pedido. */
+      req.on('redirect', (_status, _metodo, destino) => {
+        if (fim) return;
+        let proximo;
+        try { proximo = new URL(String(destino)); } catch { acabar({ erro: 'Endereço da imagem inválido.' }); return; }
+        const motivo = ++saltos > MAX_SALTOS_IMG ? 'A imagem passou por redirecionamentos demais.' : recusaDoEnderecoDaWeb(proximo);
+        if (motivo) {
+          logMain('arquivo:imagemMd', new Error('redirecionamento recusado: ' + proximo.hostname + ' (' + motivo + ')'));   // so' o host: caminho e query podem ter segredo
+          acabar({ erro: motivo });
+          return;
+        }
+        req.followRedirect();
+      });
+      req.on('response', (res) => {
+        if (fim) return;
+        const status = res.statusCode;
+        if (status < 200 || status > 299) { acabar({ erro: 'O site respondeu ' + status + '.' }); return; }
+        const tipo = String(res.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        if (!/^image\/[a-z0-9][a-z0-9.+-]*$/.test(tipo)) { acabar({ erro: 'O endereço não devolveu uma imagem.' }); return; }
+        if (Number(res.headers['content-length']) > TETO_IMG_DOC) { acabar({ erro: ERRO_IMG_GRANDE }); return; }
+        res.on('data', (pedaco) => {
+          if (fim) return;
+          total += pedaco.length;
+          // o content-length pode faltar ou mentir: conta o que chega e para de ler no teto
+          if (total > TETO_IMG_DOC) { acabar({ erro: ERRO_IMG_GRANDE }); return; }
+          partes.push(pedaco);
+        });
+        res.on('end', () => acabar(total
+          ? { dados: 'data:' + tipo + ';base64,' + Buffer.concat(partes).toString('base64'), bytes: total }
+          : { erro: 'A resposta veio sem conteúdo.' }));
+        res.on('error', (e) => { if (fim) return; logMain('arquivo:imagemMd', e); acabar({ erro: 'Não consegui buscar a imagem.' }); });
+        res.on('close', () => acabar({ erro: 'A conexão caiu antes de a imagem chegar.' }));   // depois do 'end' o resultado ja' saiu: nao muda nada
+      });
+      req.on('error', (e) => { if (fim) return; logMain('arquivo:imagemMd', e); acabar({ erro: 'Não consegui buscar a imagem.' }); });
+      req.end();
+    } catch (e) {
+      logMain('arquivo:imagemMd', e);
+      acabar({ erro: 'Não consegui buscar a imagem.' });
+    }
+  });
+}
+
+async function imagemDoDocumento(o) {
+  const url = o && typeof o.url === 'string' ? o.url.trim() : '';
+  const arquivo = o && typeof o.arquivo === 'string' ? o.arquivo.trim() : '';
+  if ((url && arquivo) || (!url && !arquivo)) return { erro: 'Faltou o endereço da imagem.' };   // um dos dois, nunca os dois
+  if (url) return imagemDaWeb(url);
+  // rede ANTES de qualquer fs.* e do ssh (o tab no meio do caminho nao esconde o "//": controle e' recusado)
+  if (/[\u0000-\u001f\u007f]/.test(arquivo)) return { erro: 'Caminho da imagem inválido.' };
+  if (ehCaminhoDeRede(arquivo) || /^file:\/\/[^/]/i.test(arquivo)) return { erro: MSG_CAMINHO_DE_REDE };
+  const ext = path.extname(arquivo).slice(1).toLowerCase();
+  if (!EXT_VIS_IMG.includes(ext)) return { erro: 'Só arquivo de imagem aparece aqui.' };
+  const rem = remotoDoPedido(o);
+  // so' a PRESENCA do remoto decide: um remoto torto e' erro, nunca uma volta calada pro disco daqui
+  if (o.remoto && !rem) return { erro: 'Servidor desta aba está incompleto. Edite a aba.' };
+  if (rem) {
+    if (!/^(?:\/|~\/)/.test(arquivo)) return { erro: 'Caminho da imagem inválido.' };
+    // o teto de 10 MB vai no pedido: o servidor nao manda o que passa disso (antes baixava ate' 25 MB pra so' depois recusar)
+    const r = await verArquivoRemoto(rem, arquivo, TETO_IMG_DOC);
+    if (r.erro) return { erro: r.erro };
+    if (r.tipo === 'grande') return { erro: ERRO_IMG_GRANDE };
+    if (r.tipo !== 'imagem' || typeof r.dados !== 'string') return { erro: 'A imagem não veio do servidor.' };
+    if (r.bytes > TETO_IMG_DOC) return { erro: ERRO_IMG_GRANDE };
+    return { dados: r.dados, bytes: r.bytes };
+  }
+  if (!path.isAbsolute(arquivo)) return { erro: 'Caminho da imagem inválido.' };
+  try {
+    const st = await fs.promises.stat(arquivo);
+    if (!st.isFile()) return { erro: 'Isso não é um arquivo de imagem.' };
+    if (st.size > TETO_IMG_DOC) return { erro: ERRO_IMG_GRANDE };
+    const dados = await fs.promises.readFile(arquivo);
+    if (dados.length > TETO_IMG_DOC) return { erro: ERRO_IMG_GRANDE };   // cresceu depois do stat
+    return { dados: 'data:image/' + mimeDaImagem(ext) + ';base64,' + dados.toString('base64'), bytes: dados.length };
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { erro: 'Não achei a imagem.' };
+    throw e;
+  }
+}
+
+ipcMain.handle('arquivo:imagemMd', async (_e, o) => {
+  try { return await imagemDoDocumento(o); }
+  catch (e) { logMain('arquivo:imagemMd', e); return { erro: 'Não consegui carregar a imagem.' }; }
+});
+
 ipcMain.handle('dialog:pickFiles', async (_e, kind) => {
   const opt = { properties: ['multiSelections'], defaultPath: HOME };
   if (kind === 'folder') opt.properties = ['openDirectory'];
@@ -3786,27 +4959,56 @@ ipcMain.handle('dialog:pickFiles', async (_e, kind) => {
   return r.canceled ? [] : r.filePaths;
 });
 
+/* Vigia do arquivo aberto no leitor (Leva 2, Task 5). A tela pede ('arquivo:vigiar') quando abre um arquivo LOCAL e
+   manda parar ('arquivo:vigiar-parar') ao fechar o visor, ao trocar de documento e quando o painel morre; o
+   shutdown() solta tudo quando a tela recarrega, cai ou fecha. O aviso volta pelo canal 'arquivo:mudou'. A regra
+   (so' arquivo local, nunca de rede, debounce de 300 ms) esta em src/vigia-arquivo.js. */
+const vigiaDoLeitor = require('./vigia-arquivo').criarVigia({
+  fs, ehCaminhoDeRede, log: logMain,
+  avisar: (aviso) => { if (win && !win.isDestroyed()) win.webContents.send('arquivo:mudou', aviso); },
+});
+ipcMain.handle('arquivo:vigiar', (_e, pedido) => {
+  const o = (pedido && typeof pedido === 'object') ? pedido : {};
+  // arquivo de servidor nao existe neste disco (o mesmo caminho pode existir aqui, por acaso): nunca vigiado
+  if (o.remoto) return { ok: false, motivo: 'servidor' };
+  return vigiaDoLeitor.vigiar(o.chave, o.arquivo);
+});
+ipcMain.handle('arquivo:vigiar-parar', (_e, chave) => {
+  return { ok: vigiaDoLeitor.parar(chave) };
+});
+
 /* ======================= janela ======================= */
 /* fundo de cada tema (o --bg do style.css / motti-brand.css): a janela nasce na
    cor do tema salvo, em vez de sempre escura -- quem usa Claro/Jornal via piscar */
 const FUNDO_DO_TEMA = { escuro: '#1e1e1e', claro: '#ffffff', jornal: '#fdf6e3', motti: '#07182f', azul: '#07182f' };
+const visualMacNative = createVisualMacNative({
+  app, ipcMain, Menu, nativeTheme, systemPreferences, nativeImage,
+  getWindow: () => win, loadConfig, saveConfig, log: logMain,
+});
+visualMacNative.install();
+app.on('will-quit', () => visualMacNative.dispose());
 function temaSalvo() {
   const t = (loadConfig() || {}).tema;
-  return t === 'motti' ? 'azul' : FUNDO_DO_TEMA[t] ? t : 'escuro';
+  return t === 'motti' ? 'azul' : t === 'automatico' || FUNDO_DO_TEMA[t] ? t : 'escuro';
 }
 function createWindow() {
+  visualMacNative.syncConfig(loadConfig());
   win = new BrowserWindow({
-    title: 'Cockpit',
+    title: JANELA_DE_TESTE ? TITULO_JANELA_DE_TESTE : 'Cockpit',
     icon: path.join(__dirname, 'assets', EH_WIN ? 'icon.ico' : 'icon.png'),
     ...(EH_WIN && app.isPackaged ? { show: false } : {}),
     width: 1500, height: 900, minWidth: 900, minHeight: 560,
-    backgroundColor: FUNDO_DO_TEMA[temaSalvo()],
-    /* so' no Mac: 'hiddenInset' e a posicao dos botoes sao coisas de la'. No
-       Windows o Electron 33 ignora, mas uma versao futura pode passar a tratar
-       como 'hidden' - e a janela perderia minimizar/fechar. */
-    ...(EH_WIN ? {} : { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 16 } }),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
+    backgroundColor: FUNDO_DO_TEMA[temaSalvo()] || (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7'),
+    // Windows mantém os botões nativos e o Snap; Mac mantém hiddenInset.
+    ...visualMacNative.windowOptions(),
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false,
+      // janela de teste: o preload le esta flag em process.argv e entrega window.api.janelaDeTeste a tela (faixa vermelha e envio barrado)
+      ...(JANELA_DE_TESTE ? { additionalArguments: ['--cockpit-janela-teste'] } : {}) },
   });
+  // o titulo da janela de teste nao e' trocado pelo da pagina (<title>Cockpit</title>)
+  if (JANELA_DE_TESTE) win.on('page-title-updated', (e) => e.preventDefault());
+  ipcSecurity.installSession(win.webContents.session);
+  visualMacNative.attachWindow();
   if (EH_WIN && app.isPackaged) {
     // Antes de mostrar, informa ao Windows o ícone e o executável reais.
     // Evita que um atalho antigo Electron.lnk forneça a identidade da barra.
@@ -3839,7 +5041,7 @@ function createWindow() {
     registrarQueda({ motor: 'tela', tipo: 'tela-caiu', motivo, codigo: d && d.exitCode != null ? d.exitCode : null });
     if (motivo === 'clean-exit') return;
     shutdown();
-    setTimeout(() => { try { if (win && !win.isDestroyed()) win.webContents.reload(); } catch {} }, 800);
+    setTimeout(() => { try { if (win && !win.isDestroyed()) win.webContents.reload(); } catch (e) { logMain('tela:recarregar', e); } }, 800);
   });
   win.on('unresponsive', () => registrarQueda({ motor: 'tela', tipo: 'tela-travou' }));
   win.on('responsive', () => registrarQueda({ motor: 'tela', tipo: 'tela-voltou' }));
@@ -3878,6 +5080,16 @@ function shutdown() {
   for (const id of [...claudePanes.keys()]) claudeStop(id);
   for (const id of [...cliPanes.keys()]) cliParar(id);
   try { acp.pararTodos(); } catch {}
+  // Mais detalhes em andamento: a janelinha sumiu junto com a tela
+  try { maisDetalhes.cancelarTodos(); } catch {}
+  // Tarefa 6: revisao do nome automatico em andamento tambem (nenhum claude -p fica orfao)
+  try { revisorDeNomes.cancelarTodos(); } catch {}
+  // Tarefa 7: e o nome dos agentes
+  try { nomeadorDeAgentes.cancelarTodos(); } catch {}
+  // Leva 2 (Task 5): a vigia do arquivo aberto no leitor nao sobrevive a tela (recarga, queda ou fechamento)
+  try { vigiaDoLeitor.pararTodos(); } catch (e) { logMain('vigia:parar-todos', e); }
+  // Leva 5i: as paginas do navegador interno sao views da JANELA, nao do HTML: recarregar a tela sem soltar deixaria cada uma flutuando por cima da tela nova
+  try { navegador.fecharTodos(); } catch (e) { logMain('navegador:fechar-todos', e); }
   // quem nao morreu com o SIGTERM vai no grito: sem isso ficava processo orfao
   for (const p of [...zumbis]) { try { p.kill('SIGKILL'); } catch {} }
   zumbis.clear();
@@ -3895,8 +5107,22 @@ function shutdown() {
 }
 
 /* ======================= IPC ======================= */
-ipcMain.handle('config:get', () => loadConfig());
-ipcMain.handle('config:set', (_e, c) => { saveConfig(c); return true; });
+ipcMain.handle('config:get', () => { const c = loadConfig(); loadConfig.telaComPadrao = loadConfig.naoLido === true; return c; });   // onda 1: a tela que recebeu o padrao de um config preso so' grava depois de reler
+ipcMain.handle('config:set', (_e, c) => {
+  // Rodada 2 da leva 5: a tela leu bem, mas outro leitor do main (pastasDeTrabalho, ligado(), setVisualMac) pegou o config preso e
+  // ligou o naoLido. O que a tela tem na mão não é o padrão: relê antes de gravar (solto, grava; ainda preso, recusa sem "Reabra").
+  if (typeof loadConfig === 'function' && loadConfig.telaComPadrao === false && loadConfig.naoLido === true) loadConfig();
+  if (!saveConfig(c)) {
+    // O renderer centraliza um aviso mesmo para chamadas que não aguardam
+    // a Promise. Nenhum caminho, conteúdo ou erro técnico sai neste evento.
+    // Rodada final da leva 5: a recusa da tela que recebeu o padrão (telaComPadrao) dura até reabrir; a tela diz isso.
+    const reler = typeof loadConfig === 'function' && loadConfig.telaComPadrao === true;
+    try { _e.sender?.send('config:save-error', reler ? { reler: true } : {}); } catch (e) { logMain('config:save-error', e); }
+    return false;
+  }
+  visualMacNative.syncConfig(c);
+  return true;
+});
 // sincrono de proposito: o preload pega o tema ANTES do app.js pintar a tela
 ipcMain.on('config:tema', (e) => { try { e.returnValue = temaSalvo(); } catch { e.returnValue = 'escuro'; } });
 ipcMain.handle('sys:home', () => HOME);
@@ -3929,6 +5155,7 @@ ipcMain.handle('fs:list', async (_e, d) => {
    caminhoRemoto '~' sao pastas diferentes, e o '~' delas nao tem nada a ver com
    a home deste PC. Chaveado so' pela raiz, uma envenenava a lista da outra. */
 const cacheArquivos = new Map();   // destino SSH completo + raiz (ou local|raiz)
+const arquivosEmAndamento = new Map();
 const chaveDoCache = (remoto, raiz) =>
   (remoto ? JSON.stringify([String(remoto.usuario), String(remoto.host), Number(remoto.porta || 22), String(remoto.chave || '')]) : 'local') + '|' + raiz;
 
@@ -3992,14 +5219,15 @@ async function varrerArquivosRemoto(remoto, raiz, limite) {
    O basename muda de dialeto conforme o alvo -- caminho remoto e' sempre POSIX. */
 function pontuarArquivos(lista, termo, remoto) {
   const pb = remoto ? path.posix : path;
-  const alvo = String(termo || '').toLowerCase();
+  const normalizar = value => String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR');
+  const alvo = normalizar(termo);
   if (!alvo) return lista.slice(0, 40).map((p) => ({ path: p, nome: pb.basename(p) }));
   const pontua = (p) => {
-    const nome = pb.basename(p).toLowerCase();
+    const nome = normalizar(pb.basename(p));
     if (nome === alvo) return 0;
     if (nome.startsWith(alvo)) return 1;
     if (nome.includes(alvo)) return 2;
-    if (p.toLowerCase().includes(alvo)) return 3;
+    if (normalizar(p).includes(alvo)) return 3;
     return 99;
   };
   return lista.map((p) => ({ p, s: pontua(p) })).filter((x) => x.s < 99)
@@ -4026,7 +5254,13 @@ ipcMain.handle('fs:buscarArquivos', async (_e, d) => {
       if (r.error) return { itens: [], error: r.error };
       lista = r.lista;
     } else {
-      lista = varrerArquivos(raiz, 20000);
+      let pending = arquivosEmAndamento.get(chave);
+      if (!pending) {
+        pending = buscaLocal.scanFiles(raiz, { ignore: name => escondido(name) || IGNORE.has(name) });
+        arquivosEmAndamento.set(chave, pending);
+      }
+      try { lista = (await pending).files; }
+      finally { if (arquivosEmAndamento.get(chave) === pending) arquivosEmAndamento.delete(chave); }
     }
     c = { quando: agora, lista };
     cacheArquivos.set(chave, c);
@@ -4048,25 +5282,32 @@ for (const [action, operation] of Object.entries({
   });
 }
 
-/* branch e arquivos mexidos da pasta do painel */
-ipcMain.handle('git:status', async (_e, { cwd }) => {
-  if (!cwd) return null;
-  try { if (!fs.existsSync(path.join(cwd, '.git'))) return null; } catch { return null; }
-  const r = await rodar('git', ['-C', cwd, '-c', 'core.quotePath=false', 'status', '--porcelain=v1', '-b'], 8000);
-  if (r.err) return null;
-  const linhas = String(r.out || '').split('\n').filter(Boolean);
+/* -z preserva espaços, quebras de linha e " -> " nos nomes. Em rename,
+   o destino vem primeiro e o nome antigo ocupa o próximo registro NUL. */
+function lerStatusGit(saida) {
+  const linhas = String(saida || '').split('\0');
   let branch = '';
   const arquivos = [];
-  for (const l of linhas) {
-    if (l.startsWith('## ')) { branch = l.slice(3).split('...')[0].split(' ')[0]; continue; }
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (l.startsWith('## ')) {
+      branch = l.slice(3).replace(/^(?:No commits yet on |Initial commit on )/, '').split('...')[0].split(' ')[0];
+      continue;
+    }
+    if (l.length < 4) continue;
     const estado = l.slice(0, 2).trim();
-    let nome = l.slice(3).trim();
-    // rename vem como "antigo -> novo": interessa o novo
-    const seta = nome.indexOf(' -> ');
-    if (seta > 0) nome = nome.slice(seta + 4);
+    const nome = l.slice(3);
     if (nome) arquivos.push({ estado, nome });
+    if (/[RC]/.test(l.slice(0, 2))) i++;
   }
   return { branch, arquivos };
+}
+/* branch e arquivos mexidos da pasta do painel */
+ipcMain.handle('git:status', async (_e, { cwd } = {}) => {
+  if (!cwd) return null;
+  try { if (!fs.existsSync(path.join(cwd, '.git'))) return null; } catch { return null; }
+  const r = await rodar('git', ['-C', cwd, '-c', 'core.quotePath=false', 'status', '--porcelain=v1', '-b', '-z'], 8000);
+  return r.err ? null : lerStatusGit(r.out);
 });
 
 ipcMain.handle('git:diff', async (_e, { cwd, arquivo }) => {
@@ -4088,11 +5329,24 @@ function ehArquivoDeConversa(f) {
     const p = path.resolve(String(f || ''));
     if (!/\.jsonl$/i.test(p)) return false;
     const raizes = [CLAUDE_PROJ, CODEX_SESS, path.join(app.getPath('userData'), 'acp')].filter(Boolean).map((r) => path.resolve(r));
-    return raizes.some((r) => p === r || p.startsWith(r + path.sep));
+    const dentro = (r, alvo) => {
+      const rel = path.relative(r, alvo);
+      return rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
+    };
+    const real = (alvo) => (fs.realpathSync.native || fs.realpathSync)(alvo);
+    if (!fs.statSync(p).isFile()) return false;
+    const alvo = real(p);
+    // Uma junction dentro de sessions não autoriza apagar arquivo fora dela.
+    return raizes.some((r) => {
+      try { return dentro(r, p) && dentro(real(r), alvo) && /\.jsonl$/i.test(alvo); }
+      catch { return false; }
+    });
   } catch { return false; }
 }
 
 ipcMain.handle('sessao:apagar', async (_e, { id, file, engine, remoto }) => {
+  // conferencia da rodada 2 da leva 5i (achado C): a janela de teste lista as conversas REAIS; apagar mandaria o .jsonl de verdade para a Lixeira
+  if (typeof JANELA_DE_TESTE !== 'undefined' && JANELA_DE_TESTE) return { error: AVISO_JANELA_DE_TESTE };   // typeof: os testes recortam o canal num vm
   if (remoto != null) { if (engine === 'claude') { try { const remoteFile = await arquivoClaudeNoServidor(remoto, id); await remoteTransport.run(remoto, 'rm -- ' + qLinux(remoteFile)); return { ok: true }; } catch(e) { return { error: e.message }; } } return remoteEngines.remove(engine, remoto, id); }
   try {
     let f = ehArquivoDeConversa(file) ? file : null;
@@ -4105,9 +5359,12 @@ ipcMain.handle('sessao:apagar', async (_e, { id, file, engine, remoto }) => {
       if (it) f = it.f;
     }
     if (!f || !fs.existsSync(f)) return { error: 'Não achei o arquivo desta conversa.' };
+    // Os caminhos encontrados pelo id e pelo índice passam pela mesma regra.
+    if (!ehArquivoDeConversa(f)) return { error: 'Este arquivo não pertence às pastas de conversas.' };
     await shell.trashItem(f);
     const ind = lerIndice(); delete ind[f]; gravarIndice();
-    const nomes = lerNomes(); tituloAuto.esquecerNome(nomes, id); salvarNomes(nomes);   // o seu e o automatico
+    // o seu e o automatico (nomes.json que nao deu pra ler fica como esta': gravar em cima apagaria os outros)
+    const nomes = lerNomesSeguro(); if (nomes) { tituloAuto.esquecerNome(nomes, id); salvarNomes(nomes); }
     return { ok: true };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
@@ -4115,9 +5372,8 @@ ipcMain.handle('sessao:apagar', async (_e, { id, file, engine, remoto }) => {
 /* exporta a conversa como .md legivel */
 ipcMain.handle('sessao:exportar', async (_e, { engine, id, file, titulo, msgs, remoto }) => {
   try {
-  if (remoto != null && !Array.isArray(msgs)) { msgs = engine === 'claude' ? await claudeHistoryRemoto(remoto,id,5000) : await remoteEngines.history(engine,remoto,id); if (!Array.isArray(msgs)) return msgs; }
+  if (remoto != null && !Array.isArray(msgs)) { msgs = engine === 'claude' ? await claudeHistoryRemoto(remoto,id) : await remoteEngines.history(engine,remoto,id); if (!Array.isArray(msgs)) return msgs; }
     let linhas = Array.isArray(msgs) ? msgs : null;
-    let cortou = false;
     if (!linhas) {
       let f = file;
       if (ehCli(engine) && (!f || !fs.existsSync(f))) f = acharArquivoSessao(engine, id);
@@ -4131,13 +5387,15 @@ ipcMain.handle('sessao:exportar', async (_e, { engine, id, file, titulo, msgs, r
         if (it) f = it.f;
       }
       if (!f || !fs.existsSync(f)) return { error: 'Não achei o arquivo desta conversa.' };
-      linhas = engine === 'claude' ? claudeHistory(f, 5000) : engine === 'acp' ? acp.historico(id, f, 5000) : ehCli(engine) ? cliHistory(f, 5000) : codexHistory(f, 5000);
-      try {
-        const tamanho = fs.statSync(f).size;
-        // o corte por bytes so' existe no Claude (tailRead); o Codex le tudo
-        if (linhas.length >= 5000 || (engine === 'claude' && tamanho > 6 * 1024 * 1024)) cortou = true;
-      } catch {}
+      // Tarefa 5: a conversa INTEIRA, lida em blocos (o teto de 6 MB do Claude saiu)
+      linhas = engine === 'claude' ? await claudeHistory(f) : engine === 'acp' ? await acp.historico(id, f) : ehCli(engine) ? await cliHistory(f) : await codexHistory(f);
     }
+    /* "cortou" pela CONTAGEM: o arquivo leva as ultimas 5000 falas (com as
+       ferramentas delas, todas) e o aviso sai so' se alguma fala ficou de fora.
+       Antes olhava o tamanho do arquivo (6 MB) e contava ferramenta como fala. */
+    const corte = cortarHistorico(linhas, 5000, Infinity);
+    linhas = corte.msgs;
+    const cortou = corte.cortou;
     const quem = engine === 'codex' ? 'Codex' : engine === 'acp' ? 'Agente ACP' : ehCli(engine) ? CLIS[engine].nome : 'Claude';
     let md = '# ' + (titulo || 'Conversa') + '\n\n_exportado do Cockpit em ' + new Date().toLocaleString('pt-BR') + '_\n\n';
     if (cortou) md += '> ⚠️ Conversa longa: este arquivo tem só a parte final dela.\n\n';
@@ -4162,14 +5420,44 @@ ipcMain.handle('fs:read', (_e, f) => {
     return { content: fs.readFileSync(f, 'utf8') };
   } catch (e) { return { error: e.message }; }
 });
-ipcMain.handle('shell:open', (_e, p) => {
+/* Script e executavel NUNCA abrem direto (R3-06): o openPath segue a associacao do Windows e, com o Python
+   instalado, um .py gravado pelo agente RODA no clique de quem so' queria ver o arquivo. A regra pura mora em
+   abrir-seguro.js; aqui o arquivo so' aparece na pasta. */
+const { decidirAbertura } = require('./abrir-seguro');
+ipcMain.handle('shell:open', async (_e, p) => {
   const s = String(p || '');
+  if (ehCaminhoDeRede(s)) return { error: MSG_CAMINHO_DE_REDE };
+  if (decidirAbertura(s) === 'revelar') {
+    // pasta com nome de script ("site.com", "next.js") abre normal: o que roda e' arquivo, nao pasta
+    let pasta = false;
+    try { pasta = fs.statSync(s).isDirectory(); } catch {}
+    if (!pasta) {
+      try { shell.showItemInFolder(s); } catch (e) { return { error: String((e && e.message) || e) }; }
+      return { ok: true, revelado: true };
+    }
+  }
   if (!podeAbrirDireto(s)) {
     // em vez de so' recusar, mostra na pasta: voce decide o que fazer com ele
-    try { shell.showItemInFolder(s); } catch {}
+    try { shell.showItemInFolder(s); } catch (e) { logMain('shell:open', e); }
     return { error: 'Esse tipo de arquivo o Cockpit não abre direto — abri a pasta dele pra você.' };
   }
-  return shell.openPath(s);
+  /* o openPath NAO lanca: devolve o TEXTO do erro ('' quando abriu). A tela le { error }, entao o texto cru
+     passava calado (UI 7.2-8). */
+  try {
+    const erro = await shell.openPath(s);
+    return erro ? { error: String(erro) } : { ok: true };
+  } catch (e) { return { error: String((e && e.message) || e) }; }
+});
+/* "Mostrar na pasta": o arquivo aparece selecionado no Explorer, sem abrir nada (script e executavel tambem).
+   Caminho de rede e' recusado como nos outros canais (R5-01). */
+ipcMain.handle('shell:mostrarNaPasta', (_e, p) => {
+  const s = String(p || '');
+  if (ehCaminhoDeRede(s)) return { error: MSG_CAMINHO_DE_REDE };
+  try {
+    if (!s || !fs.existsSync(s)) return { error: 'Caminho não encontrado.' };
+    shell.showItemInFolder(s);
+    return { ok: true };
+  } catch (e) { return { error: String((e && e.message) || e) }; }
 });
 /* Lista de PERMITIDOS, nao de proibidos.
    A lista de proibidos deixava passar .lnk, .hta, .url, .pif e
@@ -4180,7 +5468,8 @@ const EXT_ABRE_DIRETO = new Set([
   // texto e codigo
   'txt','md','markdown','json','jsonl','yaml','yml','toml','ini','cfg','conf','env','log','csv','tsv',
   'html','htm','xml','css','scss','less','sql','graphql','diff','patch','lock','gitignore',
-  'py','rb','go','rs','java','kt','swift','c','h','cpp','hpp','cs','php','lua','r','ipynb',
+  // py, rb, php, lua e r NAO entram: o Windows EXECUTA esses arquivos em vez de abrir num editor (R3-06)
+  'go','rs','java','kt','swift','c','h','cpp','hpp','cs','ipynb',
   'ts','tsx','jsx','mjs','cjs','vue','svelte','astro',
   // documento
   'pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','rtf','epub',
@@ -4200,13 +5489,24 @@ const EXT_ABRE_DIRETO = new Set([
 const SEM_PONTO_OK = new Set([
   'dockerfile','makefile','license','readme','changelog','procfile','gemfile','rakefile','justfile','vagrantfile',
 ]);
+const OCULTOS_ABRE_DIRETO = new Set([
+  '.env', '.gitignore', '.gitattributes', '.gitmodules', '.dockerignore', '.editorconfig',
+  '.npmrc', '.yarnrc', '.nvmrc', '.node-version', '.python-version', '.eslintrc',
+  '.prettierrc', '.babelrc', '.browserslistrc', '.stylelintrc',
+]);
 function podeAbrirDireto(p) {
   const s = String(p || '');
   const barra = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
   const nome = s.slice(barra + 1);
-  // .env, .gitignore, .eslintrc: o ponto esta' na FRENTE, nao e' extensao.
-  // .env.local e .env.production tambem, por isso o teste e' pelo comeco.
-  if (nome.startsWith('.') && !/\.(exe|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|msi|msc|cpl|reg|jar|lnk|url|hta|pif|scf|chm|ahk|pyw|sh|zsh|command|app|settingcontent-ms|library-ms|appref-ms)$/i.test(nome)) return true;
+  if (!s || /[\x00-\x1f]/.test(s) || /[ .]$/.test(nome)) return false;
+  // O Windows remove pontos/espaços finais e interpreta ':' como fluxo ADS.
+  // Validar a grafia original evita uma extensão inofensiva mascarar outra.
+  if (EH_WIN && s.replace(/^[A-Za-z]:/, '').includes(':')) return false;
+  // Configurações ocultas conhecidas são permitidas pelo nome exato.
+  // As demais seguem a mesma lista de extensões dos arquivos visíveis.
+  const oculto = nome.toLowerCase();
+  if (OCULTOS_ABRE_DIRETO.has(oculto)) return true;
+  if (/^\.env\.(local|development|production|test|staging)(\.local)?$/.test(oculto)) return true;
   const ponto = nome.lastIndexOf('.');
   if (ponto > 0 && EXT_ABRE_DIRETO.has(nome.slice(ponto + 1).toLowerCase())) return true;
   if (ponto <= 0 && SEM_PONTO_OK.has(nome.toLowerCase())) return true;   // Dockerfile, Makefile...
@@ -4219,11 +5519,12 @@ function podeAbrirDireto(p) {
 }
 ipcMain.handle('shell:link', (_e, url) => {
   const s = String(url || '');
+  if (ehCaminhoDeRede(s)) return { error: MSG_CAMINHO_DE_REDE };
   if (/^https?:\/\//i.test(s)) return shell.openExternal(s);
   // nao e' link web: so' abre se for arquivo/pasta que existe E nao for executavel
   if (!podeAbrirDireto(s)) {
     let mostrei = false;
-    try { if (fs.existsSync(s)) { shell.showItemInFolder(s); mostrei = true; } } catch {}
+    try { if (fs.existsSync(s)) { shell.showItemInFolder(s); mostrei = true; } } catch (e) { logMain('shell:link', e); }
     return { error: mostrei
       ? 'Esse tipo de arquivo o Cockpit não abre direto — abri a pasta dele pra você.'
       : 'Esse tipo de arquivo o Cockpit não abre direto.' };
@@ -4235,6 +5536,35 @@ ipcMain.handle('shell:openUrl', (_e, u) => {
   if (!/^https?:\/\//i.test(String(u || ''))) return { error: 'link inválido' };
   shell.openExternal(u); return { ok: true };
 });
+
+/* ======================= navegador interno (leva 5i) =======================
+   O link de site abre no visor do painel, numa pagina NATIVA (WebContentsView) que o src/navegador-interno.js poe por cima da janela.
+   A tela so' manda estes comandos e o retangulo do corpo do visor, e ouve 'navegador:estado' e 'navegador:download'. A pagina nao
+   fala com o IPC do app: sem preload, e o cockpit-ipc-security.js recusa outro webContents. Login do Cockpit (Claude, Codex,
+   conectores) continua no navegador do Windows: connector:openUrl e shell:openUrl nao passam por aqui. */
+const { WebContentsView, session: sessaoDoElectron } = require('electron');
+const navegador = require('./navegador-interno').criarNavegadorInterno({
+  WebContentsView, session: sessaoDoElectron, shell,
+  getWindow: () => win,
+  pastaDownloads: () => app.getPath('downloads'),
+  emit: (canal, dados) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(canal, dados); },
+  log: logMain,
+});
+// o pedido vem da tela como { paneId, ... }: um objeto qualquer nao pode derrubar o canal (o modulo valida cada campo de novo)
+const canalDoNavegador = (nome, executar) => ipcMain.handle('navegador:' + nome, (_e, pedido) => {
+  try { return executar(pedido && typeof pedido === 'object' ? pedido : {}); }
+  catch (e) { logMain('navegador:' + nome, e); return { ok: false, erro: 'O navegador não respondeu.' }; }
+});
+canalDoNavegador('abrir', (o) => navegador.abrir(o.paneId, o.url, o.rect));
+canalDoNavegador('posicionar', (o) => navegador.posicionar(o.paneId, o.rect));
+canalDoNavegador('visivel', (o) => navegador.visivel(o.paneId, o.visivel === true));
+canalDoNavegador('voltar', (o) => navegador.voltar(o.paneId));
+canalDoNavegador('avancar', (o) => navegador.avancar(o.paneId));
+canalDoNavegador('recarregar', (o) => navegador.recarregar(o.paneId, o.semCache === true));
+canalDoNavegador('parar', (o) => navegador.parar(o.paneId));
+canalDoNavegador('irPara', (o) => navegador.irPara(o.paneId, o.url));
+canalDoNavegador('externo', (o) => navegador.externo(o.paneId));
+canalDoNavegador('fechar', (o) => navegador.fechar(o.paneId));
 
 
 /* ======================= Gemini e Grok =======================
@@ -4279,8 +5609,9 @@ const CLIS = {
     bin: 'grok',
     pastaSessoes: () => path.join(HOME, '.grok', 'sessions'),
     /* o Grok nao esta instalado nesta maquina: nao ha um arquivo de conversa
-       de verdade pra conferir o formato. Enquanto for assim a tela diz isso,
-       em vez de mostrar lista sempre vazia como se fosse a verdade. */
+       de verdade pra conferir o formato. Enquanto for assim, o sessions:cli
+       devolve a lista VAZIA (marcada semLista), sem texto de aviso: o Historico
+       e a busca ficam limpos e o painel mostra so' "Nenhuma conversa ainda." (R4-03). */
     conversas: false,
     comandos: false,
     /* o Grok tem os modos dele, mas ainda nao confirmei a flag exata (precisa de
@@ -4304,14 +5635,35 @@ function limparAnexosClaudeRemotos(paneId) { const st = remoteClaudeUploads.get(
 const remoteStore = require('./cockpit-remote-sessions').createStore(() => path.join(app.getPath('userData'), 'remote-sessions'));
 const remoteEngines = require('./cockpit-remote').createRemote({
   transport: remoteTransport, store: remoteStore,
+  observeCodex: (method, params, paneId, origin) => observabilidade.observarCodex(method, params, paneId, origin),
+  ownerOfThread: (threadId, origin) => observabilidade.ownerOfThread(threadId, origin),
+  restoreCodex: (paneId, rootId, threads, origin) => observabilidade.restoreCodex(paneId, rootId, threads, origin),
+  interactions: interactionBroker,
+  onScopeClosed: (paneId) => observabilidade.encerrarPainel(paneId, 'codex', 'A conexão com o servidor foi encerrada.'),
   emit: (paneId, kind, data) => { if (kind === 'turn-end' || kind === 'engine-down') vigiaTurno.desligar(paneId); emit(paneId, kind, data); },
   cliArgs: (engine, st) => CLIS[engine].args({ modo: CLIS[engine].modo?.[st.approval] || '', model: st.model, sessao: st.session, arquivoSessao: st.arquivoSessao }),
   cliEvent: cliEvento, cliFlush: mandarFala,
 });
+ipcMain.handle('agents:history', async (_e, { paneId, threadId } = {}) => {
+  try {
+    const agent = observabilidade.agentesSessao({ paneId, engine: 'codex' }).itens.find(a => a.threadId === threadId);
+    if (!agent) throw new Error('Subagente não pertence a esta conversa.');
+    const remote = remotePaneTargets.get(paneId)?.remoto;
+    const origin = remote ? require('./cockpit-remote-transport').key(remote) : 'local';
+    if ((agent.origin || 'local') !== origin) throw new Error('O destino desta conversa mudou. Reabra o painel de origem.');
+    if (!remote) await codexStart();
+    const request = remote ? (m, p) => remoteEngines.query(remote, m, p) : codexReq;
+    const messages = await historyPages.readAll(request, threadId, async () => {
+      const r = await request('thread/read', { threadId, includeTurns: true });
+      return (r.thread?.turns || []).flatMap(t => (t.items || []).map(item => historyPages.fromItem({ item, turnId: t.id })).filter(Boolean));
+    });
+    return { messages, agent, readOnly: true };
+  } catch (e) { return { error: e.message }; }
+});
 const accountComparison = require('./cockpit-accounts').createAccounts({ folder: PASTA_CONTAS, readActive: lerCredencial, transport: remoteTransport, fetch: buscarNaRede });
 ipcMain.handle('contas:comparar', (_e, o) => accountComparison.compare(o.engine, o.remoto, o));
 ipcMain.handle('contas:compararCancelar', (_e, id) => accountComparison.cancel(id));
-ipcMain.handle('sessions:remoto', (_e, o) => o.engine === 'claude' ? claudeSessionsRemoto(o.remoto) : remoteEngines.sessions(o.engine, o.remoto));
+ipcMain.handle('sessions:remoto', (_e, o) => o.engine === 'claude' ? claudeSessionsRemoto(o.remoto, o.incluirRobos) : remoteEngines.sessions(o.engine, o.remoto));
 
 
 const cliPanes = new Map();   // paneId -> { engine, cwd, model, modo, sessao, proc, buf, erro, primeira }
@@ -4408,26 +5760,24 @@ const cliTexto = (c) => (Array.isArray(c)
   : (typeof c === 'string' ? c : ''));
 
 /* Remonta o mapa de mensagens de um arquivo de conversa, na mesma ordem e com
-   as mesmas regras do CLI. Devolve { meta, msgs }. */
-function cliLerConversa(file, tetoBytes) {
+   as mesmas regras do CLI, UMA linha por vez (linha). Serve aos dois jeitos
+   de ler: so' a cabeca, pra lista (cliLerCabeca), e o arquivo inteiro em
+   blocos, pra reabrir (cliLerConversa). conversa() devolve { meta, msgs }. */
+function cliMontador() {
   const mapa = new Map();
   let meta = {};
-  let bruto = '';
-  try {
-    bruto = tetoBytes ? headRead(file, tetoBytes) : fs.readFileSync(file, 'utf8');
-  } catch { return { meta, msgs: [] }; }
-  for (const linha of bruto.split('\n')) {
+  const linha = (l) => {
     // chave aberta como TEXTO engana o contador de chaves de quem extrai a
     // funcao pra testar (ja quebrou o andaime). Aqui vai o codigo do caractere.
-    if (linha.charCodeAt(0) !== 123) continue;
-    let d; try { d = JSON.parse(linha); } catch { continue; }
+    if (l.charCodeAt(0) !== 123) return;
+    let d; try { d = JSON.parse(l); } catch { return; }
     if (typeof d.$rewindTo === 'string') {
       // apaga dali pra frente; se o id nao esta no mapa, o CLI limpa tudo
       const ids = [...mapa.keys()];
       const i = ids.indexOf(d.$rewindTo);
       if (i < 0) mapa.clear();
       else for (const id of ids.slice(i)) mapa.delete(id);
-      continue;
+      return;
     }
     if (d.$set && typeof d.$set === 'object') {
       if (Array.isArray(d.$set.messages)) {
@@ -4435,12 +5785,24 @@ function cliLerConversa(file, tetoBytes) {
         for (const m of d.$set.messages) if (m && typeof m.id === 'string') mapa.set(m.id, m);
       }
       meta = { ...meta, ...d.$set };
-      continue;
+      return;
     }
-    if (typeof d.id === 'string') { mapa.set(d.id, d); continue; }
+    if (typeof d.id === 'string') { mapa.set(d.id, d); return; }
     if (typeof d.sessionId === 'string') meta = { ...meta, ...d };
-  }
-  return { meta, msgs: [...mapa.values()] };
+  };
+  return { linha, conversa: () => ({ meta, msgs: [...mapa.values()] }) };
+}
+/* so' a cabeca do arquivo (o titulo da lista nao precisa dele inteiro) */
+function cliLerCabeca(file, tetoBytes) {
+  const m = cliMontador();
+  for (const l of headRead(file, tetoBytes).split('\n')) m.linha(l);
+  return m.conversa();
+}
+/* Tarefa 5: o arquivo INTEIRO, em blocos (antes: readFileSync de uma vez so') */
+async function cliLerConversa(file) {
+  const m = cliMontador();
+  await varrerLinhas(file, m.linha);
+  return m.conversa();
 }
 
 /* ~/.gemini/projects.json guarda "caminho em minusculas" -> "nome da pasta em
@@ -4478,7 +5840,7 @@ function cliSessions(engine) {
       if (/[\\/]logs[\\/]/i.test(p)) continue;   // log do desenvolvedor nao e' conversa
       let quando = 0;
       try { quando = fs.statSync(p).mtimeMs; } catch { continue; }
-      const { meta, msgs } = cliLerConversa(p, CLI_TETO_TITULO);
+      const { meta, msgs } = cliLerCabeca(p, CLI_TETO_TITULO);
       const id = meta && meta.sessionId;
       if (!id) continue;
       const primeira = msgs.find((m) => m.type === 'user' && cliFalaDeGente(cliTexto(m.content)));
@@ -4496,9 +5858,10 @@ function cliSessions(engine) {
 }
 
 /* Reabrir a conversa na tela, no mesmo formato que o Claude e o Codex ja
-   devolvem: { role: 'user' | 'bot' | 'tool', text, name, arg }. */
-function cliHistory(file, maxMsgs) {
-  const { msgs } = cliLerConversa(file, 0);
+   devolvem: { role: 'user' | 'bot' | 'tool', text, name, arg }. Tarefa 5: a
+   conversa inteira (o corte, cortarHistorico, e' de quem chama). */
+async function cliHistory(file) {
+  const { msgs } = await cliLerConversa(file);
   const out = [];
   for (const m of msgs) {
     if (!m || m.type === 'info' || m.type === 'error' || m.type === 'warning') continue;
@@ -4516,7 +5879,7 @@ function cliHistory(file, maxMsgs) {
       out.push({ role: 'tool', name: t.name || 'Ferramenta', arg });
     }
   }
-  return out.slice(-(maxMsgs || 60));
+  return out;
 }
 
 ipcMain.handle('sessions:cli', (_e, engine) => {
@@ -4529,10 +5892,13 @@ ipcMain.handle('sessions:cli', (_e, engine) => {
   if (engine === 'acp') { try { return comNomes(acp.sessoes()); } catch (e) { return { error: String(e && e.message || e) }; } }
   const cli = CLIS[engine];
   if (!cli) return [];
-  /* devolver [] aqui faria a tela escrever "Nenhuma conversa ainda", que e
-     uma afirmacao. Sem um arquivo de verdade pra conferir o formato, o certo
-     e dizer que a lista nao foi ligada. */
-  if (!cli.conversas) return { aviso: 'A lista de conversas do ' + cli.nome + ' ainda não foi ligada aqui: o formato do arquivo dele não foi conferido nesta máquina.' };
+  /* Motor sem lista de conversas (hoje, o Grok, que nem esta instalado): lista
+     VAZIA marcada com semLista e SEM texto de aviso. O aviso fixo ("a lista ainda
+     nao foi ligada") grudava no Historico da lateral e no fim de toda busca, mesmo
+     pra quem nunca usou o motor (R4-03). Falha de leitura de verdade continua
+     voltando como { error } logo abaixo, e essa a tela mostra. A marca existe pra
+     quem precisar separar "sem lista" de "lista vazia" (ex.: Ajustes > Motores). */
+  if (!cli.conversas) return { itens: [], semLista: true };
   try { return comNomes(cliSessions(engine)); }
   catch (e) { return { error: e.message }; }
 });
@@ -4748,6 +6114,7 @@ function resumoDoArgumento(a) {
 /* Quais motores existem nesta maquina. A tela usa isto pra nao oferecer um
    motor que nao esta' instalado -- e pra explicar como instalar, em vez de
    deixar o painel falhar depois que voce ja mandou a mensagem. */
+const iasAcp = require('./renderer/acp-presets');   // leva 5i: a tabela das IAs do ACP, a mesma da tela e do servidor
 ipcMain.handle('motores:disponiveis', async (_e, pedido) => {
   if (pedido?.remoto != null) return remoteEngines.inspect(pedido.remoto);
   const out = {
@@ -4755,10 +6122,13 @@ ipcMain.handle('motores:disponiveis', async (_e, pedido) => {
     codex: temBin('codex'),
   };
   for (const eng of Object.keys(CLIS)) out[eng] = temBin(CLIS[eng].bin);
-  // o comando do agente ACP e' configuravel; "disponivel" = ha' com que rodar
-  // o preset padrao (gemini) ou baixar um adaptador (npx)
-  out.acp = ['gemini', 'npx', 'opencode', 'qwen'].some((b) => temBin(b));
-  return pedido?.detalhado ? Object.fromEntries(Object.entries(out).map(([e, disponivel]) => [e, { disponivel, remoto: false }])) : out;
+  /* o comando do agente ACP e' configuravel; "disponivel" = ha' com que rodar algum preset. Leva 5i: cada preset (OpenCode, Cursor, Goose…)
+     confere o PROPRIO programa, o 1o termo do comando (antes so' se via gemini, npx, opencode e qwen), e o motor ACP fica disponivel se houver
+     qualquer um. Os adaptadores do Gemini, do Claude Code e do Codex continuam contando (gemini e npx). A lista dos instalados vai no
+     modo detalhado, dentro da entrada do acp, para o menuzinho do motor mostrar so' os logos das IAs que existem. */
+  const presets = iasAcp.instalados(temBin);
+  out.acp = presets.length > 0;
+  return pedido?.detalhado ? Object.fromEntries(Object.entries(out).map(([e, disponivel]) => [e, { disponivel, remoto: false, ...(e === 'acp' ? { presets } : {}) }])) : out;
 });
 
 /* ===== versao instalada x ultima de cada motor =====
@@ -5274,7 +6644,7 @@ function outroDonoDaSessao(engine, sessaoId, paneId) {
   return null;
 }
 
-ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores, abaId, religar }) => {
+ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores, abaId, religar, modoAntesDoPlano }) => {
   if (remoto != null) { remotePaneTargets.set(paneId, { engine, remoto }); try { require('./cockpit-remote-transport').target(remoto); } catch(e) { emit(paneId, 'note', { text: e.message, error: true }); return false; } } else remotePaneTargets.delete(paneId);
   if (remoto != null && engine !== 'claude') {
     if (claudePanes.has(paneId)) claudeStop(paneId);
@@ -5299,7 +6669,8 @@ ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, 
     if (conferida.aviso) emit(paneId, 'note', { text: conferida.aviso, error: true });
     cwd = conferida.cwd;
   }
-  if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores });
+  // modoAntesDoPlano (Tarefa 8): so' o Claude usa, pra deixar o Executar do plano voltar pro modo de antes
+  if (engine === 'claude') return claudeStart(paneId, { cwd, model, approval, resumeId, effort, remoto, fork, fallback, sugestoes, worktree, semConectores, modoAntesDoPlano });
   if (engine === 'acp') {
     // no painel ACP o "model" e' o COMANDO do agente (gemini --acp, claude-code-acp...)
     if (remoto) { emit(paneId, 'note', { text: 'O agente ACP ainda não roda em servidor remoto.', error: true }); return false; }
@@ -5338,7 +6709,14 @@ ipcMain.handle('pane:start', async (_e, { paneId, engine, cwd, model, approval, 
     approval,
     developerInstructions: instrucoesCasa(),
   });
-  const res = await codexReq(method, params);
+  if (method === 'thread/start') params.dynamicTools = cockpitInteractions.dynamicTools();
+  let res;
+  try { res = await codexReq(method, params); }
+  catch (e) {
+    if (params.dynamicTools && /unknown field.*dynamic|unsupported.*dynamic|dynamic.*not supported/i.test(e.message)) { delete params.dynamicTools; res = await codexReq(method, params); }
+    else throw e;
+  }
+  codex.paneCwd.set(paneId, cwd || HOME);
   const tid = (res && (res.threadId || (res.thread && res.thread.id))) || resumeId;
   if (!tid) throw new Error('Codex não devolveu a conversa');
   /* Deu certo: agora sim o painel que tinha esta conversa larga o osso. Antes
@@ -5373,6 +6751,7 @@ function blocosDeImagem(anexos) {
 }
 
 ipcMain.handle('pane:send', async (_e, { paneId, engine, text, effort, anexos }) => {
+  barrarNaJanelaDeTeste();   // janela de teste: nenhuma mensagem sai para motor nenhum (a tela ja barra antes; esta e' a rede de seguranca)
   if (remotePaneTargets.has(paneId) && engine !== 'claude') { vigiaTurno.ligar(paneId); const ok = await remoteEngines.send(paneId, text, effort, anexos); if (!ok) vigiaTurno.desligar(paneId); return ok; }
   // ACP: imagem vai como bloco do protocolo quando o agente anuncia que aceita
   if (engine === 'acp') return acp.enviar(paneId, text, anexos);
@@ -5409,6 +6788,7 @@ ipcMain.handle('pane:send', async (_e, { paneId, engine, text, effort, anexos })
     else if (sobraram.length) t += '\n' + sobraram.map(f => '- ' + f).join('\n');
     const content = [...blocos, { type: 'text', text: t }];
     vigiaTurno.ligar(paneId);   // em turno ate' o 'result': se o processo morrer antes, a tela religa
+    st.remoteHost?.beginTurn();
     st.proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');
     return true;
   }
@@ -5441,6 +6821,7 @@ ipcMain.handle('pane:send', async (_e, { paneId, engine, text, effort, anexos })
 });
 
 ipcMain.handle('pane:compactar', async (_e, { paneId, engine }) => {
+  if (JANELA_DE_TESTE) return { error: AVISO_JANELA_DE_TESTE };   // "/compact" e' uma mensagem ao motor
   if (remotePaneTargets.has(paneId) && engine !== 'claude') return remoteEngines.operation(paneId, 'compactar');
   if (engine === 'acp') return { error: 'O agente ACP não tem "compactar" por aqui. Comece uma conversa nova quando ela ficar longa.' };
   if (ehCli(engine)) {
@@ -5449,6 +6830,7 @@ ipcMain.handle('pane:compactar', async (_e, { paneId, engine }) => {
   if (engine === 'claude') {
     const st = claudePanes.get(paneId);
     if (!st) return { error: 'sessão fora do ar' };
+    st.remoteHost?.beginTurn();
     st.proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/compact' }] } }) + '\n');
     return { ok: true };
   }
@@ -5460,6 +6842,7 @@ ipcMain.handle('pane:compactar', async (_e, { paneId, engine }) => {
 });
 
 ipcMain.handle('pane:steer', async (_e, { paneId, engine, text }) => {
+  if (JANELA_DE_TESTE) return { error: AVISO_JANELA_DE_TESTE };   // fala no meio do trabalho: tambem e' mensagem ao motor
   if (remotePaneTargets.has(paneId) && engine !== 'claude') return remoteEngines.operation(paneId, 'steer', text);
   if (engine === 'acp') return { error: 'Neste motor não dá para falar no meio do trabalho. Espere terminar ou clique em parar.' };
   if (ehCli(engine)) {
@@ -5469,6 +6852,7 @@ ipcMain.handle('pane:steer', async (_e, { paneId, engine, text }) => {
     // o CLI aceita uma fala nova no meio do turno pelo mesmo canal
     const st = claudePanes.get(paneId);
     if (!st) return { error: 'sessão fora do ar' };
+    st.remoteHost?.beginTurn();
     st.proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n');
     return { ok: true };
   }
@@ -5501,6 +6885,7 @@ ipcMain.handle('pane:interrupt', async (_e, { paneId, engine }) => {
   }
   if (engine === 'claude') {
     const st = claudePanes.get(paneId);
+    st?.remoteHost?.cancelTurn();
     if (st) st.proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'i' + Date.now(), request: { subtype: 'interrupt' } }) + '\n');
     return true;
   }
@@ -5510,7 +6895,9 @@ ipcMain.handle('pane:interrupt', async (_e, { paneId, engine }) => {
   return true;
 });
 
-ipcMain.handle('pane:stop', (_e, { paneId, engine }) => {
+ipcMain.handle('pane:stop', (_e, { paneId, engine, esquecerMudancas }) => {
+  // Tarefa 9: parou = nao trabalha mais; o desfazer so' e' esquecido se o painel fechou ou a conversa trocou
+  esquecerMudancasDoPainel(paneId, esquecerMudancas === true);
   if (remotePaneTargets.has(paneId) && engine !== 'claude') { vigiaTurno.desligar(paneId); return remoteEngines.stop(paneId); }
   vigiaTurno.desligar(paneId);   // parada de proposito (trocar motor, modelo, conta, fechar...)
   if (engine === 'acp') { acp.parar(paneId); autoLiberadas.delete(paneId); }   // liberacao vale so' enquanto o painel viver
@@ -5539,9 +6926,37 @@ ipcMain.handle('pane:stop', (_e, { paneId, engine }) => {
 
 ipcMain.handle('pane:autoLiberar', (_e, { paneId, tool }) => {
   if (!paneId || !tool) return false;
+  // Tarefa 8: pergunta e plano do Claude pedem voce toda vez (nunca "Sempre permitir")
+  if (interacao.FERRAMENTAS_DE_INTERACAO.has(String(tool))) return false;
   if (!autoLiberadas.has(paneId)) autoLiberadas.set(paneId, new Set());
   autoLiberadas.get(paneId).add(tool);
   return true;
+});
+
+/* Tarefa 8 (26/09): a resposta do cartao "Plano pronto" (ExitPlanMode).
+   Executar = allow + setMode pro modo de ANTES do Plano -- o que o processo
+   subiu sabendo (st.modoAntesDoPlano, o mesmo que decidiu a flag
+   --allow-dangerously-skip-permissions); sem ele, Manual. O motor segue na
+   MESMA sessao, sem religar. Ajustar = deny com o texto, e ele refaz o plano.
+   Um envio por plano: o pedido sai do mapa antes de escrever, e so' o
+   processo que perguntou recebe. Devolve o modo aplicado, pra tela pintar. */
+ipcMain.handle('pane:plano', (_e, o) => {
+  const { paneId, chave, aprovar, texto } = (o && typeof o === 'object') ? o : {};
+  const k = String(chave || '');
+  const a = pedidosClaude.get(k);
+  if (!a || a.tipo !== 'plano' || a.paneId !== paneId) return { error: 'Este plano não está mais esperando resposta.', encerrado: true };
+  const executar = aprovar === true;
+  const ajuste = String(texto == null ? '' : texto).trim();
+  if (!executar && !ajuste) return { error: 'Escreva o que mudar no plano.' };
+  pedidosClaude.delete(k);
+  const st = a.processo;
+  // processo que nao subiu no Plano (ele entrou no Plano sozinho): volta pro modo em que subiu
+  const modo = interacao.modoDeVolta(st && st.modo === 'plan' ? st.modoAntesDoPlano : (st && st.modo));
+  if (!escreverRespostaClaude(a, interacao.respostaDoPlano(a.input, { aprovar: executar, modoAntes: modo, texto: ajuste }))) {
+    emit(a.paneId, 'plano-cancelado', { chave: k });
+    return { error: 'O motor deste painel não está mais esperando este plano.', encerrado: true };
+  }
+  return executar ? { ok: true, modo } : { ok: true };
 });
 
 ipcMain.handle('pane:liberacoes', (_e, { paneId, limpar }) => {
@@ -5571,19 +6986,31 @@ ipcMain.handle('pane:approve', (_e, { key, allow }) => {
   return true;
 });
 
+ipcMain.handle('models:comparison', (_e, options) => modelBenchmarks.get({refresh:options?.refresh === true}));
+
+ipcMain.handle('claude:models', async (_e, remoto) => {
+  try {
+    if (remoto && !ssgValido(remoto)) throw new Error('Destino inválido.');
+    const models = await capabilities.listClaudeModels(args => {
+      const options = { env: buildEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true };
+      if (!remoto) return spawnBin(claudeBin(), args, { ...options, cwd: HOME });
+      const command = 'exec claude ' + args.map(qLinux).join(' ');
+      return spawnBin('ssh', ['-i', remoto.chave, '-p', String(remoto.porta || 22),
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=yes',
+        remoto.usuario + '@' + remoto.host, '--', command], options);
+    });
+    return { models };
+  } catch {
+    return { models: [], error: 'Não foi possível atualizar os modelos deste destino. Tente novamente.' };
+  }
+});
 ipcMain.handle('codex:models', async (_e, remoto) => {
   try {
     if (remoto == null) await codexStart();
-    const r = remoto != null ? await remoteEngines.query(remoto, 'model/list', {}) : await codexReq('model/list', {});
-    const arr = (r && (r.data || r.models || r)) || [];
-    return arr.filter(m => !m.hidden).map(m => ({
-      id: m.id || m.model,
-      nome: m.displayName || m.id,
-      desc: m.description || '',
-      efforts: (m.supportedReasoningEfforts || []).map(e => ({ id: e.reasoningEffort, desc: e.description || '' })),
-      padraoEffort: m.defaultReasoningEffort || 'medium',
-      padrao: !!m.isDefault,
-    }));
+    const request = remoto != null ? (m, p) => remoteEngines.query(remoto, m, p) : codexReq;
+    const models = await capabilities.listModels(request);
+    const info = remoto != null ? remoteEngines.info(remoto) : codex.info;
+    return models.map(m => ({ ...m, server: info || {}, destination: remoto ? 'remote' : 'local' }));
   } catch { return []; }
 });
 
@@ -5660,9 +7087,14 @@ ipcMain.handle('imagem:salvar', (_e, { dados, prefixo }) => {
 ipcMain.handle('arquivo:lerTexto', (_e, { arquivo }) => {
   try {
     const f = String(arquivo || '');
+    if (ehCaminhoDeRede(f)) return { error: MSG_CAMINHO_DE_REDE };   // antes do statSync: \\servidor trava o app ~21 s e o Windows tenta SMB
     if (!/\.(excalidraw|json|txt|md)$/i.test(f)) return { error: 'tipo de arquivo não permitido' };
-    if (fs.statSync(f).size > 20 * 1024 * 1024) return { error: 'arquivo grande demais (limite de 20 MB)' };
-    return { content: fs.readFileSync(f, 'utf8') };
+    const st = fs.statSync(f);   // ANTES de ler: se o arquivo mudar no meio, o aviso do Salvar erra para o lado de avisar a mais, nunca a menos
+    if (st.size > 20 * 1024 * 1024) return { error: 'arquivo grande demais (limite de 20 MB)' };
+    const content = fs.readFileSync(f, 'utf8');
+    // o "Salvar" do quadro (quadro:salvar, logo abaixo) só vale para um .excalidraw que o main leu por aqui, e avisa se a data ou o tamanho mudaram depois
+    if (/\.excalidraw$/i.test(f)) quadrosLidos.set(chaveDoQuadro(f), { mtimeMs: st.mtimeMs, size: st.size });
+    return { content };
   } catch (e) { return { error: String(e && e.message || e) }; }
 });
 ipcMain.handle('arquivo:salvarTexto', (_e, { texto, prefixo, ext, nome }) => {
@@ -5679,6 +7111,93 @@ ipcMain.handle('arquivo:salvarTexto', (_e, { texto, prefixo, ext, nome }) => {
     fs.writeFileSync(destino, t, 'utf8');
     return { arquivo: destino };
   } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+/* Quadro aberto de um .excalidraw do disco (leva 2, Task 7): "Salvar" grava no ORIGINAL, depois de este lado perguntar
+   "Substituir <nome>?", e "Salvar como" grava onde o Hugo escolher no diálogo do Windows. Quem decide ONDE gravar é o main,
+   nunca a tela: só .excalidraw, nunca caminho de rede (a trava vem ANTES de qualquer fs) e só uma cena do Excalidraw. A barreira
+   de verdade é a caixa nativa "Substituir <nome>?", que a tela não tem como pular. O registro abaixo (quadrosLidos, preenchido por
+   arquivo:lerTexto, acima) é só guarda contra BUG da tela, que mande um caminho errado: uma tela hostil leria o arquivo que
+   quisesse e entraria no registro. Ele também guarda a data e o tamanho do arquivo de quando o quadro o abriu, para a pergunta
+   avisar se ele mudou desde então (o agente pode ter reescrito). */
+const quadrosLidos = new Map();
+const chaveDoQuadro = (f) => { const r = path.resolve(String(f)); return EH_WIN ? r.toLowerCase() : r; };
+/* Como o gravarSeguro (temporário na MESMA pasta e depois renameSync: o arquivo é trocado de uma vez, e uma queda ou falta de
+   espaço no meio da escrita deixa o antigo inteiro), mas LANÇA o erro: o gravarSeguro o engole, e aqui quem chamou mostra o
+   motivo ao Hugo e registra no log. Se algo falhar, o temporário é apagado. */
+function gravarAtomico(destino, texto) {
+  const tmp = destino + '.' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + '.tmp';
+  try {
+    fs.writeFileSync(tmp, texto, 'utf8');
+    fs.renameSync(tmp, destino);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (u) { if (u?.code !== 'ENOENT') logMain('quadro:temporario', u); }
+    throw e;
+  }
+}
+// recusa que volta para a tela como { error }: também deixa rastro no log (antes só o erro inesperado, o do catch, ia)
+const recusarGravacao = (contexto, erro) => { logMain(contexto, new Error(erro)); return { error: erro }; };
+function erroDoDesenho(texto) {
+  if (typeof texto !== 'string' || !texto) return 'O desenho veio vazio.';
+  // o teto é do ARQUIVO (bytes em UTF-8), não de texto.length: acento e emoji ocupam mais de uma posição
+  if (Buffer.byteLength(texto, 'utf8') > 20 * 1024 * 1024) return 'Desenho grande demais (limite de 20 MB).';
+  // só entra no lugar de um .excalidraw o que é cena do Excalidraw (o que o q.cena() do quadro serializa)
+  let cena = null;
+  try { cena = JSON.parse(texto); } catch {}   // texto que não é JSON cai na recusa logo abaixo
+  if (!cena || cena.type !== 'excalidraw' || !Array.isArray(cena.elements)) return 'O conteúdo não é um desenho do Excalidraw. Nada foi gravado.';
+  return '';
+}
+function erroDoDestinoDoDesenho(destino) {
+  if (ehCaminhoDeRede(destino)) return MSG_CAMINHO_DE_REDE;
+  const s = String(destino || '');
+  // no Windows o ":" depois da letra do disco é fluxo alternativo do NTFS (a.txt:b.excalidraw), não um arquivo .excalidraw
+  if (!path.isAbsolute(s) || !/\.excalidraw$/i.test(s) || /[\x00-\x1f]/.test(s) || (EH_WIN && s.replace(/^[A-Za-z]:/, '').includes(':'))) {
+    return 'O desenho só é gravado em arquivo .excalidraw.';
+  }
+  return '';
+}
+ipcMain.handle('quadro:salvar', async (_e, o) => {
+  try {
+    const arquivo = String((o && o.arquivo) || '');
+    const texto = o && o.texto;
+    const erro = erroDoDestinoDoDesenho(arquivo) || erroDoDesenho(texto);
+    if (erro) return recusarGravacao('quadro:salvar', erro);
+    const visto = quadrosLidos.get(chaveDoQuadro(arquivo));
+    if (!visto) return recusarGravacao('quadro:salvar', 'Só dá para salvar no arquivo que o quadro abriu.');
+    if (!fs.existsSync(arquivo)) return recusarGravacao('quadro:salvar', 'O arquivo original não está mais lá. Use "Salvar como".');
+    // o agente (ou outro programa) pode ter reescrito o arquivo desde que o quadro o abriu: a pergunta avisa, quem decide é o Hugo
+    const agora = fs.statSync(arquivo);
+    const mudou = agora.mtimeMs !== visto.mtimeMs || agora.size !== visto.size;
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', title: 'Salvar desenho', message: 'Substituir ' + path.basename(arquivo) + '?',
+      detail: (mudou ? 'O arquivo mudou depois que você abriu (o agente pode ter reescrito). Se substituir, a versão mais nova dele se perde.\n\n' : '')
+        + 'O desenho do quadro vai ocupar o lugar do que está em ' + path.normalize(arquivo) + '.',
+      buttons: ['Substituir', 'Cancelar'], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    if (r.response !== 0) return { cancelado: true };
+    gravarAtomico(arquivo, texto);
+    // a gravação acabou de mudar a data e o tamanho: sem renovar, o próximo Salvar acusaria "mudou" por causa dela mesma
+    const gravado = fs.statSync(arquivo);
+    quadrosLidos.set(chaveDoQuadro(arquivo), { mtimeMs: gravado.mtimeMs, size: gravado.size });
+    return { ok: true, arquivo };
+  } catch (e) { logMain('quadro:salvar', e); return { error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('quadro:salvarComo', async (_e, o) => {
+  try {
+    const texto = o && o.texto;
+    const erro = erroDoDesenho(texto);
+    if (erro) return recusarGravacao('quadro:salvar-como', erro);
+    // o caminho que a tela manda só dá a dica (nome e pasta) do diálogo; quem escolhe o destino é o Hugo
+    const dica = String((o && o.arquivo) || '');
+    const r = await dialog.showSaveDialog(win, opcoesSalvarComo(path.basename(dica) || 'desenho.excalidraw', path.dirname(dica), {
+      title: 'Salvar desenho como', filters: [{ name: 'Desenho do Excalidraw', extensions: ['excalidraw'] }],
+    }));
+    if (r.canceled || !r.filePath) return { cancelado: true };
+    const erroDestino = erroDoDestinoDoDesenho(r.filePath);
+    if (erroDestino) return recusarGravacao('quadro:salvar-como', erroDestino);
+    gravarAtomico(r.filePath, texto);
+    return { ok: true, arquivo: r.filePath };
+  } catch (e) { logMain('quadro:salvar-como', e); return { error: String((e && e.message) || e) }; }
 });
 
 /* OCR local: o motor do proprio Windows (Windows.Media.Ocr, pt-BR ja instalado
@@ -5707,7 +7226,7 @@ ipcMain.handle('ocr:ler', async (_e, { arquivo }) => {
         alvo = path.join(app.getPath('userData'), 'ocr-' + Date.now() + '-' + (++seqOcr) + '.png');
         fs.writeFileSync(alvo, img.resize({ width: Math.round(tam.width * fator), height: Math.round(tam.height * fator) }).toPNG());
       }
-    } catch {}
+    } catch (e) { logMain('ocr:encolher', e); }
     let r;
     try { r = await rodar('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Caminho', alvo], 45000); }
     finally { if (alvo !== f) { try { fs.unlinkSync(alvo); } catch {} } }
@@ -5729,7 +7248,10 @@ ipcMain.handle('ocr:ler', async (_e, { arquivo }) => {
 const PROMPTS_PATH = () => path.join(HOME, '.claude', 'cockpit-prompts.json');
 ipcMain.handle('prompts:ler', () => {
   try {
-    const j = JSON.parse(fs.readFileSync(PROMPTS_PATH(), 'utf8'));
+    // rodada final da leva 5: vazio, so' espaco ou zeros, ou JSON quebrado (queda) le o .bak; o [] de verdade nao cai nele
+    const ler = (alvo) => { const t = fs.readFileSync(alvo, 'utf8'); if (/^[\s\0]*$/.test(t)) throw new Error('vazio'); return JSON.parse(t); };
+    let j;
+    try { j = ler(PROMPTS_PATH()); } catch (e) { if (e && e.code) throw e; j = ler(PROMPTS_PATH() + '.bak'); }
     return Array.isArray(j) ? j.filter((p) => p && p.nome && p.texto).slice(0, 200) : [];
   } catch { return []; }
 });
@@ -5750,51 +7272,95 @@ ipcMain.handle('prompts:salvar', (_e, lista) => {
    .png/.jpg) e pra qualquer script: escrever o arquivo la' basta. */
 const PASTA_INBOX = () => path.join(app.getPath('userData'), 'inbox');
 const inboxVistos = new Set();
+const inboxRestaurados = new Map();
+const inboxAnunciados = new Map();
+function arquivosInbox() {
+  const arquivos = new Map();
+  let nomes = [];
+  try { nomes = fs.readdirSync(PASTA_INBOX()); } catch { return arquivos; }
+  for (const nome of nomes) {
+    if (!['.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(nome).toLowerCase())) continue;
+    try { const stat = fs.statSync(path.join(PASTA_INBOX(), nome)); if (stat.isFile()) arquivos.set(nome, stat); } catch {}
+  }
+  return arquivos;
+}
+function parInbox(nome, arquivos) {
+  const igual = value => typeof EH_WIN !== 'undefined' && EH_WIN ? value.toLowerCase() : value;
+  const ext = path.extname(nome), base = igual(nome.slice(0, -ext.length));
+  const grupo = [...arquivos.keys()].filter(n => igual(n.slice(0, -path.extname(n).length)) === base);
+  const imagens = ['.png', '.jpg', '.jpeg', '.webp'];
+  const imagem = grupo.filter(n => imagens.includes(path.extname(n).toLowerCase()))
+    .sort((a, b) => imagens.indexOf(path.extname(a).toLowerCase()) - imagens.indexOf(path.extname(b).toLowerCase()) || a.localeCompare(b))[0];
+  // Um texto pertence a uma imagem só. Se vierem .txt e .md, o .txt é a
+  // legenda e o .md continua sendo mensagem independente, sem sumir oculto.
+  const legenda = imagem && ['.txt', '.md'].map(e => grupo.find(n => path.extname(n).toLowerCase() === e)).find(Boolean);
+  return { imagem: imagem || null, legenda: legenda || null };
+}
+function ocorrenciaInbox(nome, stat, legenda) {
+  const versao = (n, s) => [n, String(s.mtimeMs), String(Number(s.size) || 0), String(s.ctimeMs || 0), String(s.ino || 0)];
+  return JSON.stringify([versao(nome, stat), legenda ? versao(legenda.nome, legenda.stat) : null]);
+}
+function itemInbox(nome, arquivos) {
+  const stat = arquivos.get(nome);
+  if (!stat) return null;
+  const par = parInbox(nome, arquivos);
+  const legenda = par.imagem === nome && par.legenda ? { nome: par.legenda, stat: arquivos.get(par.legenda) } : null;
+  return { nome, stat, legenda, ehLegenda: par.legenda === nome, occurrence: ocorrenciaInbox(nome, stat, legenda) };
+}
+function prepararReplayInbox() {
+  // Fotografa o disco ANTES da carga, sem tratar a primeira varredura como
+  // novidade. Um arquivo que chegar durante a carga continua sendo novo.
+  inboxRestaurados.clear();
+  const arquivos = arquivosInbox();
+  for (const nome of arquivos.keys()) inboxRestaurados.set(nome, itemInbox(nome, arquivos).occurrence);
+}
 let inboxOuvinte = false;   // a tela DESTA carga ja registrou o onInbox (senao o aviso vai pro vazio)
 ipcMain.handle('inbox:ouvindo', () => { inboxOuvinte = true; setTimeout(varrerInbox, 100); return { ok: true }; });
 function varrerInbox() {
   // a tela ainda carregando nao ouve: anunciar agora perderia o aviso pra sempre
   if (!inboxOuvinte || !win || win.isDestroyed() || win.webContents.isLoading()) return;
-  let nomes = [];
-  try { nomes = fs.readdirSync(PASTA_INBOX()); } catch { return; }
-  const conjunto = new Set(nomes);
-  for (const n of nomes) {
+  const arquivos = arquivosInbox();
+  const conjunto = new Set(arquivos.keys());
+  for (const n of arquivos.keys()) {
     const ext = path.extname(n).toLowerCase();
-    if (!['.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'].includes(ext)) continue;
     const f = path.join(PASTA_INBOX(), n);
-    let st; try { st = fs.statSync(f); } catch { continue; }
-    const idade = Date.now() - st.mtimeMs;
+    const item = itemInbox(n, arquivos), st = item.stat;
+    if (item.ehLegenda) continue;
     // recem-escrito (ate' 700 ms, inclusive uns ms 'no futuro' por relogio do disco): espera assentar;
     // mtime muito no futuro (arquivo vindo de maquina com relogio errado) nao fica preso pra sempre
-    if (!st.isFile() || (idade > -5000 && idade < 700)) continue;
-    // visto = nome + hora de escrita: um "voz.txt" regravado e' mensagem nova
-    if (inboxVistos.has(n + ':' + Math.round(st.mtimeMs))) continue;
-    const base = n.slice(0, -ext.length);
+    if ([st, item.legenda?.stat].filter(Boolean).some(s => { const idade = Date.now() - s.mtimeMs; return idade > -5000 && idade < 700; })) continue;
+    // A versão inclui a legenda: alterá-la com a imagem intacta é novidade.
+    const occurrence = item.occurrence;
+    if (inboxVistos.has(occurrence)) continue;
     const ehImagem = ext !== '.txt' && ext !== '.md';
-    // texto que e' LEGENDA de uma imagem (mesmo nome-base) vai junto com ela, num aviso so'
-    if (!ehImagem && ['.png', '.jpg', '.jpeg', '.webp'].some((e) => conjunto.has(base + e))) continue;
-    inboxVistos.add(n + ':' + Math.round(st.mtimeMs));
-    let texto = '';
-    if (!ehImagem) { try { texto = fs.readFileSync(f, 'utf8').trim().slice(0, 20000); } catch {} }
-    let legenda = '';
-    if (ehImagem) {
-      for (const e of ['.txt', '.md']) {
-        if (!conjunto.has(base + e)) continue;
-        try { legenda = fs.readFileSync(path.join(PASTA_INBOX(), base + e), 'utf8').trim().slice(0, 4000); } catch {}
-        try { inboxVistos.add(base + e + ':' + Math.round(fs.statSync(path.join(PASTA_INBOX(), base + e)).mtimeMs)); } catch {}
-      }
-    }
-    win.webContents.send('inbox', { arquivo: f, nome: n, tipo: ehImagem ? 'imagem' : 'texto', texto, legenda, quando: st.mtimeMs });
+    let texto = '', legenda = '';
+    try {
+      if (!ehImagem) texto = fs.readFileSync(f, 'utf8').trim().slice(0, 20000);
+      if (item.legenda) legenda = fs.readFileSync(path.join(PASTA_INBOX(), item.legenda.nome), 'utf8').trim().slice(0, 4000);
+      // Se o produtor escreveu enquanto líamos, esperar a próxima varredura.
+      const agora = { nome: item.legenda?.nome, stat: item.legenda ? fs.statSync(path.join(PASTA_INBOX(), item.legenda.nome)) : null };
+      if (ocorrenciaInbox(n, fs.statSync(f), item.legenda ? agora : null) !== occurrence) continue;
+    } catch { continue; }
+    inboxVistos.add(occurrence);
+    const replay = inboxRestaurados.get(n) === occurrence || inboxAnunciados.get(n) === occurrence;
+    inboxAnunciados.set(n, occurrence);
+    win.webContents.send('inbox', { arquivo: f, nome: n, tipo: ehImagem ? 'imagem' : 'texto', texto, legenda, quando: st.mtimeMs, occurrence, replay });
+  }
+  // Uma ocorrência por arquivo: repetir a varredura após o limite de vistos
+  // não produz som/abertura novamente, nem acumula versões já removidas.
+  for (const mapa of [inboxRestaurados, inboxAnunciados]) {
+    for (const nome of mapa.keys()) if (!conjunto.has(nome)) mapa.delete(nome);
   }
   if (inboxVistos.size > 500) inboxVistos.clear();
 }
 function ligarInbox() {
   try { fs.mkdirSync(PASTA_INBOX(), { recursive: true }); } catch {}
+  prepararReplayInbox();
   try { fs.watch(PASTA_INBOX(), () => setTimeout(varrerInbox, 800)).on('error', () => {}); } catch {}   // pasta renomeada nao derruba o main
   setInterval(varrerInbox, 3000);
   // a cada carga da tela (abertura e Ctrl+R) tudo que sobrou e' anunciado de novo
   if (win && !win.isDestroyed()) {
-    win.webContents.on('did-start-loading', () => { inboxOuvinte = false; });   // Ctrl+R: a tela nova ainda nao ouve
+    win.webContents.on('did-start-loading', () => { inboxOuvinte = false; prepararReplayInbox(); });   // Ctrl+R: a tela nova ainda nao ouve
     win.webContents.on('did-finish-load', () => { inboxVistos.clear(); });      // tudo que sobrou volta a ser anunciado quando ela avisar
   }
   limparInboxAntiga();
@@ -5810,7 +7376,7 @@ function limparInboxAntiga() {
   } catch {}
 }
 // "usar": texto e' consumido (some da caixa); imagem vai pra colados/ e vira anexo
-ipcMain.handle('inbox:consumir', (_e, { arquivo, apagar }) => {
+ipcMain.handle('inbox:consumir', (_e, { arquivo, apagar, occurrence } = {}) => {
   try {
     const f = path.resolve(String(arquivo || ''));
     // tem que estar DENTRO da caixa (pasta igual, sem caso no Windows): o
@@ -5818,17 +7384,31 @@ ipcMain.handle('inbox:consumir', (_e, { arquivo, apagar }) => {
     const raiz = path.resolve(PASTA_INBOX());
     const mesma = (a, b) => (EH_WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
     if (!mesma(path.dirname(f), raiz)) return { error: 'fora da caixa de entrada' };
+    const arquivos = arquivosInbox();
+    const nome = [...arquivos.keys()].find(n => mesma(n, path.basename(f)));
+    const item = nome && itemInbox(nome, arquivos);
+    if (!item) return { error: 'Este item não está mais na caixa de entrada.' };
+    if (item.ehLegenda) return { code: 'CONFLICT', error: 'Este texto agora acompanha uma imagem. Use a mensagem mais recente da central.' };
+    if (occurrence && item.occurrence !== occurrence)
+      return { code: 'CONFLICT', error: 'Este item mudou. Use a mensagem mais recente da central.' };
     const ext = path.extname(f).toLowerCase();
-    const base = f.slice(0, -ext.length);
-    // legenda que veio junto da imagem some com ela
-    for (const e of ['.txt', '.md']) { if (ext !== e && fs.existsSync(base + e)) { try { fs.unlinkSync(base + e); } catch {} } }
-    if (apagar || ext === '.txt' || ext === '.md') { fs.unlinkSync(f); return { ok: true }; }
+    // A legenda só sai DEPOIS que a imagem foi movida/apagada com sucesso.
+    // Textos independentes nunca apagam outro texto de mesmo nome-base.
+    const limparLegenda = () => {
+      if (!item.legenda) return;
+      const legenda = path.join(raiz, item.legenda.nome);
+      try {
+        if (ocorrenciaInbox(item.legenda.nome, fs.statSync(legenda)) === ocorrenciaInbox(item.legenda.nome, item.legenda.stat)) fs.unlinkSync(legenda);
+      } catch {} // legenda travada fica guardada e reaparece como texto
+    };
+    if (apagar || ext === '.txt' || ext === '.md') { fs.unlinkSync(f); limparLegenda(); return { ok: true }; }
     const dir = path.join(app.getPath('userData'), 'colados');
     fs.mkdirSync(dir, { recursive: true });
-    const destino = path.join(dir, 'celular-' + Date.now() + ext);
+    const destino = path.join(dir, 'celular-' + Date.now() + '-' + crypto.randomUUID() + ext);
     fs.renameSync(f, destino);
+    limparLegenda();
     return { ok: true, arquivo: destino };
-  } catch (e) { return { error: String(e && e.message || e) }; }
+  } catch { return { error: 'Não consegui consumir este item. O conteúdo que não foi movido continua na caixa de entrada; tente novamente.' }; }
 });
 ipcMain.handle('inbox:pasta', () => PASTA_INBOX());
 
@@ -5861,16 +7441,18 @@ ipcMain.handle('tela:recortar', async (_e, { paneId }) => {
     janela = new BrowserWindow({
       x: tela.bounds.x, y: tela.bounds.y, width: tela.bounds.width, height: tela.bounds.height,
       frame: false, alwaysOnTop: true, skipTaskbar: true, resizable: false, movable: false, backgroundColor: '#000000', show: false,
-      webPreferences: { preload: path.join(__dirname, 'preload-recorte.js'), contextIsolation: true, nodeIntegration: false },
+      webPreferences: { preload: path.join(__dirname, 'preload-recorte.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
+    ipcSecurity.installSession(janela.webContents.session);
+    ipcSecurity.protectCaptureWindow(janela);
     recorte = { janela, imagem: fonte.thumbnail, paneId, estavaVisivel, boundsW: tela.bounds.width, boundsH: tela.bounds.height };
     janela.setAlwaysOnTop(true, 'screen-saver');
     // se a janela nunca pintar (renderer morreu antes do primeiro quadro) o Cockpit
     // ficaria escondido e todo recorte seguinte diria "ja tem um aberto": vigia de 8 s
-    const vigia = setTimeout(() => { if (recorte && recorte.janela === janela && !janela.isDestroyed() && !janela.isVisible()) { try { janela.close(); } catch {} } }, 8000);
-    janela.once('ready-to-show', () => { clearTimeout(vigia); try { janela.show(); janela.focus(); } catch {} });   // sem flash preto
-    janela.webContents.on('did-fail-load', () => { try { janela.close(); } catch {} });        // sem tela preta presa
-    janela.webContents.on('render-process-gone', () => { try { janela.close(); } catch {} });
+    const vigia = setTimeout(() => { if (recorte && recorte.janela === janela && !janela.isDestroyed() && !janela.isVisible()) { try { janela.close(); } catch (e) { logMain('recorte:vigia', e); } } }, 8000);
+    janela.once('ready-to-show', () => { clearTimeout(vigia); try { janela.show(); janela.focus(); } catch (e) { logMain('recorte:mostrar', e); } });   // sem flash preto
+    janela.webContents.on('did-fail-load', () => { try { janela.close(); } catch (e) { logMain('recorte:falha-ao-carregar', e); } });        // sem tela preta presa
+    janela.webContents.on('render-process-gone', () => { try { janela.close(); } catch (e) { logMain('recorte:renderer-caiu', e); } });
     janela.loadFile(path.join(__dirname, 'renderer/recorte.html'));
     janela.on('closed', () => {
       const r = recorte; recorte = null;
@@ -5879,7 +7461,7 @@ ipcMain.handle('tela:recortar', async (_e, { paneId }) => {
     return { ok: true };
   } catch (e) {
     recorte = null;
-    if (janela) { try { janela.close(); } catch {} }
+    if (janela) { try { janela.close(); } catch (err) { logMain('recorte:limpar', err); } }
     if (estavaVisivel && win && !win.isDestroyed()) win.show();
     return { error: String(e && e.message || e) };
   } finally { recortando = false; }
@@ -5911,11 +7493,11 @@ ipcMain.handle('recorte:pronto', (e, { x, y, w, h }) => {
     const destino = path.join(dir, 'recorte-' + Date.now() + '.png');
     fs.writeFileSync(destino, png);
     emit(r.paneId, 'anexo-pronto', { arquivo: destino, origem: 'recorte' });
-    try { r.janela.close(); } catch {}
+    try { r.janela.close(); } catch (err) { logMain('recorte:fechar', err); }
     return { ok: true, arquivo: destino };
-  } catch (e) { try { r.janela.close(); } catch {} return { error: String(e && e.message || e) }; }
+  } catch (e) { try { r.janela.close(); } catch (err) { logMain('recorte:fechar-erro', err); } return { error: String(e && e.message || e) }; }
 });
-ipcMain.handle('recorte:cancelar', (e) => { const r = recorte; if (r && daJanelaDeRecorte(e)) { try { r.janela.close(); } catch {} } return { ok: true }; });
+ipcMain.handle('recorte:cancelar', (e) => { const r = recorte; if (r && daJanelaDeRecorte(e)) { try { r.janela.close(); } catch (err) { logMain('recorte:cancelar', err); } } return { ok: true }; });
 
 /* atalhos globais (valem com o Cockpit em segundo plano): falar sem clicar e
    recortar a tela. Se outro programa ja tiver o atalho, o register devolve
@@ -5925,7 +7507,7 @@ const atalhosFalhos = [];
    Cockpit estiver aberto (Ctrl+Shift+R e' recarregar no Chrome/VS Code). Quem
    liga nos Ajustes sabe o que esta' cedendo; e as combinacoes com Alt sao raras. */
 function ligarAtalhosGlobais(ligado) {
-  try { globalShortcut.unregisterAll(); } catch {}
+  try { globalShortcut.unregisterAll(); } catch (e) { logMain('atalhos:desligar', e); }
   atalhosFalhos.length = 0;
   if (!ligado) return;
   const atalhos = { 'Control+Alt+Space': 'ditar', 'Control+Alt+R': 'recortar' };
@@ -5942,7 +7524,7 @@ function ligarAtalhosGlobais(ligado) {
 }
 ipcMain.handle('atalhos:estado', () => ({ falhos: atalhosFalhos.slice() }));
 ipcMain.handle('atalhos:ligar', (_e, { ligado }) => { ligarAtalhosGlobais(!!ligado); return { falhos: atalhosFalhos.slice() }; });
-app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch (e) { logMain('atalhos:sair', e); } });
 
 /* ======================= menu ======================= */
 function menu() {
@@ -5956,8 +7538,19 @@ function menu() {
       { label: 'Buscar conversa…', accelerator: 'CmdOrCtrl+K', click: () => win && win.webContents.send('menu', 'buscarConversa') },
       { label: 'Escrever no painel', accelerator: 'CmdOrCtrl+L', click: () => win && win.webContents.send('menu', 'focarInput') },
       { type: 'separator' },
-      { label: 'Painel seguinte', accelerator: 'Control+Tab', click: () => win && win.webContents.send('menu', 'painelProximo') },
-      { label: 'Painel anterior', accelerator: 'Control+Shift+Tab', click: () => win && win.webContents.send('menu', 'painelAnterior') },
+      /* 23/09/2026, decisao do Hugo: o Ctrl+Tab virou troca de PASTA, com o
+         gesto do Alt+Tab (cockpit-ui.js); painel seguinte/anterior foram pro
+         Ctrl+PageDown/PageUp. */
+      { label: 'Painel seguinte', accelerator: 'Control+PageDown', click: () => win && win.webContents.send('menu', 'painelProximo') },
+      { label: 'Painel anterior', accelerator: 'Control+PageUp', click: () => win && win.webContents.send('menu', 'painelAnterior') },
+      { type: 'separator' },
+      /* Ctrl+Tab e' do RENDERER: ele precisa ver o Ctrl sendo segurado e solto
+         (a lista aparece com o Ctrl embaixo e a troca acontece ao soltar). Um
+         acelerador registrado dispara no aperto e toma a tecla da pagina. Com
+         registerAccelerator: false (Windows/Linux, Electron 32) o menu so'
+         MOSTRA a combinacao; pelo mouse, o item troca direto, sem lista. */
+      { label: 'Próxima pasta', accelerator: 'Control+Tab', registerAccelerator: false, click: () => win && win.webContents.send('menu', 'pastaProxima') },
+      { label: 'Pasta anterior', accelerator: 'Control+Shift+Tab', registerAccelerator: false, click: () => win && win.webContents.send('menu', 'pastaAnterior') },
       { type: 'separator' },
       { label: 'Trocar pasta do painel…', accelerator: 'CmdOrCtrl+O', click: () => win && win.webContents.send('menu', 'pickFolder') },
       /* Ctrl+SHIFT+M, nao Ctrl+Alt+M: em teclado ABNT2 o AltGr E' Ctrl+Alt, e
@@ -5976,7 +7569,15 @@ function menu() {
       { type: 'separator' },
       { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' }, { role: 'reload', label: 'Recarregar' },
     ]},
-    { role: 'windowMenu', label: 'Janela' },
+    /* Rodada 2 da leva 5i: no lugar do { role: 'windowMenu' }. O role traz o item "Fechar" com o acelerador Ctrl+W (CmdOrCtrl+W), e a
+       tabela de atalhos do Electron guarda UM item por acelerador: o ultimo. O "Fechar" da janela (aqui embaixo) ganhava do "Fechar
+       painel" (la' em cima) e, com o foco na pagina do navegador interno, o Ctrl+W fechava o Cockpit INTEIRO. O Ctrl+W tem um dono
+       so': o "Fechar painel". O resto do menu e' o mesmo (Minimizar, e o Zoom da janela); para fechar a janela ficam o X e o Alt+F4.
+       Quem acrescentar um item aqui nao pode repetir acelerador: test/menu-atalhos.test.js confere a tabela inteira. */
+    { label: 'Janela', submenu: [
+      { role: 'minimize', label: 'Minimizar' },
+      { label: 'Maximizar ou restaurar', click: () => { if (!win || win.isDestroyed()) return; if (win.isMaximized()) win.unmaximize(); else win.maximize(); } },
+    ]},
   ]));
 }
 
@@ -5988,6 +7589,8 @@ function limparQuadrosOrfaos() {
   try {
     const dir = path.join(app.getPath('userData'), 'quadros');
     const fichas = JSON.stringify(loadConfig());   // as fichas guardam o caminho inteiro, escapado igual
+    // rodada 2 da leva 5: config nao lido (preso, ou config e .bak ruins): o padrao nao aponta quadro nenhum; nao apaga nada desta vez
+    if (loadConfig.naoLido === true || loadConfig.semCopia === true) return;
     const limite = Date.now() - 24 * 60 * 60 * 1000;
     for (const f of fs.readdirSync(dir)) {
       const p = path.join(dir, f);
@@ -5996,7 +7599,7 @@ function limparQuadrosOrfaos() {
         if (!fichas.includes(JSON.stringify(p).slice(1, -1))) fs.unlinkSync(p);
       } catch {}
     }
-  } catch {}
+  } catch (e) { if (e?.code !== 'ENOENT') logMain('limpar-quadros', e); }
 }
 function limparColadosAntigos() {
   try {
@@ -6006,7 +7609,7 @@ function limparColadosAntigos() {
       const p = path.join(dir, f);
       try { if (fs.statSync(p).mtimeMs < limite) fs.unlinkSync(p); } catch {}
     }
-  } catch {}
+  } catch (e) { if (e?.code !== 'ENOENT') logMain('limpar-colados', e); }
 }
 
 /* a copia do settings virou UMA POR PAINEL (dois paineis subindo juntos liam o
@@ -6019,10 +7622,10 @@ function limparSettingsAntigos() {
       if (!/^claude-settings-sem-bypass/.test(f)) continue;
       try { fs.unlinkSync(path.join(dir, f)); } catch {}
     }
-  } catch {}
+  } catch (e) { if (e?.code !== 'ENOENT') logMain('limpar-settings', e); }
 }
 
-if (EH_WIN) { try { app.setAppUserModelId(WINDOWS_APP_ID); } catch {} }
+if (EH_WIN) { try { app.setAppUserModelId(WINDOWS_APP_ID); } catch (e) { logMain('app-user-model-id', e); } }
 /* GPU, rede, utilitarios do Chromium: quando um cai, fica anotado (a saida
    normal no fechamento, 'clean-exit', nao e' queda) */
 app.on('child-process-gone', (_e, d) => {
@@ -6039,6 +7642,8 @@ ipcMain.handle('retomar:pegar', (_e, o) => {
 });
 
 app.whenReady().then(() => {
+  try { logDaTela(); } catch {}   // abre o log de erros (tela.log) junto com o app (se falhar, o app abre igual); antes disso o primeiro logMain abre sozinho
+  void engineUpdates.start();
   // o retomar.json da ultima vez: le, apaga, fica com o que tem menos de 2 h
   try { retomada.carregar(); } catch {}
   menu();
@@ -6089,12 +7694,13 @@ const debates = new DebateManager({
   onUpdate: state => { if (win && !win.isDestroyed()) win.webContents.send('debate:event', state); },
 });
 const debateCall = fn => async (_event, input) => { try { return await fn(input); } catch (error) { return { error: String(error.message || error).slice(0, 1500) }; } };
-ipcMain.handle('debate:start', debateCall(input => debates.start(input)));
+ipcMain.handle('debate:start', debateCall(input => { barrarNaJanelaDeTeste(); return debates.start(input); }));   // o Debater poe agentes a trabalhar na pasta de verdade
 ipcMain.handle('debate:get', debateCall(id => debates.get(id)));
 ipcMain.handle('debate:list', debateCall(() => debates.list()));
 // a tela pergunta antes de abrir o dialogo (auditoria 2): a mesma regra que decide a leitura
 ipcMain.handle('debate:leitura', debateCall(input => { const l = debates.leituraDe({ cwd: input?.cwd, remoto: false }); return { ...l, ampla: l.semLeitura === 'ampla' }; }));
 ipcMain.handle('debate:continue', debateCall(async input => {
+  barrarNaJanelaDeTeste();
   const state = debates.get(input.id);
   if (state.review) {
     const actual = await captureReview(state.review.cwd);

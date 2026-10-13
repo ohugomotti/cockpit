@@ -81,7 +81,8 @@ acp = criarAcp({
     // transcricao propria do Cockpit
     const sess = acp.sessoes();
     checa('a conversa aparece na lista do Cockpit', sess.length === 1 && /prova-acp/.test(sess[0].title), JSON.stringify(sess));
-    const hist = acp.historico(sess[0] && sess[0].id, sess[0] && sess[0].file);
+    // Tarefa 5 (26/09): o historico le a transcricao em blocos (async)
+    const hist = await acp.historico(sess[0] && sess[0].id, sess[0] && sess[0].file);
     checa('o historico tem a sua fala e a dele', hist.some((m) => m.role === 'user') && hist.some((m) => m.role === 'bot'), JSON.stringify(hist).slice(0, 300));
 
     // trocar modelo: registra o que o agente faz com session/set_model

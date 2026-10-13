@@ -7,7 +7,7 @@ function setup(options={}){
  const calls=[],notices=[],stops=[],panels=[];let terminal;
  const P=(id,remote=null,extra={})=>({id,engine:'codex',remote,started:true,busy:true,morto:false,sessaoId:'session-'+id,input:{value:'draft-'+id,style:{},scrollHeight:24},...extra});
  panels.push(P('local'),P('background'),P('remote',{host:'fixture.invalid',usuario:'qa'}));
- const ctx={console,Promise,Map,Set,ESTE_PC:'PC',MOTOR_DO_DEBATE:{claude:true,codex:true},
+ const ctx={console,Promise,Map,Set,MODELOS_CODEX:[],remotoDoPane:p=>p.remote,ESTE_PC:'PC',MOTOR_DO_DEBATE:{claude:true,codex:true},
  window:{CockpitUI:{cancelResumesFor:(...args)=>calls.push(['cancelResumesFor',...args]),cancelResume:()=>{}},api:{
  contasDisponivel:async pedido=>{calls.push(['capabilities',pedido]);return options.caps || {gerenciado:true,salvar:true,trocar:true,login:true,logout:true};},
  contasTrocar:async pedido=>{calls.push(['switch',pedido]);return {ok:true};},
@@ -21,6 +21,8 @@ function setup(options={}){
  confirm:message=>{calls.push(['confirm',message]);return options.confirm!==false;},
  antesDaTroca:p=>({ocupado:p.busy,religando:false}),avisarTroca:()=>{},
  destravarPainel:p=>{p.busy=false;},setDot:()=>{},pintarFila:()=>{},$:(selector,el)=>el.input,
+ // Tarefa 2 (26/09): a fila volta pro campo pelo voltarDaFila (tira o trecho citado pelo Responder). Esta fila nao tem trecho: devolve o texto como veio.
+ voltarDaFila:(p,texto)=>texto,
  savePanes:()=>calls.push(['save']),pintarCartaoConta:()=>{},carregarUsoSidebar:()=>{},
  mostrarAviso:x=>notices.push(x.texto),note:(p,text)=>notices.push(text),avisoTemp:(p,text)=>notices.push(text),
  janelaTerminal:(p,line,title,callback,opts)=>{calls.push(['terminal']);terminal={p,callback,...opts};},
@@ -118,8 +120,10 @@ test('endereços IPv6 e portas não misturam painéis nem a trava de troca de co
 });
 
 function sendFixture(){
- const calls=[],P={id:'fixture',abaId:'a',engine:'codex',anexos:[],input:{value:'prompt de prova',style:{}},blocks:new Map(),titulo:'Fixture',hist:[]};P.el=P;
- const ctx={console,Date,IMG_EXT:[],window:{api:{paneSend:async p=>{calls.push(['send',p]);return true;},paneStop:async p=>{calls.push(['stop',p]);return true;}}},
+ const calls=[],P={id:'fixture',abaId:'a',engine:'codex',anexos:[],input:{value:'prompt de prova',style:{},focus(){}},blocks:new Map(),titulo:'Fixture',hist:[]};P.el=P;
+ /* leva 4 (rodada final): o send olha quem tem o foco antes de puxa-lo pro campo (o envio automatico nao rouba o foco de outro
+    painel); aqui ninguem tem (activeElement null), entao o campo o recebe como antes */
+ const ctx={console,Date,IMG_EXT:[],document:{activeElement:null,body:{}},window:{api:{paneSend:async p=>{calls.push(['send',p]);return true;},paneStop:async p=>{calls.push(['stop',p]);return true;}}},
   $:(s,e)=>e.input,contaEmAlteracao:()=>false,remotoDoPane:()=>null,esforcoDe:()=>'',opcoesDeStart:p=>({paneId:p.id,engine:p.engine}),podeGerarTituloAuto:()=>false,userMsg:()=>({}),nomeDoMotor:e=>e};
  for(const n of ['pararBuscaDeArquivos','soltarNavArquivos','pintarAnexos','guardarPrompt','setDot','note','guardarEnderecoAteASessao','pararTrabalho','zerarTurno','limparPassos','trabalhando','subirNaLista'])ctx[n]=()=>{};
  vm.createContext(ctx);vm.runInContext(extract('desfazerEnvio')+'\n'+extract('send'),ctx);return{ctx,P,calls};

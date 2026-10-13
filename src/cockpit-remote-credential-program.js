@@ -31,7 +31,7 @@ function remoteProfilesMain(){
    if(saved===null)console.log('COCKPIT_SEM_CONTA');
    else if(!info.valido)console.log('COCKPIT_CORROMPIDA');
    else if(!info.podeUsar)console.log('COCKPIT_EXPIRADA');
-   else{write(cred,saved);console.log('COCKPIT_OK')}
+   else{write(cred,saved);const applied=inspectCredential('claude',read(cred));console.log(applied.valido&&applied.podeUsar&&sameCredentialAccount(info,applied)?'COCKPIT_OK':'COCKPIT_TROCA_NAO_CONFIRMADA')}
   } else if(acao==='esquecer'){fs.rmSync(path.join(dir,nome),{force:true});console.log('COCKPIT_OK')}
  }catch{console.log('COCKPIT_ERRO_OPERACAO')}
 }

@@ -1,0 +1,1916 @@
+/* Visual Mac do Cockpit. Port do desenho aprovado em 25-26/09/2026.
+   Forma independente da cor; desligar .visual-mac preserva os quatro temas.
+   O material e os controles da janela são nativos. */
+
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/motti/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Estrutura compartilhada: o popup da Ilha fica fora da rolagem das pastas. */
+.ck-app .mac-window-bar {
+  position: relative;
+  z-index: 35;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  min-height: 40px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  /* leva 5e: a barra da janela e' do fundo (--work), igual a faixa de pastas e a area dos paineis */
+  background: var(--work);
+  -webkit-app-region: drag;
+}
+html[data-platform="win32"] .ck-app .mac-window-bar {
+  padding-right: max(138px, calc(100vw - env(titlebar-area-width, 100vw)));
+}
+/* Toda área livre do cabeçalho move a janela; os controles recebem o clique. */
+.ck-app .ck-nav-top {
+  -webkit-app-region: drag;
+}
+.ck-app :is(.ck-nav-top, .mac-window-bar) :is(button, input, select, textarea, a, [role="button"], [contenteditable="true"], [draggable="true"], .mac-ilha) {
+  -webkit-app-region: no-drag;
+}
+/* No Windows, a área nativa de arrasto atravessa o z-index da lateral.
+   Enquanto ela está espiando por cima, a barra atrás precisa ser clicável;
+   ao recolher, o arrasto volta automaticamente. */
+.ck-app #shell:has(.ck-peek) .mac-window-bar,
+.ck-app .ck-navigator.ck-peek .ck-nav-top,
+.ck-app #shell:has(.ck-peek) .mac-window-bar .ck-place-bar {
+  -webkit-app-region: no-drag;
+}
+.ck-app .mac-window-bar .ck-place-bar {
+  flex: 1 1 0;
+  /* leva 5h: a faixa tem a altura da trilha (aba + o respiro dos dois lados = 34 px); a barra da janela, de 40, a acomoda com folga */
+  height: calc(var(--aba-h) + 2 * var(--trilha-respiro));
+  min-height: calc(var(--aba-h) + 2 * var(--trilha-respiro));
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-app-region: drag;
+}
+.ck-app .mac-window-menu {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: 700 20px/1 var(--font-ui);
+}
+.ck-app .mac-window-menu:hover { background: var(--hover); color: var(--ink); }
+.ck-app .mac-ilha {
+  position: relative;
+  z-index: 40;
+  flex: none;
+  width: var(--mac-ilha-w, 84px);
+  max-width: 100px;
+  min-width: 72px;
+  height: 28px;
+  --notificacao-bg: var(--surface);
+  --notificacao-line: var(--line);
+  --notificacao-ink: var(--ink);
+  --notificacao-muted: var(--ink-muted);
+  --notificacao-action: var(--high);
+}
+.ck-app .mac-ilha-corpo {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 28px;
+  /* O foco não deve rolar a pílula durante a expansão; só a lista rola. */
+  overflow: clip;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  color: var(--ink);
+}
+.ck-app .mac-ilha.aberta .mac-ilha-corpo {
+  width: min(360px, var(--mac-ilha-max, calc(100vw - 104px)));
+  height: var(--mac-ilha-h, 28px);
+}
+.ck-app .mac-ilha-linha {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: var(--mac-ilha-w, 84px);
+  max-width: none;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 600 12px var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.ck-app .mac-ilha-linha:focus-visible { outline-offset: -3px; }
+.ck-app .mac-ilha-sino { display: block; flex: none; width: 15px; height: 15px; }
+.ck-app .mac-ilha-sino svg { display: block; width: 100%; height: 100%; stroke-width: 1.7; }
+.ck-app .mac-ilha-contador { min-width: 10px; font-variant-numeric: tabular-nums; }
+.ck-app .mac-ilha-contador:empty { display: none; }
+.ck-app .mac-ilha-anuncio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.ck-app .mac-ilha-lista {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(360px, var(--mac-ilha-max, calc(100vw - 104px)));
+  max-height: min(520px, calc(100vh - 88px));
+  padding: 2px 10px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ck-app .mac-ilha.aberta .mac-ilha-lista { visibility: visible; pointer-events: auto; }
+.ck-app .mac-ilha-cabecalho {
+  margin: 0;
+  padding: 2px 36px 3px 4px;
+  color: var(--notificacao-ink);
+  font: 600 12px/1.4 var(--font-ui);
+}
+.ck-app .mac-ilha-vazia { padding: 14px 8px 18px; color: var(--notificacao-muted); font: 400 12px/1.5 var(--font-ui); text-align: center; }
+.ck-app .mac-notificacao {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+  padding: 9px 8px 9px 10px;
+  border: 1px solid var(--notificacao-line);
+  border-left: 3px solid var(--notificacao-level, var(--ink-muted));
+  border-radius: var(--radius-sm);
+  background: var(--notificacao-bg);
+  color: var(--notificacao-ink);
+}
+.ck-app .mac-notificacao[data-level="info"] { --notificacao-level: var(--primary); }
+.ck-app .mac-notificacao[data-level="success"] { --notificacao-level: var(--done); }
+.ck-app .mac-notificacao[data-level="warning"] { --notificacao-level: var(--attention); }
+.ck-app .mac-notificacao[data-level="error"] { --notificacao-level: var(--diff-del); }
+.ck-app .mac-notificacao-copy { min-width: 0; }
+.ck-app .mac-notificacao-titulo { display: block; color: var(--notificacao-ink); font: 600 12px/1.4 var(--font-ui); overflow-wrap: anywhere; user-select: text; cursor: text; }
+.ck-app .mac-notificacao-mensagem { display: block; margin: 2px 0 0; color: var(--notificacao-muted); font: 400 12px/1.4 var(--font-ui); overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; cursor: text; }
+.ck-app .mac-notificacao-erro { margin: 5px 0 0; color: var(--diff-del); font: 500 11.5px/1.4 var(--font-ui); overflow-wrap: anywhere; user-select: text; cursor: text; }
+.ck-app .mac-notificacao-acoes { display: flex; align-items: center; gap: 4px; margin: 0; }
+.ck-app :is(.mac-notificacao-acao, .mac-notificacao-fechar) {
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--notificacao-ink);
+  background: var(--notificacao-action);
+  font: 600 11.5px/1.35 var(--font-ui);
+  cursor: pointer;
+}
+.ck-app .mac-notificacao-acao { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 6px; }
+.ck-app .mac-notificacao-fechar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--notificacao-muted);
+  font-size: 17px;
+}
+.ck-app .mac-notificacao-acao:hover { filter: brightness(1.08); }
+.ck-app .mac-notificacao-fechar:hover { background: var(--notificacao-action); color: var(--notificacao-ink); }
+.ck-app .mac-notificacao button[aria-disabled="true"] { cursor: progress; opacity: .6; }
+.ck-app .mac-notificacao [hidden] { display: none; }
+.ck-app .mac-notificacao[data-preview-hidden="true"],
+.ck-app .mac-ilha-ver-todos[hidden] { display: none; }
+.ck-app .mac-ilha[data-presentation="auto"] .mac-notificacao-mensagem {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+.ck-app .mac-ilha-ver-todos {
+  position: absolute;
+  top: 0;
+  right: 10px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  align-self: flex-end;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--notificacao-line);
+  border-radius: 9px;
+  padding: 4px;
+  color: var(--notificacao-ink);
+  background: var(--notificacao-action);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+.ck-app .mac-ilha-ver-todos:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ck-app .mac-notificacao :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ============ 1. O que o visual Mac muda em qualquer cor ============ */
+html.visual-mac {
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --layout-rail: 72px; /* o semáforo do Mac tem 52 px e não encolhe */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  --font-code: "JetBrains Mono", Consolas, monospace;
+  --mac-mola: cubic-bezier(.34, 1.36, .64, 1);
+}
+html.visual-mac[data-mac-luz="claro"] {
+  --mac-fill: rgba(120, 120, 128, .12);
+  --mac-fill-strong: rgba(120, 120, 128, .2);
+  --mac-switch: #34c759;
+  --mac-accent-soft: color-mix(in srgb, var(--primary) 13%, transparent);
+  --ring-focus: 0 0 0 3.5px color-mix(in srgb, var(--focus) 38%, transparent);
+  --shadow-float: 0 18px 50px rgba(0, 0, 0, .16), 0 0 0 .5px rgba(0, 0, 0, .08);
+}
+html.visual-mac[data-mac-luz="escuro"] {
+  --mac-fill: rgba(120, 120, 128, .24);
+  --mac-fill-strong: rgba(120, 120, 128, .34);
+  --mac-switch: #30d158;
+  --mac-accent-soft: color-mix(in srgb, var(--primary) 26%, transparent);
+  --ring-focus: 0 0 0 3.5px color-mix(in srgb, var(--focus) 45%, transparent);
+  --shadow-float: 0 20px 60px rgba(0, 0, 0, .55), 0 0 0 .5px rgba(255, 255, 255, .1);
+}
+
+/* ============ 2. O vidro de cada cor que o app já tem ============ */
+html.visual-mac[data-tema="automatico"][data-mac-luz="escuro"],
+html.visual-mac[data-tema="escuro"] {
+  /* leva 5e, 2a rodada: escada fundo #08080a < lateral #141417 < painel #1f1f23 < cartoes e popups. A lateral NAO e' mais vidro
+     cinza-claro (rgba(34,34,40,.62) sobre a pelicula e o Mica dava #3a3a3d na previa, mais clara que o painel e solta sobre o preto):
+     e' a tinta do --side, quase opaca, que nao depende do Mica. A pelicula e' o fundo (--work) a 97 %, como nos claros: a moldura em
+     volta da lateral nao clareia com o papel de parede. O vidro forte (caixa de escrever, cartoes, a lateral que se abre por cima) e o
+     HUD (paleta, troca, ajustes) ficam um degrau acima do painel. */
+  --mac-window: rgba(8, 8, 10, .97);
+  --mac-glass: rgba(20, 20, 23, .96);
+  --mac-glass-strong: rgba(40, 40, 46, .94);
+  --mac-glass-rim: rgba(255, 255, 255, .1);
+  --mac-hud: rgba(40, 40, 46, .8);
+  --mac-card-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .08);
+  /* Item 3 (27/09/2026): branco puro sobre quase preto cansava. O texto
+     principal cai pra ~87% de branco e o secundário pra ~60% (o "secondaryLabel"
+     da Apple); o fundo sobe de #000 pro preto do sistema (#1c1c1e). Medido
+     (contraste WCAG) na superfície mais clara em uso, --high: texto 12,5:1,
+     secundário 6,7:1 — folga grande sobre o mínimo de 4,5:1. */
+  --canvas: #1c1c1e;
+  --ink: rgba(255, 255, 255, .87);
+  --ink-muted: rgba(255, 255, 255, .6);
+}
+html.visual-mac[data-tema="azul"] {
+  /* leva 5e, 2a rodada: a mesma escada do Escuro. Fundo #050d1a < lateral #0c1b33 < painel #0d2748 < cartoes e popups. A lateral era
+     vidro rgba(13,39,72,.5): sobre a pelicula e o Mica da previa saia #3d4865, azul-acinzentado claro, mais clara que o painel. Agora
+     e' a tinta do --side, quase opaca; a pelicula e' o fundo a 97 % (antes rgba(7,24,47,.64), mais clara que o fundo com o Mica comum). */
+  --mac-window: rgba(5, 13, 26, .97);
+  --mac-glass: rgba(12, 27, 51, .96);
+  --mac-glass-strong: rgba(18, 49, 90, .94);
+  --mac-glass-rim: rgba(255, 255, 255, .11);
+  --mac-hud: rgba(18, 49, 90, .8);
+  --mac-card-shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 0 0 .5px rgba(255, 255, 255, .08);
+  /* Azul é sempre a variante escura (lightFor nunca devolve "claro" pra ela):
+     mesmo alívio de contraste do Preto, medido na superfície mais clara em
+     uso (--high #143560): texto 9,7:1, secundário 5,5:1. */
+  --ink: rgba(255, 255, 255, .87);
+  --ink-muted: rgba(255, 255, 255, .6);
+}
+html.visual-mac[data-tema="automatico"][data-mac-luz="claro"],
+html.visual-mac[data-tema="claro"] {
+  --canvas: #fafbfc;
+  --sunken: #f3f6fa;
+  --surface: #fcfdff;
+  /* leva 5e: nos temas claros a pelicula da janela e' a cor do fundo (--work) a 97 %: em volta da lateral flutuante aparece o
+     mesmo fundo da area de trabalho, sem uma faixa clara que destoe dele */
+  --mac-window: rgba(221, 227, 236, .97);
+  --mac-glass: rgba(255, 255, 255, .9);
+  --mac-glass-strong: rgba(255, 255, 255, .97);
+  --mac-glass-rim: rgba(255, 255, 255, .75);
+  --mac-hud: rgba(252, 253, 255, .94);
+  --mac-card-shadow: 0 1px 3px rgba(7, 24, 47, .07), 0 0 0 .5px rgba(7, 24, 47, .08);
+}
+html.visual-mac[data-tema="jornal"] {
+  --canvas: #faf7ef;
+  --sunken: #f4eee0;
+  --surface: #fdfaf3;
+  --mac-window: rgba(226, 218, 199, .97);
+  --mac-glass: rgba(253, 251, 246, .9);
+  --mac-glass-strong: rgba(253, 251, 246, .97);
+  --mac-glass-rim: rgba(255, 255, 255, .7);
+  --mac-hud: rgba(253, 250, 243, .94);
+  --mac-card-shadow: 0 1px 3px rgba(59, 48, 32, .08), 0 0 0 .5px rgba(59, 48, 32, .1);
+}
+
+/* ============ 3. A cor "Automático" não tem cores próprias ============
+   Leva 5e, 2a rodada (Hugo, 07/10: "o automático tá diferente do escuro, deveria ser o mesmo"). Com o Windows escuro o Automático
+   É o Escuro, com o Windows claro É o Claro: as superfícies, as bordas, o texto e os acentos (o --primary, o --focus, o --attention),
+   com o visual Mac ligado ou não. Os dois blocos de tokens que ele tinha aqui (o "claro/escuro da Apple", com o azul do sistema como
+   destaque) saíram; o seletor dele entrou na lista dos blocos do Escuro e do Claro (tokens.css, style.css e logo acima, na seção 2). A luz
+   (data-mac-luz) vem do visual-mac.js. Quem muda a cor do Escuro ou do Claro muda a do Automático junto, e o teste
+   test/contraste-painel-fundo.test.js reprova qualquer propriedade do <html> que difira. */
+
+/* ============ 4. Janela: material nativo (Mica / vibrancy) ============
+   Nos temas claros, o véu quase branco evita que um material escuro/inativo
+   transforme moldura e lateral em cinza. O vidro continua nas peças flutuantes. */
+html.visual-mac {
+  background: transparent;
+}
+html.visual-mac body.ck-app {
+  background: transparent;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -.003em;
+}
+html.visual-mac .ck-app #shell { background: var(--mac-window); }
+
+/* Leva 5 (UI 6.2 + R6-10): rolagem fina e SEMPRE visível em todo tema, com ou sem o visual Mac, e sem as setas do Windows.
+   Só ::-webkit-scrollbar: no Chromium 121+ o scrollbar-width/scrollbar-color desligam estas regras e trazem a barra nativa
+   (com setas quando ganha cor). A folga de 2 px deixa 4 px de polegar, em --control-border (3:1 nos temas); o hover e o
+   .mac-rolando (visual-mac.js, enquanto rola) reforçam. Quem esconde a barra (scrollbar-width: none) continua escondendo. */
+.ck-app ::-webkit-scrollbar { width: 8px; height: 8px; }
+.ck-app ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.ck-app ::-webkit-scrollbar-track,
+.ck-app ::-webkit-scrollbar-corner { background: transparent; }
+.ck-app ::-webkit-scrollbar-thumb { background: var(--control-border); background-clip: content-box; border: 2px solid transparent; border-radius: 8px; }
+.ck-app ::-webkit-scrollbar-thumb:hover,
+.ck-app .mac-rolando::-webkit-scrollbar-thumb { background-color: var(--ink-muted); }
+
+/* ============ 5. Lateral de vidro, flutuando (macOS Tahoe) ============ */
+html.visual-mac .ck-app .ck-navigator {
+  margin: 8px 0 8px 8px;
+  border-radius: 18px;
+  background: var(--mac-glass);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 0;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .12), inset 0 0 0 .5px var(--mac-glass-rim), 0 0 0 .5px var(--line);
+  overflow: hidden;
+}
+html.visual-mac .ck-app .ck-largura-alca { opacity: 0; }
+
+/* topo da lateral aberta: semáforo, recolher e o campo de busca */
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-top {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "luzes recolher" "busca busca";
+  row-gap: 12px;
+  height: auto;
+  padding: 12px 10px 6px 14px;
+}
+html.visual-mac .ck-app .ck-brand { display: none; }
+.ck-app .mac-traffic-space { flex: none; width: 52px; height: 12px; pointer-events: none; }
+html:not([data-platform="darwin"]) .mac-traffic-space { display: none; }
+html[data-platform="darwin"]:not(.visual-mac) .ck-app .ck-nav-top { padding-top: 22px; }
+html.visual-mac .ck-app .mac-traffic-space {
+  grid-area: luzes;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 52px;
+  height: 12px;
+  pointer-events: none;
+}
+html.visual-mac .ck-app .ck-toggle { grid-area: recolher; border-radius: 8px; }
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-search {
+  grid-area: busca;
+  width: 100%;
+  height: 30px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--mac-fill);
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-search::after {
+  content: "Ctrl K";
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-faint);
+  opacity: .8;
+}
+
+/* rótulos de seção: "Torre", "Histórico" (o Mac não grita em maiúsculas) */
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-label {
+  display: inline-block;
+  text-transform: lowercase;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+}
+html.visual-mac .ck-app .ck-nav-label::first-letter { text-transform: uppercase; }
+html.visual-mac .ck-app .ck-torre-divisor { opacity: 0; }
+
+/* contador de pendências: o selo laranja do Mail */
+html.visual-mac .ck-app .ck-attention-count {
+  height: 18px;
+  min-height: 18px;
+  min-width: 18px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--attention);
+  color: var(--on-attention);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: none;
+}
+html.visual-mac .ck-app .ck-attention-count .ck-g { display: none; }
+
+/* linhas da lateral aberta: pílula arredondada, a atual na cor de destaque clara */
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-session {
+  border-radius: 8px;
+  font-size: 13px;
+  margin: 0 4px;
+  width: calc(100% - 8px);
+}
+html.visual-mac .ck-app .ck-session:hover { background: var(--hover); }
+html.visual-mac .ck-app .ck-session.ck-current { background: var(--mac-accent-soft); box-shadow: none; }
+html.visual-mac .ck-app .ck-session-title { font-weight: 500; }
+html.visual-mac .ck-app .ck-session-list {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+html.visual-mac .ck-app .ck-history { border-radius: 8px; margin: 0 4px; width: calc(100% - 8px); }
+
+/* consumo: anéis de atividade (o visual-mac.js desenha) */
+html.visual-mac .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 0;
+}
+html.visual-mac .ck-app .ck-account-button { flex: none; width: auto; min-width: 0; }
+html.visual-mac .ck-app .ck-acct {
+  width: 34px;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+}
+html.visual-mac .ck-app .ck-acct:hover { background: var(--hover); }
+html.visual-mac .ck-app .ck-acct.mac-com-aneis > .ck-dial,
+html.visual-mac .ck-app .ck-acct.mac-com-aneis > .ck-number { display: none; }
+html.visual-mac .ck-app .mac-aneis { width: 32px; height: 32px; display: block; }
+/* Cor dos anéis (26/09: o Hugo gostou dos dois círculos, não das cores do Apple
+   Watch). Padrão = cor de destaque do tema, o de dentro mais claro; "motor" =
+   a cor de cada IA; "watch" = as cores do Apple Watch. Acima de 80% o arco
+   vira a cor de atenção do tema. */
+html.visual-mac .ck-app .mac-aneis {
+  --anel-fora: var(--primary);
+  --anel-dentro: color-mix(in srgb, var(--primary) 50%, var(--raised));
+}
+html.visual-mac[data-mac-aneis="motor"] .ck-app .mac-aneis[data-motor="claude"] { --anel-fora: var(--engine-claude); --anel-dentro: color-mix(in srgb, var(--engine-claude) 55%, var(--raised)); }
+html.visual-mac[data-mac-aneis="motor"] .ck-app .mac-aneis[data-motor="codex"] { --anel-fora: var(--engine-codex); --anel-dentro: color-mix(in srgb, var(--engine-codex) 55%, var(--raised)); }
+html.visual-mac[data-mac-aneis="motor"] .ck-app .mac-aneis[data-motor="gemini"] { --anel-fora: var(--engine-gemini); --anel-dentro: color-mix(in srgb, var(--engine-gemini) 55%, var(--raised)); }
+html.visual-mac[data-mac-aneis="motor"] .ck-app .mac-aneis[data-motor="grok"] { --anel-fora: var(--engine-grok); --anel-dentro: color-mix(in srgb, var(--engine-grok) 55%, var(--raised)); }
+html.visual-mac[data-mac-aneis="motor"] .ck-app .mac-aneis[data-motor="acp"] { --anel-fora: var(--engine-acp); --anel-dentro: color-mix(in srgb, var(--engine-acp) 55%, var(--raised)); }
+html.visual-mac[data-mac-aneis="watch"] .ck-app .mac-aneis { --anel-fora: #fa114f; --anel-dentro: #1eeaef; }
+html.visual-mac[data-mac-aneis="watch"][data-mac-luz="claro"] .ck-app .mac-aneis { --anel-dentro: #00c2cf; }
+html.visual-mac .ck-app .mac-aneis .anel-5h { stroke: var(--anel-fora); }
+html.visual-mac .ck-app .mac-aneis .trilho-5h { stroke: color-mix(in srgb, var(--anel-fora) 20%, transparent); }
+html.visual-mac .ck-app .mac-aneis .anel-semana { stroke: var(--anel-dentro); }
+html.visual-mac .ck-app .mac-aneis .trilho-semana { stroke: color-mix(in srgb, var(--anel-dentro) 22%, transparent); }
+html.visual-mac:not([data-mac-aneis="watch"]) .ck-app .mac-aneis .quente { stroke: var(--attention); }
+html.visual-mac .ck-app .mac-aneis.desligado .trilho-5h,
+html.visual-mac .ck-app .mac-aneis.desligado .trilho-semana { stroke: var(--mac-fill-strong); }
+/* O logo do motor mora no furo do anel de dentro (UI 5.1), pra dizer de quem é
+   cada anel sem passar o mouse. Fica na cor de texto secundário do tema (legível
+   nos claros e nos escuros) e não segue a cor dos anéis: é igual em Tema, Motor
+   e Watch. */
+html.visual-mac .ck-app .mac-aneis .mac-logo { fill: var(--ink-muted); stroke: none; }
+/* a escolha nos Ajustes: controle segmentado do Mac */
+html:not(.visual-mac) .mac-cor-aneis { display: none; }
+html.visual-mac .ck-app .mac-seg {
+  display: inline-flex;
+  flex: none;
+  width: max-content;
+  min-width: max-content;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--mac-fill);
+}
+html.visual-mac .ck-app .mac-seg button {
+  height: 24px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+html.visual-mac .ck-app .mac-seg button[aria-checked="true"] {
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--line);
+}
+/* sem o visual Mac, os anéis somem e volta o mostrador do app */
+html:not(.visual-mac) .mac-aneis { display: none; }
+
+/* rodapé: ícones soltos, sem moldura */
+html.visual-mac .ck-app .ck-tools { border: 0; padding: 4px 8px 8px; }
+html.visual-mac .ck-app .ck-tools .ck-button { border: 0; border-radius: 8px; background: transparent; }
+html.visual-mac .ck-app .ck-tools .ck-button:hover { background: var(--hover); }
+
+/* ============ 6. Barra recolhida (rail) ============
+   O app esconde nomes e rótulos no rail; o visual Mac não pode desfazer isso.
+   O semáforo fica inteiro em cima (por isso o rail tem 72 px), o recolher e a
+   lupa ficam logo abaixo, os rótulos viram um filete e só aparecem os anéis
+   dos motores que têm dado de consumo. */
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) {
+  padding: 0 0 8px;
+  gap: 2px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 16px 0 6px;
+  gap: 10px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-top > .mac-traffic-space {
+  order: -3; /* o app põe a marca em -2 e o recolher em -1; o semáforo vem antes de tudo */
+  width: auto;
+  height: 12px;
+  padding: 0;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-top > :is(.ck-toggle, .ck-nav-search) {
+  width: 36px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-muted);
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-top > :is(.ck-toggle, .ck-nav-search):hover { background: var(--hover); }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-search :is(span, kbd) { display: none; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-label { display: none; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-nav-grouping {
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 0;
+  min-height: 0;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-attention-count {
+  min-width: 22px;
+  min-height: 18px;
+  height: 18px;
+  padding: 0 6px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) :is(.ck-control-list, .ck-session-list) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-folder-heading {
+  flex: none;
+  width: 36px;
+  height: 1px;
+  min-height: 0;
+  margin: 8px auto;
+  padding: 0;
+  overflow: hidden;
+  background: var(--line-strong);
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-folder-heading > * { display: none; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) :is(.ck-control-list, .ck-session-list) .ck-session {
+  width: 40px;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0;
+  justify-content: center;
+  border-radius: 11px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-state.ck-g { box-shadow: 0 0 0 2px var(--raised); }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-accounts {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: 100%;
+  padding: 6px 0 2px;
+  gap: 2px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-account-button:has(.mac-aneis.desligado) { display: none; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-account-button { min-width: 0; min-height: 0; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-acct { width: 36px; height: 36px; min-height: 0; padding: 0; }
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-tools {
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 2px 0 4px;
+  gap: 2px;
+}
+html.visual-mac .ck-app .ck-navigator.ck-collapsed:not(.ck-peek) .ck-tools > .ck-button { width: 36px; height: 30px; padding: 6px; }
+
+/* "espiar": com o rail, a lateral abre por cima das conversas ao passar o mouse */
+html.visual-mac .ck-app .ck-navigator.ck-peek { background: var(--mac-glass-strong); }
+html.visual-mac .ck-app #shell:has(.ck-peek)::before { width: calc(var(--layout-rail) + 8px); }
+
+/* ============ 7. Barra única: a Ilha e as pastas viram a barra da janela ============ */
+/* leva 5e: o fundo era o Mica do Windows sob a pelicula da janela (quase branco nos claros, quase preto nos escuros, 1,02:1 do painel
+   no Jornal do Hugo). Agora a area de trabalho tem a cor explicita e opaca do tema (--work); a lateral segue sendo o vidro dela. */
+html.visual-mac .ck-app .ck-work { background: var(--work); }
+html.visual-mac .ck-app .mac-window-bar { background: transparent; border-bottom: 0; }
+html.visual-mac .ck-app .mac-window-menu { border-radius: 8px; }
+html.visual-mac .ck-app .ck-place-bar {
+  height: calc(var(--aba-h) + 2 * var(--trilha-respiro));
+  min-height: calc(var(--aba-h) + 2 * var(--trilha-respiro));
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  z-index: 30;
+  /* leva 5h: sem a máscara que esmaecia os 28 px da borda direita. A faixa não rola mais (o que não cabe vai para o ▾), e o + e o ▾
+     moram bem ali: o esmaecido os apagava. */
+  /* 28/09 (Hugo): a barra de rolagem do Windows aparecia embaixo das abas e
+     comia a altura da faixa. Rola sem barra (agora só como rede de segurança). */
+  scrollbar-width: none;
+}
+html.visual-mac .ck-app .ck-place-bar::-webkit-scrollbar { display: none; }
+html.visual-mac .ck-app .ck-place-bar .ck-group-head {
+  height: var(--aba-h);
+  /* 9 de cada lado (eram 12): com a aba no mínimo de 96 px o nome precisa de todo o espaço que der; ícone, nome e selo cabem justos */
+  padding: 0 9px;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  /* leva 5h: plana, no tom da trilha (a leva 5e dava uma superficie --tab a cada pastilha; agora a superficie delas é a trilha) */
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+html.visual-mac .ck-app .ck-place-bar .ck-group-head:hover { background: var(--hover); color: var(--ink); }
+html.visual-mac .ck-app .ck-place-bar [data-current="true"] .ck-group-head {
+  /* leva 5h: a ativa LEVANTA: a superficie mais forte do tema (--tab-on, a da leva 5e), sombra leve e o nome em negrito */
+  background: var(--tab-on, var(--raised));
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18), 0 0 0 .5px var(--line);
+}
+html.visual-mac .ck-app .ck-place-bar [data-current="true"]::after,
+html.visual-mac .ck-app .ck-place-bar [data-current="true"] .ck-group-head::after { display: none; }
+html.visual-mac .ck-app .ck-new-place {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+}
+html.visual-mac .ck-app .ck-new-place:hover { background: var(--hover); }
+
+/* ============ 8. Central compacta de notificações, antes das pastas ============ */
+
+html.visual-mac .ck-app .mac-ilha {
+  position: relative;
+  flex: none;
+  width: var(--mac-ilha-w, 84px);
+  height: 28px;
+  margin-right: 4px;
+  z-index: 40;
+  --notificacao-bg: rgba(255, 255, 255, .07);
+  --notificacao-line: rgba(255, 255, 255, .13);
+  --notificacao-ink: #f5f5f7;
+  --notificacao-muted: #b8b8bf;
+  --notificacao-action: rgba(255, 255, 255, .14);
+}
+html.visual-mac .ck-app .mac-ilha-corpo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* A lista expandida não muda o espaço reservado à pílula na faixa. */
+  width: 100%;
+  height: 28px;
+  overflow: clip;
+  border-radius: 999px;
+  border: 0;
+  background: #000;
+  color: #f5f5f7;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .22);
+  transition: width .28s var(--mac-mola), height .28s var(--mac-mola), border-radius .28s var(--mac-mola);
+}
+html.visual-mac[data-mac-luz="escuro"] .ck-app .mac-ilha-corpo {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45), inset 0 0 0 .5px rgba(255, 255, 255, .16);
+}
+/* Leva 5 (UI 5.9): sem aviso que pede ação (só info e sucesso, ou nenhum) a pílula FECHADA fica neutra: sino e número
+   discretos na cor do tema. Preta só com aviso ou erro (data-level, visual-mac.js); aberta, a lista segue a ilha de sempre. */
+html.visual-mac .ck-app .mac-ilha:not(.aberta):not([data-level="warning"]):not([data-level="error"]) .mac-ilha-corpo {
+  /* leva 5e: a pilula neutra e' a superficie das pastas ao lado (--tab). Era o --mac-fill (12 % de cinza) sobre a faixa, e sobre
+     o fundo novo, mais escuro, o texto dela caia para 4,00:1 no Automatico claro. */
+  background: var(--tab);
+  color: var(--ink-muted);
+  box-shadow: none;
+}
+/* O anel #b8ceff da ilha (regra "mac-ilha :focus-visible", mais abaixo) é claro, feito para o fundo preto: sobre a pílula
+   neutra dos temas claros mede 1,2:1 e some. Aqui o anel é o --focus do tema (3:1 ou mais nos 6 jeitos de pintar). */
+html.visual-mac .ck-app .mac-ilha:not(.aberta):not([data-level="warning"]):not([data-level="error"]) :focus-visible { outline-color: var(--focus); }
+
+html.visual-mac .ck-app .mac-ilha.aberta .mac-ilha-corpo {
+  width: min(360px, var(--mac-ilha-max, calc(100vw - 104px)) );
+  height: var(--mac-ilha-h, 28px);
+  border-radius: 18px;
+}
+html.visual-mac .ck-app .mac-ilha-linha {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: var(--mac-ilha-w, 84px);
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+html.visual-mac .ck-app .mac-ilha-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(360px, var(--mac-ilha-max, calc(100vw - 104px)) );
+  padding: 2px 10px 8px;
+  opacity: 0;
+  transition: opacity .25s ease .08s;
+}
+
+html.visual-mac .ck-app .mac-ilha.aberta .mac-ilha-lista { opacity: 1; }
+.ck-app .mac-ilha-vazia { margin: 6px 4px 10px; color: var(--notificacao-muted); font: 400 12px/1.4 var(--font-ui); }
+html.visual-mac .ck-app .mac-notificacao { border-radius: 10px; }
+html.visual-mac .ck-app .mac-notificacao[data-level="info"] { --notificacao-level: #79adff; }
+html.visual-mac .ck-app .mac-notificacao[data-level="success"] { --notificacao-level: #73dfa7; }
+html.visual-mac .ck-app .mac-notificacao[data-level="warning"] { --notificacao-level: #ffc567; }
+html.visual-mac .ck-app .mac-notificacao[data-level="error"] { --notificacao-level: #ff9991; }
+html.visual-mac .ck-app .mac-notificacao-erro { color: #ffb8b1; }
+html.visual-mac .ck-app .mac-ilha :focus-visible { outline-color: #b8ceff; }
+.ck-app .mac-ilha.nova-notificacao:not(.aberta) .mac-ilha-sino {
+  animation: mac-aviso-recebido .9s ease-out;
+}
+@keyframes mac-aviso-recebido {
+  0%, 100% { opacity: 1; }
+  30% { opacity: .38; }
+  65% { opacity: 1; }
+}
+
+/* ============ 9. Painéis em cartão ============ */
+html.visual-mac .ck-app #panes { background: transparent; padding: 0 8px 8px 0; }
+/* Leva 5 (UI 6.3): o degradê do sinal de "mais colunas" (cockpit-ui.css) acaba na cor do CARTÃO e para nos 8 px de folga de baixo
+   do #panes. Com --canvas até o fim, uma faixa opaca tampava essa folga, onde aparece o vidro da janela. */
+html.visual-mac .ck-app .ck-work[data-mais-direita]::after {
+  bottom: 8px;
+  background: linear-gradient(to right, transparent, var(--raised));
+}
+html.visual-mac .ck-app .coluna { gap: 8px; }
+/* Os cartões já delimitam as sessões. A faixa de 5 px continua arrastável. */
+html.visual-mac .ck-app :is(.pane-split, .pane-split-h),
+html.visual-mac .ck-app :is(.pane-split, .pane-split-h):hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+html.visual-mac .ck-app :is(.coluna + .coluna, .pane-split + .coluna) { border-left-color: transparent; }
+html.visual-mac .ck-app :is(.pane-split, .pane-split-h):focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+html.visual-mac .ck-app .pane {
+  border-radius: 14px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+  overflow: hidden;
+  border: 0;
+}
+html.visual-mac .ck-app .pane.focus {
+  outline: 2px solid color-mix(in srgb, var(--focus) 70%, transparent);
+  outline-offset: -2px;
+}
+html.visual-mac .ck-app .pane-hd {
+  height: 44px;
+  padding: 0 8px 0 10px;
+  background: var(--raised);
+  border-bottom: .5px solid var(--line);
+}
+/* o campo do renomear (leva 5g) fica no lugar do título e usa a mesma fonte, tamanho e peso: é a mesma regra */
+html.visual-mac .ck-app :is(.ck-pane-title, .pane-hd > .pn-input) {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+html.visual-mac .ck-app .pane-hd .ck-button,
+html.visual-mac .ck-app .pane-hd button { border-radius: 8px; }
+html.visual-mac .ck-app .p-git {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mac-fill);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+html.visual-mac .ck-app .pane-chat { background: var(--raised); }
+
+/* ============ 10. Mensagens ============ */
+html.visual-mac .ck-app .msg-role {
+  text-transform: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+}
+html.visual-mac .ck-app .msg-body { font-size: 13.5px; line-height: 1.55; }
+/* sua mensagem: a bolha do iMessage (a bolha é o .msg-body; o .msg.user só alinha) */
+html.visual-mac .ck-app .msg.user .msg-body {
+  max-width: 80%;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 18px 18px 5px 18px;
+  /* leva 5 (UI 6.4): azul cheio fica só no Enviar e no foco; a bolha é o azul claro do tema, com o texto do tema */
+  background: var(--mac-accent-soft);
+  color: var(--ink);
+  line-height: 1.45;
+}
+html.visual-mac .ck-app .msg.user .msg-role,
+html.visual-mac .ck-app .msg.user .msg-copiar { display: none; }
+html.visual-mac .ck-app .msg-copiar { border-radius: 8px; }
+html.visual-mac .ck-app .pane-chat :is(pre, code) { font-family: var(--font-code); }
+html.visual-mac .ck-app .pane-chat pre { border-radius: 10px; }
+
+/* ============ 11. Campo de escrever em cápsula (iMessage) ============ */
+/* 28/09 (Hugo): no painel SELECIONADO a cápsula sumia. A regra de base
+   ".ck-app .pane.focus .pane-cmp" (cockpit-ui.css) é mais específica e zerava o
+   box-shadow, que no visual Mac é a própria borda da cápsula. As variantes
+   com .pane.focus abaixo ganham dela. */
+html.visual-mac .ck-app .pane-cmp,
+html.visual-mac .ck-app .pane.focus .pane-cmp {
+  margin: 0 10px 10px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--mac-glass-strong);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .08), 0 0 0 .5px var(--line-strong);
+  outline: none;
+}
+html.visual-mac .ck-app .pane-cmp:focus-within,
+html.visual-mac .ck-app .pane.focus .pane-cmp:focus-within {
+  outline: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .08), 0 0 0 .5px var(--line-strong), var(--ring-focus);
+}
+html.visual-mac .ck-app .cmp-bar { background: transparent; border: 0; }
+html.visual-mac .ck-app .p-input { font-size: 13.5px; background: transparent; }
+html.visual-mac .ck-app .cmp-bar .cb {
+  border: 0;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  background: transparent;
+}
+html.visual-mac .ck-app .cmp-bar .cb:hover { background: var(--hover); color: var(--ink); }
+html.visual-mac .ck-app .cmp-bar .p-plus { background: var(--mac-fill); color: var(--ink); }
+/* Leva 5h: o anel do contexto (.p-compactar) tem a classe cb, entao herda o formato redondo e transparente de cima. A regra dos .cb pinta o traco
+   de cinza e e' mais forte que o .meio/.cheio do style.css (a cor do estado), que por isso sao repetidos aqui, depois do :hover dos .cb. */
+html.visual-mac .ck-app .cmp-bar .p-compactar.meio { color: color-mix(in srgb, var(--yellow) 80%, var(--ink)); }
+html.visual-mac .ck-app .cmp-bar .p-compactar.cheio { color: var(--red); }
+/* Rodada 2 da leva 5h, item 8: o anel que so mostra o uso (disabled: Gemini, Grok, ACP, painel sem sessao) fica parado no hover, sem o fundo e sem
+   clarear o traco neutro dos .cb (o ambar e o vermelho do estado nao sao tocados). O cursor normal esta no style.css. */
+html.visual-mac .ck-app .cmp-bar .p-compactar:disabled:hover { background: transparent; }
+html.visual-mac .ck-app .cmp-bar .p-compactar:disabled:not(.meio):not(.cheio):hover { color: var(--ink-muted); }
+/* Leva 5h: o chip da caixa são 3 botões (.pm-btn: motor, modelo, permissão) dentro de um grupo sem fundo (.p-model). A pele é de cada botão; o
+   espaço entre a família e o anel (3 px) é o gap do botão do meio, no cockpit-ui.css, igual nos dois visuais. */
+html.visual-mac .ck-app .cmp-bar .pm-btn {
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+html.visual-mac .ck-app .cmp-bar .pm-perm::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 11px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 11'%3E%3Cpath d='M1 4 3.5 1.5 6 4M1 7l2.5 2.5L6 7' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: .8;
+}
+html.visual-mac .ck-app .cmp-bar .pm-btn:hover { background: var(--hover); color: var(--ink); }
+html.visual-mac .ck-app .cmp-bar .p-send {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .15);
+}
+html.visual-mac .ck-app .cmp-bar .p-stop { border-radius: 50%; border: 0; background: var(--mac-fill-strong); }
+/* Janelinha do + (leva 5d): os botões só de ícone são redondos como os da barra da caixa (.cb); o resto vem do cockpit-ui.css. */
+html.visual-mac .ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi { border-radius: 50%; }
+/* Janelinhas do chip (leva 5h): os botões só de ícone (motor, permissão, rodapé) são redondos como os da barra; as linhas dos modelos têm cantos de 10 px. */
+html.visual-mac .ck-app .p-modal.como-menu > .modal-cx.menu-chip .mz-icone { border-radius: 50%; }
+html.visual-mac .ck-app .p-modal.como-menu > .modal-cx.menu-chip .mz-modelo-op { border-radius: 10px; }
+
+/* Anexo pronto para enviar: miniatura, informações e ações na mesma ficha. */
+html.visual-mac .ck-app .p-anexos { gap: 8px; padding: 4px 8px 6px; }
+html.visual-mac .ck-app .p-anexos .anx {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 8px;
+  width: min(300px, 100%);
+  max-width: 100%;
+  min-height: 52px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--mac-fill);
+  color: var(--ink);
+  box-shadow: none;
+}
+html.visual-mac .ck-app .p-anexos .anx:not(:has(.anx-ocr)) { grid-template-columns: 36px minmax(0, 1fr) 24px; }
+html.visual-mac .ck-app .p-anexos .anx-mini {
+  grid-column: 1;
+  grid-row: 1;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--ink-muted);
+}
+html.visual-mac .ck-app .p-anexos .anx-txt { grid-column: 2; grid-row: 1; gap: 3px; }
+html.visual-mac .ck-app .p-anexos .anx-n { color: var(--ink); font: 500 11.5px/1.35 var(--font-ui); }
+html.visual-mac .ck-app .p-anexos .anx-s { color: var(--ink-muted); font: 400 10px/1.3 var(--font-ui); letter-spacing: 0; text-transform: none; }
+html.visual-mac .ck-app .p-anexos .anx-ocr {
+  grid-column: 3;
+  grid-row: 1;
+  min-height: 28px;
+  margin: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 500 11px/1.4 var(--font-ui);
+  cursor: pointer;
+}
+html.visual-mac .ck-app .p-anexos .anx-ocr:hover { background: var(--hover); }
+html.visual-mac .ck-app .p-anexos .anx-x {
+  position: static;
+  grid-column: -2;
+  grid-row: 1;
+  width: 24px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  opacity: 1;
+  cursor: pointer;
+}
+html.visual-mac .ck-app .p-anexos .anx-x .ic { width: 12px; height: 12px; }
+html.visual-mac .ck-app .p-anexos .anx-x:hover { background: var(--mac-fill-strong); color: var(--ink); }
+html.visual-mac .ck-app .p-anexos :is(.anx-ocr, .anx-x):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ============ 12. Pedido de permissão: folha de alerta do Mac ============ */
+html.visual-mac .ck-app .pane-perm {
+  margin: 0 10px 8px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--mac-glass-strong);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+html.visual-mac .ck-app .pane-perm button {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mac-fill);
+  color: var(--ink);
+  font-weight: 500;
+}
+html.visual-mac .ck-app .pane-perm .pp-yes { background: var(--primary); color: var(--on-primary); }
+html.visual-mac .ck-app .pane-perm .pp-btns { background: transparent; border: 0; padding-top: 4px; }
+html.visual-mac .ck-app .pane-perm .diff { border-radius: 8px; overflow: hidden; }
+
+/* Perguntas da IA: a mesma folha neutra no painel e na central de pendências. */
+html.visual-mac .ck-app .pane-perg {
+  margin: 0 10px 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mac-glass-strong);
+  color: var(--ink);
+  box-shadow: var(--mac-card-shadow);
+  font-family: var(--font-ui);
+}
+html.visual-mac .ck-app .pane-perg .perg-topo {
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--ink);
+  font-size: 13px;
+}
+html.visual-mac .ck-app .pane-perg .perg-topo b { font-weight: 600; }
+html.visual-mac .ck-app .pane-perg .perg-sino {
+  width: 7px;
+  height: 7px;
+  background: var(--primary);
+  animation: none;
+  box-shadow: 0 0 0 3px var(--mac-accent-soft);
+}
+html.visual-mac .ck-app .pane-perg .perg-dica { color: var(--ink-muted); font-size: 11px; }
+html.visual-mac .ck-app .pane-perg .perg-tit {
+  margin: 0 0 4px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+html.visual-mac .ck-app .pane-perg .perg-txt { margin-bottom: 9px; color: var(--ink); font-size: 13px; line-height: 1.5; }
+html.visual-mac .ck-app .pane-perg .perg-ops { gap: 6px; }
+html.visual-mac .ck-app .pane-perg .perg-op {
+  min-height: 36px;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: none;
+}
+html.visual-mac .ck-app .pane-perg .perg-op:hover { background: var(--hover); border-color: var(--primary); }
+html.visual-mac .ck-app .pane-perg .perg-op.marcada { border-color: var(--primary); background: var(--mac-accent-soft); box-shadow: inset 0 0 0 .5px var(--primary); }
+html.visual-mac .ck-app .pane-perg .po-rot { color: var(--ink); font-size: 12.5px; font-weight: 500; }
+html.visual-mac .ck-app .pane-perg .po-det { color: var(--ink-muted); font-size: 11.5px; line-height: 1.45; }
+html.visual-mac .ck-app .pane-perg .perg-livre {
+  min-height: 34px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 9px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 400 12px/1.4 var(--font-ui);
+}
+html.visual-mac .ck-app .pane-perg .perg-livre::placeholder { color: var(--ink-muted); }
+html.visual-mac .ck-app .pane-perg .perg-pe { gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+html.visual-mac .ck-app .pane-perg :is(.perg-ok, .perg-nao) {
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  font: 500 12px/1.4 var(--font-ui);
+}
+html.visual-mac .ck-app .pane-perg .perg-ok { background: var(--primary); color: var(--on-primary); }
+html.visual-mac .ck-app .pane-perg .perg-nao { background: var(--mac-fill); color: var(--ink); }
+html.visual-mac .ck-app .pane-perg .perg-nao:hover { background: var(--mac-fill-strong); }
+html.visual-mac .ck-app .pane-perg :is(.perg-livre, .perg-op):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Leva 5h: o cartao em paginas no visual Mac. O ‹, o › e o X ficam redondos e discretos (so' o fundo aparece no hover); os pontinhos
+   mantem as cores do tema do style.css (vazado, cheio e o da pagina atual em --focus). */
+html.visual-mac .ck-app .pane-perg :is(.perg-ant, .perg-prox, .perg-x) { border-radius: 999px; color: var(--ink-muted); }
+html.visual-mac .ck-app .pane-perg :is(.perg-ant, .perg-prox, .perg-x):hover:not(:disabled) { background: var(--mac-fill); color: var(--ink); }
+html.visual-mac .ck-app .pane-perg .perg-ponto { border-radius: 999px; }
+html.visual-mac .ck-app .pane-perg :is(.perg-ant, .perg-prox, .perg-ponto, .perg-x):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+html.visual-mac .ck-app .pendencias-card-body .pane-perg { margin: 0; }
+html.visual-mac .ck-app .ck-layer .pane-perg { margin: 0; max-height: none; box-shadow: none; }
+
+/* Equipe (agentes) e debate ficam junto das ferramentas da conversa, nos quatro temas. */
+.ck-app .cmp-bar :is(.p-workflow, .p-debate) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* o botão dos agentes leva o ícone e o número (users + 2): cresce com o número, no mínimo os 28 px de sempre */
+  width: auto;
+  min-width: 28px;
+  gap: 2px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-muted);
+}
+.ck-app .cmp-bar :is(.p-workflow, .p-debate):hover { background: var(--hover); color: var(--ink); }
+.ck-app .cmp-bar :is(.p-workflow, .p-debate):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Leva 5i: o 👥 e' fixo e o app.js (pintarAgentes) agora liga o data-active="true" quando ha agente ATIVO; sem ativos ele fica no cinza dos vizinhos. */
+.ck-app .cmp-bar .p-workflow[data-active="true"] { color: var(--focus); }
+/* Leva 5i: o ⚖ Debater e' fixo e absorveu o botao temporario do debate em andamento (collaboration.js, pintarBotao). Com o debate rodando ele ganha .rodando:
+   o mesmo destaque do 👥 ativo e um anel fino que pulsa devagar (o co-pulsa do collaboration.css); parado, volta ao cinza. Sem animacao para quem pede
+   menos movimento: o anel fica parado, meio apagado. */
+.ck-app .cmp-bar .p-debate.rodando { position: relative; color: var(--focus); }
+.ck-app .cmp-bar .p-debate.rodando::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 1.5px var(--focus);
+  pointer-events: none;
+  animation: co-pulsa 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck-app .cmp-bar .p-debate.rodando::after { animation: none; opacity: .55; }
+}
+/* Leva 5i: o Workflow dos agentes como ORGANOGRAMA de equipe (collaboration.js, workflow/refreshWorkflow). A camada (.ck-workflow) mostra o cartao da conversa
+   no topo e um cartao por agente, ligado ao pai por linhas. Os filhos da conversa ficam numa fileira (.org-linha: tronco do pai, barra horizontal e uma
+   perninha por filho) e quebram em linhas quando nao cabem; com mais de uma fileira um trilho a esquerda liga as barras (data-filas e --org-trilho, que
+   o collaboration.js mede, e data-fila em cada filho: ini, meio, fim ou so). Os netos em diante PENDEM do pai (.org-pendurado: trilho a esquerda e um
+   cotovelo em cada cartao). So' tokens de tema (--raised, --surface, --line, --ink, --ink-muted, --hover, --focus, --attention, --done): vale nos quatro
+   temas, com e sem o visual Mac. Estado = cor + simbolo no selo (.org-selo); o nome do estado fica so' no hover e no aria-label. */
+/* 980 px: cinco cartoes lado a lado (quatro agentes e o cartao dos concluidos) cabem numa fileira so'; em janela mais estreita a fileira quebra */
+.ck-app .ck-layer.ck-workflow { width: min(980px, 100%); }
+.ck-app .workflow-body { min-width: 0; }
+.ck-app .workflow-body [hidden] { display: none !important; }
+.ck-app .org {
+  --org-w: 164px;        /* largura do cartao */
+  --org-v: 16px;         /* altura de cada trecho vertical: o tronco do pai e a perninha de cada filho */
+  --org-i: 20px;         /* o quanto o cartao pendurado entra para a direita */
+  --org-r: 14px;         /* o vao do trilho quando a fileira quebra em linhas */
+  --org-cotovelo: 17px;  /* a altura do cotovelo no cartao pendurado (a linha do nome) */
+  --org-linha: var(--line-strong);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 16px 8px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ck-app .org-no { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; max-width: 100%; }
+.ck-app .org-card {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: var(--org-w);
+  max-width: 100%;
+  min-width: 0;
+  padding: 8px 10px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 400 12px/1.35 var(--font-ui);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.ck-app button.org-card { cursor: pointer; }
+.ck-app button.org-card:hover { background-image: linear-gradient(var(--hover), var(--hover)); }
+.ck-app button.org-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ck-app button.org-card[aria-expanded="true"]:not(.org-concluidos) { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+/* leva 5i (prévia de 09/10): o nome de 2 palavras do Haiku ("Comparando custos") cortava cedo numa linha só; agora quebra em até 2 linhas,
+   e o selo de estado fica no alto, alinhado à primeira */
+.ck-app .org-topo { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.ck-app .org-nome { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--ink); font: 600 12.5px/1.3 var(--font-ui); }
+.ck-app .org-funcao { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--ink-muted); font: 400 11.5px/1.35 var(--font-ui); }
+.ck-app .org-funcao:empty { display: none; }
+.ck-app .org-rodape { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 1px; color: var(--ink-faint); font: 400 10.5px/1.3 var(--font-ui); }
+.ck-app .org-tempo { flex: none; font-variant-numeric: tabular-nums; }
+.ck-app .org-modelo { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* o selo de estado: o simbolo do ico() numa pastilha redonda, na cor do estado */
+.ck-app .org-selo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.ck-app .org-selo .ic { width: 11px; height: 11px; }
+.ck-app .org-card[data-estado="rodando"] .org-selo { color: var(--focus); animation: org-pulso 1.8s ease-in-out infinite; }
+.ck-app .org-card[data-estado="rodando"] .org-selo .ic { fill: currentColor; }
+.ck-app .org-card[data-estado="precisa"] .org-selo { color: var(--attention); }
+.ck-app .org-card[data-estado="concluido"] .org-selo { color: var(--done); }
+.ck-app .org-card[data-estado="falhou"] .org-selo { color: var(--diff-del); }
+.ck-app .org-card[data-estado="parado"] .org-selo { color: var(--ink-faint); }
+@keyframes org-pulso { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.ck-app .org-card[data-estado="precisa"] { border-color: var(--attention); box-shadow: var(--halo-attention); }
+.ck-app .org-card[data-estado="falhou"] { border-color: color-mix(in srgb, var(--diff-del) 55%, var(--line-strong)); }
+.ck-app .org-card[data-estado="concluido"] .org-nome { color: var(--ink-muted); }
+/* o cartao da conversa, no topo: logo do motor, modelo e o nome da conversa */
+.ck-app .org-conversa { width: min(100%, 300px); gap: 5px; padding: 9px 12px; }
+.ck-app .org-logo { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--ink); }
+.ck-app .org-conversa .org-modelo { flex: 1 1 auto; margin-left: 0; color: var(--ink-muted); font: 500 11.5px/1.3 var(--font-ui); }
+.ck-app .org-conversa .org-selo { margin-left: auto; }
+.ck-app .org-conversa > .org-nome { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; font-size: 13.5px; line-height: 1.3; }
+/* o cartao dos concluidos: check + numero + seta */
+.ck-app .org-concluidos { flex-direction: row; align-items: center; gap: 8px; padding: 5px 10px; }
+.ck-app .org-total { color: var(--ink-muted); font: 600 12.5px/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.ck-app .org-seta { display: inline-flex; margin-left: auto; color: var(--ink-faint); transition: transform .15s ease; }
+.ck-app .org-seta .ic { width: 12px; height: 12px; }
+.ck-app .org-concluidos[aria-expanded="true"] .org-seta { transform: rotate(180deg); }
+/* a fileira dos filhos da conversa: tronco (do pai ate a barra), barra (sobre os filhos) e perninha (da barra ate o cartao de cada um) */
+.ck-app .org-linha { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; row-gap: 8px; max-width: 100%; padding-top: var(--org-v); }
+.ck-app .org-linha::before { content: ""; position: absolute; top: 0; left: 50%; height: var(--org-v); border-left: 1px solid var(--org-linha); }
+.ck-app .org-linha > .org-no { padding: var(--org-v) 5px 0; }
+.ck-app .org-linha > .org-no::before { content: ""; position: absolute; top: 0; left: 0; right: 0; border-top: 1px solid var(--org-linha); }
+.ck-app .org-linha > .org-no::after { content: ""; position: absolute; top: 0; left: 50%; height: var(--org-v); border-left: 1px solid var(--org-linha); }
+.ck-app .org-linha > .org-no:first-child::before,
+.ck-app .org-linha > .org-no[data-fila="ini"]::before { left: 50%; }
+.ck-app .org-linha > .org-no:last-child::before,
+.ck-app .org-linha > .org-no[data-fila="fim"]::before { right: 50%; }
+.ck-app .org-linha > .org-no:only-child::before,
+.ck-app .org-linha > .org-no[data-fila="so"]::before { display: none; }
+/* quebrou em mais de uma fileira: ficam alinhadas a esquerda e um trilho liga a barra de cada uma (o braco de cada barra vai ate o trilho). O
+   mesmo desenho do trilho leva uma linha no topo ate o tronco do pai: com um cartao so' por fileira (janela estreita) e' ela que prende o tronco */
+.ck-app .org-linha[data-filas] { justify-content: flex-start; padding-left: var(--org-r); }
+.ck-app .org-linha[data-filas]::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--org-r) / 2);
+  top: var(--org-v);
+  width: calc(50% - var(--org-r) / 2);
+  height: calc(var(--org-trilho, var(--org-v)) - var(--org-v));
+  border-left: 1px solid var(--org-linha);
+  border-top: 1px solid var(--org-linha);
+}
+.ck-app .org-linha[data-filas] > .org-no[data-fila="ini"]::before,
+.ck-app .org-linha[data-filas] > .org-no[data-fila="so"]::before { display: block; left: calc(var(--org-r) / -2); }
+.ck-app .org-linha[data-filas] > .org-no[data-fila="so"]::before { right: 50%; }
+/* os netos em diante (e os concluidos abertos) pendem do pai: trilho a esquerda e um cotovelo em cada cartao.
+   width 0 + min-width 100%: a caixa tem a largura do pai (o cartao), mas o texto dos cartoes de dentro nao alarga o ramo (sem isto o ramo
+   crescia ate' a largura do texto da funcao e a fileira da conversa quebrava cedo demais) */
+.ck-app .org-pendurado { position: relative; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: 0; min-width: 100%; padding: 8px 0 0 var(--org-i); }
+.ck-app .org-pendurado > .org-no { align-items: stretch; }
+.ck-app .org-pendurado > .org-no > .org-card { width: auto; }
+.ck-app .org-pendurado > .org-no::before { content: ""; position: absolute; left: calc(9px - var(--org-i)); top: -8px; bottom: -8px; border-left: 1px solid var(--org-linha); }
+.ck-app .org-pendurado > .org-no:last-child::before { bottom: auto; height: calc(var(--org-cotovelo) + 8px); }
+.ck-app .org-pendurado > .org-no::after { content: ""; position: absolute; left: calc(9px - var(--org-i)); top: var(--org-cotovelo); width: calc(var(--org-i) - 9px); border-top: 1px solid var(--org-linha); }
+/* os sem vinculo informado: nao ganham pai inventado, so' a lista */
+.ck-app .org-soltos { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.ck-app .org-solto { display: flex; flex-wrap: wrap; gap: 10px; }
+/* o detalhe do agente clicado: um painel so', colado no fim da camada */
+.ck-app .org-detalhe {
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-float);
+}
+.ck-app .org-d-cab { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ck-app .org-d-nome { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13px/1.3 var(--font-ui); }
+.ck-app .org-d-modelo { flex: none; color: var(--ink-faint); font: 400 11px/1.3 var(--font-ui); }
+.ck-app .org-d-fechar { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; color: var(--ink-muted); }
+.ck-app .org-d-fechar:hover { background: var(--hover); color: var(--ink); }
+.ck-app .org-d-fechar .ic { width: 14px; height: 14px; }
+.ck-app .org-d-tarefa { margin: 0; color: var(--ink-muted); font: 400 11.5px/1.45 var(--font-ui); overflow-wrap: anywhere; }
+.ck-app .org-d-texto { max-height: 180px; margin: 0; overflow: auto; font: 400 12px/1.5 var(--font-ui); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.ck-app :is(.workflow-empty, .workflow-note) { color: var(--ink-muted); font: 400 12px/1.5 var(--font-ui); }
+.ck-app .workflow-empty { margin: 0; padding: 12px; text-align: center; }
+.ck-app .workflow-note { margin: 0; }
+.ck-app .org-soltos > .workflow-note { margin: 0; }
+@media (max-width: 560px) {
+  .ck-app .org { --org-w: 148px; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck-app .org-card[data-estado="rodando"] .org-selo { animation: none; }
+  .ck-app .org-seta { transition: none; }
+}
+html.visual-mac .ck-app .cmp-bar :is(.p-workflow, .p-debate) { border-radius: 14px; }
+/* visual Mac: o cartao ganha a sombra suave dos outros cartoes; o que pede atencao e o clicado mantem o proprio destaque (a regra acima, mais forte) */
+html.visual-mac .ck-app .org { border-radius: 16px; }
+html.visual-mac .ck-app .org-card { border-color: var(--line); box-shadow: var(--mac-card-shadow); }
+html.visual-mac .ck-app .org-card[data-estado="precisa"] { border-color: var(--attention); box-shadow: var(--halo-attention); }
+html.visual-mac .ck-app .org-card[data-estado="falhou"] { border-color: color-mix(in srgb, var(--diff-del) 55%, var(--line-strong)); }
+html.visual-mac .ck-app button.org-card[aria-expanded="true"]:not(.org-concluidos) { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+
+/* ============ 13. Busca com cara de Spotlight (Ctrl K) ============ */
+html.visual-mac .ck-app .ck-overlay:has(.ck-palette) { background: rgba(0, 0, 0, .06); }
+html.visual-mac .ck-app .ck-palette {
+  width: min(680px, 100%);
+  border: 0;
+  border-radius: 26px;
+  background: var(--mac-hud);
+  backdrop-filter: blur(40px) saturate(190%);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .28), inset 0 0 0 .5px var(--mac-glass-rim), 0 0 0 .5px var(--line-strong);
+  overflow: hidden;
+}
+html.visual-mac .ck-app .ck-palette .ck-layer-head { display: none; }
+html.visual-mac .ck-app .ck-palette .ck-layer-body { padding: 0 0 8px; }
+html.visual-mac .ck-app .ck-palette .ck-search {
+  /* Item 5 (27/09/2026): faltava respiro depois da lupa e o texto ficava
+     perto demais da borda de baixo. line-height explícito centraliza o texto
+     (e o placeholder) na vertical com folga pros descendentes de "g/p/q". */
+  height: 58px;
+  padding: 0 24px 0 62px;
+  border: 0;
+  border-bottom: .5px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='m20 20-4.8-4.8'/%3E%3C/svg%3E") 22px center / 20px no-repeat;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 34px;
+  letter-spacing: -.01em;
+  box-shadow: none;
+}
+html.visual-mac .ck-app .ck-palette .ck-search:focus { outline: none; box-shadow: none; }
+html.visual-mac .ck-app .ck-palette .ck-search::placeholder { color: var(--ink-faint); opacity: .75; }
+html.visual-mac .ck-app .ck-palette .ck-results { padding: 4px 8px 0; }
+html.visual-mac .ck-app .ck-result-group {
+  padding: 12px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-faint);
+  border: 0;
+}
+html.visual-mac .ck-app .ck-result { min-height: 46px; border: 0; border-radius: 12px; gap: 12px; }
+html.visual-mac .ck-app .ck-result > svg {
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--mac-fill);
+  color: var(--ink-muted);
+  flex: none;
+}
+html.visual-mac .ck-app .ck-result[aria-selected="true"] { background: var(--primary); color: var(--on-primary); box-shadow: none; }
+html.visual-mac .ck-app .ck-result[aria-selected="true"] :is(small, strong) { color: var(--on-primary); }
+html.visual-mac .ck-app .ck-result[aria-selected="true"] > svg { background: rgba(255, 255, 255, .22); color: var(--on-primary); }
+html.visual-mac .ck-app .ck-search-status { padding: 6px 18px 0; color: var(--ink-faint); font-size: 11px; }
+
+/* ============ 14. Ctrl+Tab igual ao Cmd+Tab ============ */
+html.visual-mac .ck-app .ck-troca-lista {
+  width: auto;
+  max-width: min(92vw, 1080px);
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--mac-hud);
+  backdrop-filter: blur(40px) saturate(190%);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--mac-glass-rim), 0 0 0 .5px var(--line-strong);
+}
+html.visual-mac .ck-app .ck-troca-item {
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  width: 112px;
+  min-height: 112px;
+  padding: 12px 6px 10px;
+  border-radius: 20px;
+}
+html.visual-mac .ck-app .ck-troca-item[aria-selected="true"] { background: var(--mac-fill-strong); box-shadow: none; }
+html.visual-mac .ck-app .ck-troca-icone .ic {
+  width: 58px;
+  height: 58px;
+  fill: #62b8f6;
+  stroke: #3a9be8;
+  stroke-width: 1;
+}
+html.visual-mac .ck-app .ck-troca-texto { align-items: center; text-align: center; width: 100%; }
+html.visual-mac .ck-app .ck-troca-texto strong {
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html.visual-mac .ck-app .ck-troca-texto small { display: none; }
+
+/* ============ 15. Ajustes do iPhone ============ */
+html.visual-mac .ck-app .ck-settings-sheet {
+  border: 0;
+  border-radius: 22px;
+  background: var(--mac-hud);
+  backdrop-filter: blur(40px) saturate(190%);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .28), inset 0 0 0 .5px var(--mac-glass-rim), 0 0 0 .5px var(--line-strong);
+  overflow: hidden;
+}
+html.visual-mac .ck-app .ck-settings-sheet .ck-layer-head { border: 0; background: transparent; }
+html.visual-mac .ck-app .ck-settings-sheet .ck-layer-head h2 { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
+html.visual-mac .ck-app .ck-settings-tabs { padding: 4px 10px; gap: 2px; background: transparent; border: 0; }
+html.visual-mac .ck-app .ck-settings-tabs button {
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+html.visual-mac .ck-app .ck-settings-tabs button svg {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border-radius: 6px;
+  background: #8e8e93;
+  color: #fff;
+  flex: none;
+}
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(1) svg { background: #007aff; }
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(2) svg { background: #34c759; }
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(3) svg { background: #ff3b30; }
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(4) svg { background: #af52de; }
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(5) svg { background: #8e8e93; }
+html.visual-mac .ck-app .ck-settings-tabs button:nth-child(6) svg { background: #5856d6; }
+html.visual-mac .ck-app .ck-settings-tabs button[aria-selected="true"] { background: var(--primary); color: var(--on-primary); }
+html.visual-mac .ck-app .ck-settings-tabs button[aria-selected="true"]::before,
+html.visual-mac .ck-app .ck-settings-tabs button[aria-selected="true"]::after { display: none; }
+html.visual-mac .ck-app .ck-settings-sheet .settings { background: transparent; }
+html.visual-mac .ck-app .aj-titulo {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  text-transform: none;
+  color: var(--ink);
+}
+html.visual-mac .ck-app .ck-settings-sheet :is(.aj-campo, .ck-preferences) {
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+  padding: 4px 14px;
+  margin-bottom: 14px;
+}
+html.visual-mac .ck-app .ck-settings-sheet .aj-campo { padding: 12px 14px; }
+html.visual-mac .ck-app .ck-preference {
+  grid-template-columns: minmax(0, 1fr) 42px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: .5px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+html.visual-mac .ck-app .ck-preference:last-child { border-bottom: 0; }
+html.visual-mac .ck-app .ck-preference.mac-cor-aneis { grid-template-columns: minmax(0, 1fr) auto; }
+html.visual-mac .ck-app .ck-settings-sheet .aj-nome { font-size: 13px; font-weight: 500; color: var(--ink); text-transform: none; letter-spacing: 0; }
+html.visual-mac .ck-app .ck-settings-sheet .aj-desc { font-size: 12px; color: var(--ink-muted); }
+/* a chavinha verde do iPhone (o app desenha a bolinha dele no ::after; aqui é o ::before) */
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 25px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mac-fill-strong);
+  cursor: pointer;
+  transition: background-color .2s ease;
+}
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .22), 0 0 0 .5px rgba(0, 0, 0, .05);
+  transition: transform .32s var(--mac-mola);
+}
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]::after { content: none; display: none; }
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]:checked { background: var(--mac-switch); }
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]:checked::before { transform: translateX(17px); }
+html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+/* escolha de tema: miniaturas, como Aparência no Mac */
+html.visual-mac .ck-app .temas { display: flex; gap: 14px; flex-wrap: wrap; }
+html.visual-mac .ck-app .tema-bt {
+  flex: 0 0 64px;
+  min-width: 64px;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  color: var(--ink-muted);
+  box-shadow: none;
+}
+html.visual-mac .ck-app .tema-bt .tema-am {
+  width: 64px;
+  height: 42px;
+  border-radius: 9px;
+  box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 3px rgba(0, 0, 0, .12);
+}
+html.visual-mac .ck-app .tema-bt.on { color: var(--ink); font-weight: 600; outline: 0; border: 0; background: transparent; }
+html.visual-mac .ck-app .tema-bt.on .tema-am { box-shadow: 0 0 0 2.5px var(--primary), 0 1px 3px rgba(0, 0, 0, .12); }
+html.visual-mac .ck-app .tema-bt:focus-visible { outline: 0; }
+html.visual-mac .ck-app .tema-bt:focus-visible .tema-am { box-shadow: var(--ring-focus); }
+/* a miniatura da cor "Automático": meio Claro, meio Escuro (o fundo, --work, de cada um; leva 5e, 2a rodada) */
+.ck-app .tema-am.mac-auto-am { background: linear-gradient(135deg, #dde3ec 0 50%, #08080a 50% 100%); }
+.ck-app .tema-am.mac-auto-am::before,
+.ck-app .tema-am.mac-auto-am::after { display: none; }
+html.visual-mac .ck-app .ck-settings-sheet select,
+html.visual-mac .ck-app .ck-settings-sheet .aj-select {
+  border-radius: 7px;
+  border: .5px solid var(--control-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+
+/* ============ 16. Menus e janelinhas do app ============ */
+html.visual-mac .ck-app .visor-amplo .visor-cx {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--raised);
+  box-shadow: var(--shadow-float);
+}
+html.visual-mac .ck-app .visor-amplo .visor-top { background: var(--mac-glass-strong); border-bottom: 1px solid var(--line); }
+html.visual-mac .ck-app .visor-amplo .visor-modos { border: 0; border-radius: 9px; background: var(--mac-fill); }
+html.visual-mac .ck-app .visor-amplo .visor-modos button { border-radius: 7px; }
+html.visual-mac .ck-app .visor-amplo .visor-modos button[aria-selected="true"] { box-shadow: 0 1px 3px #0002, 0 0 0 .5px var(--line); }
+html.visual-mac .ck-app .visor-amplo .visor-copiar { border-radius: 8px; background: var(--mac-fill); }
+html.visual-mac .ck-app .visor-amplo :is(.visor-x, .visor-abrir) { border-radius: 50%; }
+html.visual-mac .ck-app .visor-amplo .visor-voltar { border-radius: 50%; }
+html.visual-mac .ck-app .visor-amplo .visor-x { background: var(--mac-fill); }
+html.visual-mac .ck-app .visor-amplo .visor-x:hover { background: var(--mac-fill-strong); }
+html.visual-mac .ck-app .visor-amplo .visor-markdown :not(pre) > code { border-radius: 5px; background: var(--mac-fill); color: var(--ink); }
+html.visual-mac .ck-app .visor-amplo .visor-markdown pre code { padding: 0; border-radius: 0; background: transparent; }
+html.visual-mac .ck-app .ck-layer:not(.ck-palette):not(.ck-settings-sheet) {
+  border-radius: 16px;
+  box-shadow: var(--shadow-float);
+}
+
+/* O semáforo é do sistema. Windows põe recolher antes da busca. */
+html.visual-mac:not([data-platform="darwin"]) .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-top {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "recolher busca";
+  padding: 4px 4px 6px;
+}
+html.visual-mac[data-platform="darwin"] .ck-app .ck-navigator:is(:not(.ck-collapsed), .ck-peek) .ck-nav-search::after { content: "⌘K"; }
+html.visual-mac .ck-app .ck-navigator.ck-peek { left: 0; top: 0; bottom: 0; }
+html.visual-mac .ck-app .mac-ilha-titulo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.visual-mac .ck-app .ck-selecao-barra,
+html.visual-mac .ck-app .sel-barra { border-radius: 12px; background: var(--mac-glass-strong); box-shadow: var(--shadow-float); }
+
+/* ============ 17. Agente: motor, modelo, esforço e permissões ============
+   Só a apresentação muda (item 2, 27/09/2026): as escolhas continuam as
+   mesmas funções de sempre. Dá a cara dos Ajustes do Mac/iPhone: cada grupo
+   vira cartão, com filete entre as linhas de dentro. */
+html.visual-mac .ck-app .ck-agent {
+  background: var(--raised);
+  backdrop-filter: blur(40px) saturate(190%);
+}
+html.visual-mac .ck-app .ck-agent .ck-layer-body h3 {
+  margin: 16px 2px 8px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-faint);
+}
+html.visual-mac .ck-app .ck-agent .ck-layer-body > h3:first-child { margin-top: 2px; }
+html.visual-mac .ck-app .ck-agent :is(.ck-agent-models, .ck-agent-engines, .ck-agent-controls > section) > h3:first-child { margin-top: 2px; }
+html.visual-mac .ck-app .ck-agent .ck-model-heading h3 { margin: 0 2px; }
+html.visual-mac .ck-app .ck-agent .ck-model-heading { min-height: 20px; margin-bottom: -2px; }
+html.visual-mac .ck-app .ck-agent .ck-model-refresh { border-radius: 8px; color: var(--ink-muted); }
+/* O corpo é uma coluna flex com rolagem. Cartão com overflow escondido vira
+   "encolhível" (min-height 0) e era espremido: cortava os modelos de baixo sem
+   deixar rolar. Nenhuma seção encolhe; quem rola é o corpo (e a lista de
+   modelos, que tem teto próprio). */
+html.visual-mac .ck-app .ck-agent .ck-layer-body > * { flex-shrink: 0; }
+
+/* Motor: controle segmentado com ícone + nome (era ícone solto sem rótulo) */
+html.visual-mac .ck-app .ck-agent .ck-engine-options {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 11px;
+  background: var(--mac-fill);
+}
+html.visual-mac .ck-app .ck-agent .ck-engine-option {
+  /* ícone em cima, nome embaixo (como as abas do iPhone): lado a lado, os
+     nomes eram cortados ("Clau…") quando a barra de rolagem do corpo aparecia */
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: center;
+  width: auto;
+  height: 48px;
+  min-width: 0;
+  padding: 0 2px;
+  gap: 3px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-muted);
+}
+html.visual-mac .ck-app .ck-agent .ck-engine-option svg { width: 16px; height: 16px; flex: none; }
+html.visual-mac .ck-app .ck-agent .ck-engine-option::after {
+  content: attr(data-mac-nome);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 500 11px var(--font-ui);
+  color: inherit;
+}
+html.visual-mac .ck-app .ck-agent .ck-engine-option.ck-selected {
+  background: var(--raised);
+  color: var(--ink);
+  outline: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--line);
+}
+
+/* Modelo: cartão com uma linha por opção, nome + descrição visível e ✓ */
+html.visual-mac .ck-app .ck-agent .ck-model-options {
+  max-height: min(420px, 52dvh);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+html.visual-mac .ck-app .ck-agent .ck-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  gap: 4px;
+  padding: 11px 34px 11px 14px;
+  border: 0;
+  border-bottom: .5px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font: 500 13px var(--font-ui);
+  color: var(--ink);
+  text-align: left;
+}
+html.visual-mac .ck-app .ck-agent .ck-model-options .ck-choice:last-child { border-bottom: 0; }
+html.visual-mac .ck-app .ck-agent .ck-choice-desc {
+  display: block;
+  font: 400 12px var(--font-ui);
+  color: var(--ink-muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+html.visual-mac .ck-app .ck-agent .ck-model-context { margin-left: auto; flex: none; font: 400 10px var(--font-ui); color: var(--ink-faint); }
+html.visual-mac .ck-app .ck-agent .ck-choice.ck-selected { background: var(--mac-accent-soft); outline: 0; }
+/* Leva 5 (R6-05): o item escolhido que também tem o foco do teclado mostra o anel (o outline: 0 das regras acima apagava) */
+html.visual-mac .ck-app .ck-agent :is(.ck-engine-option, .ck-choice).ck-selected:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+html.visual-mac .ck-app .ck-agent .ck-choice.ck-selected::after {
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  font-weight: 700;
+  color: var(--primary);
+}
+html.visual-mac .ck-app .ck-agent .ck-choice.ck-fallback {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+}
+html.visual-mac .ck-app .ck-agent .ck-choice.ck-fallback.ck-selected::after { color: var(--mac-switch); }
+
+/* Esforço: controle segmentado com o nome de cada nível (eram barras mudas) */
+html.visual-mac .ck-app .ck-agent .ck-effort-bars {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--mac-fill);
+}
+html.visual-mac .ck-app .ck-agent .ck-effort-level {
+  /* a regra de base alinha embaixo (eram barras de alturas diferentes) */
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  height: 30px;
+  flex: 1 0 calc(33.333% - 4px);
+  white-space: nowrap;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: 500 12px var(--font-ui);
+}
+html.visual-mac .ck-app .ck-agent .ck-effort-level > span { display: none; }
+html.visual-mac .ck-app .ck-agent .ck-effort-level::after { content: attr(data-mac-label); }
+html.visual-mac .ck-app .ck-agent .ck-effort-bars[data-count="4"] .ck-effort-level { flex-basis: calc(50% - 4px); }
+html.visual-mac .ck-app .ck-agent .ck-effort-level.ck-selected {
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--line);
+}
+html.visual-mac .ck-app .ck-agent .ck-effort-level:focus-visible { outline-offset: -2px; }
+html.visual-mac .ck-app .ck-agent .ck-effort-name { display: block; margin: 7px 2px 0; font: 400 11px/1.4 var(--font-ui); color: var(--ink-muted); }
+
+/* Permissões: lista com ícone, nome e a frase curta (era só o ícone) */
+html.visual-mac .ck-app .ck-agent .ck-mode-options {
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+  overflow: hidden;
+}
+html.visual-mac .ck-app .ck-agent .ck-mode-choice {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 30px;
+  gap: 12px;
+  padding: 10px 34px 10px 14px;
+  border: 0;
+  border-bottom: .5px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  outline: none;
+}
+/* O outline externo era cortado pela lista e virava duas barras retas.
+   O foco fica inteiro dentro da opção; seleção continua no fundo e no ✓. */
+html.visual-mac .ck-app .ck-agent .ck-mode-choice:focus-visible::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid color-mix(in srgb, var(--focus) 55%, transparent);
+  border-radius: 8px;
+  pointer-events: none;
+}
+html.visual-mac .ck-app .ck-agent .ck-mode-options .ck-mode-choice:last-child { border-bottom: 0; }
+html.visual-mac .ck-app .ck-agent .ck-mode-choice svg,
+html.visual-mac .ck-app .ck-agent .ck-mode-choice .ic { width: 20px; height: 20px; flex: none; color: var(--ink-muted); }
+html.visual-mac .ck-app .ck-agent .ck-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+html.visual-mac .ck-app .ck-agent .ck-mode-text strong { font: 500 13px var(--font-ui); color: var(--ink); }
+html.visual-mac .ck-app .ck-agent .ck-mode-text small { font: 400 12px var(--font-ui); color: var(--ink-muted); }
+html.visual-mac .ck-app .ck-agent .ck-mode-choice.ck-selected { background: var(--mac-accent-soft); }
+html.visual-mac .ck-app .ck-agent .ck-mode-choice.ck-selected::after {
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  font-weight: 700;
+  color: var(--primary);
+}
+html.visual-mac .ck-app .ck-agent .ck-mode-description { display: none; }
+html.visual-mac .ck-app .ck-agent .ck-agent-account {
+  margin-top: 4px;
+  padding: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--mac-card-shadow);
+  color: var(--ink);
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .ck-app .mac-ilha { max-width: min(32vw, 220px); }
+  html.visual-mac .ck-app .mac-ilha-linha { padding: 0 10px; }
+}
+@media (max-width: 600px) {
+  html.visual-mac .ck-app .visor-amplo .visor-cx { border-radius: 12px; }
+  .ck-app .mac-window-bar { gap: 3px; padding-left: 4px; padding-right: 4px; }
+  .ck-app .mac-window-menu { flex-basis: 24px; width: 24px; }
+  .ck-app .mac-ilha { max-width: 72px; margin-right: 0; }
+  .ck-app .mac-ilha-linha { width: 72px; max-width: 100%; display: flex; line-height: 1; padding: 0 8px; }
+  html.visual-mac .ck-app .mac-ilha-linha { width: 72px; display: flex; line-height: 1; padding: 0 8px; }
+  html.visual-mac .ck-app #panes { padding-right: 6px; }
+  html.visual-mac .ck-app #panes > .coluna { min-width: 0; width: calc(100% - 8px); flex: 0 0 calc(100% - 8px); }
+  html.visual-mac .ck-app .pane { min-width: min(280px, calc(100vw - 86px)); }
+  html.visual-mac .ck-app .pane-cmp { margin: 0 6px 6px; }
+  html.visual-mac .ck-app .pane-perg { margin: 0 6px 6px; padding: 11px; }
+  html.visual-mac .ck-app .msg.user .msg-body { max-width: 90%; overflow-wrap: anywhere; }
+  html.visual-mac .ck-app .ck-troca-lista { max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); overflow-y: auto; padding: 10px; gap: 4px; border-radius: 20px; }
+  html.visual-mac .ck-app .ck-troca-item { width: 84px; min-height: 100px; }
+  html.visual-mac .ck-app .ck-troca-icone .ic { width: 48px; height: 48px; }
+  html.visual-mac .ck-app .ck-palette { max-width: calc(100vw - 24px); border-radius: 20px; }
+  html.visual-mac .ck-app .ck-palette .ck-search { font-size: 18px; padding-right: 12px; }
+  html.visual-mac .ck-app .ck-settings-sheet { max-width: calc(100vw - 24px); border-radius: 16px; }
+  html.visual-mac .ck-app .ck-settings-tabs { padding: 4px; }
+  html.visual-mac .ck-app .ck-settings-view .settings { min-width: 0; padding: 12px; }
+  html.visual-mac .ck-app .ck-preference { flex-wrap: wrap; gap: 8px; }
+  html.visual-mac .ck-app .ck-preference-copy { min-width: 0; flex-basis: 160px; }
+  html.visual-mac .ck-app .ck-preference.mac-cor-aneis { grid-template-columns: minmax(0, 1fr); }
+  html.visual-mac .ck-app .temas { gap: 12px; }
+  html.visual-mac .ck-app .mac-seg button { padding: 0 9px; }
+  /* Rail temporário: a preferência de lateral aberta não é gravada. */
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) {
+    width: 72px;
+    min-width: 72px;
+    flex-basis: 72px;
+    align-items: center;
+    padding: 0 0 6px;
+    gap: 2px;
+  }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-nav-top {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    padding: 10px 0 6px;
+    gap: 6px;
+  }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-toggle { order: -1; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .mac-traffic-space { order: -3; margin-bottom: 4px; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) :is(.ck-nav-search, .ck-toggle) {
+    flex: none;
+    width: 36px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+    background: transparent;
+  }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-nav-search::after { content: none; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) :is(.ck-nav-label, .ck-nav-search span, .ck-nav-search kbd, .ck-session-title, .ck-group-name, .ck-group-stats, .ck-history, .ck-robots, .ck-new-place, .ck-saved-list, .ck-empty-nav, .ck-tool-expanded, .ck-usage-number) { display: none; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-nav-grouping { width: 100%; justify-content: center; padding: 4px 0; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-nav-grouping > .ck-button:not(.ck-attention-count) { display: none; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) :is(.ck-control-list, .ck-session-list) { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; padding: 0; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-folder-heading { width: 36px; height: 1px; min-height: 0; margin: 8px auto; padding: 0; overflow: hidden; background: var(--line-strong); }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-folder-heading > * { display: none; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-session { position: relative; flex: none; width: 40px; min-height: 36px; height: 36px; margin: 0; padding: 0; border-radius: 11px; justify-content: center; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-state.ck-g { position: absolute; top: 2px; right: 2px; bottom: auto; width: 8px; height: 8px; box-shadow: 0 0 0 2px var(--raised); }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) :is(.ck-accounts, .ck-tools) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: center; gap: 2px; width: 100%; padding: 4px 0; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-account-button:has(.mac-aneis.desligado) { display: none; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-acct { width: 36px; height: 36px; padding: 0; }
+  html.visual-mac .ck-app .ck-navigator:not(.ck-peek) .ck-tools > .ck-button { width: 36px; height: 30px; padding: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.visual-mac .ck-app :is(.mac-ilha-corpo, .mac-ilha-lista),
+  html.visual-mac .ck-app .ck-settings-sheet input[type="checkbox"]::before { transition: none; }
+  .ck-app .mac-ilha.nova-notificacao .mac-ilha-sino { animation: none; }
+}

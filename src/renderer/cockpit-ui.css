@@ -51,7 +51,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--sunken);
+  /* leva 5e: a lateral e' uma superficie propria (--side), distinta do fundo (--work) */
+  background: var(--side);
   border-right: 1px solid var(--line);
   padding: 12px 10px;
   gap: 8px;
@@ -431,16 +432,19 @@
 }
 .ck-app #panes {
   min-width: 0;
-  background: var(--canvas);
+  /* leva 5e: o fundo (--work), nao mais o --canvas: o painel era o proprio --canvas (a mesma cor do fundo) */
+  background: var(--work);
 }
 .ck-app .pane {
   min-width: 280px;
   container-type: inline-size;
+  /* leva 5e: o painel e' o --raised nos dois estados (o visual Mac ja era). Era --canvas, igual ao fundo: 1,00:1. */
+  background: var(--raised);
 }
 .ck-app .pane-hd {
   height: var(--layout-pane-head);
   min-height: var(--layout-pane-head);
-  background: var(--surface);
+  background: var(--raised);
   padding: 4px 8px;
   gap: 4px;
   border-bottom: 1px solid var(--line);
@@ -466,6 +470,27 @@
   text-align: left;
   font-weight: 600;
   color: var(--ink);
+}
+/* Renomear a conversa (leva 5g): o campo entra NO LUGAR do título, na mesma linha do cabeçalho (o .ck-pane-title fica escondido
+   enquanto isso; ver renomearAqui no app.js). Mesma largura (flex: 1 e o mesmo min-width), mesmo peso, mesma cor e mesma letra: 12 px
+   é a do .ck-button, de onde o título herda; no visual Mac a fonte, o tamanho e o peso vêm da regra do título (visual-mac.css).
+   A altura de 26 px cabe nos 27 px úteis do cabeçalho (36 - 4 - 4 - 1) sem empurrar o X nem os botões, e 1 px de borda + 5 px de
+   padding deixam o texto onde o do título ficava (padding de 6 px do .ck-button). A borda de 1 px var(--focus) é o foco: o anel de
+   2 px do :focus-visible geral seria cortado pelo overflow do cabeçalho, e o campo só existe com o foco. */
+.ck-app .pane-hd > .pn-input {
+  flex: 1;
+  min-width: 40px;
+  height: 26px;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  outline: none;
 }
 .ck-app .p-cwd {
   width: 28px;
@@ -524,7 +549,7 @@
 }
 .ck-app .pane-chat {
   padding: var(--space-4) var(--space-4) var(--space-3);
-  background: var(--canvas);
+  background: var(--raised);
   font-family: var(--font-ui);
 }
 .ck-app .pane-cmp {
@@ -536,25 +561,30 @@
   overflow: visible;
   flex: none;
 }
-.ck-app .cmp-top {
-  padding: 10px 12px;
-}
 .ck-app .p-input {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.55;
-  min-height: 40px;
   color: var(--ink);
+  /* leva 5c (decisão do Hugo, 07/10): o campo fica SOZINHO na linha de cima, na largura inteira, em qualquer largura de coluna
+     (antes dividia a linha com os botões e só descia abaixo de 300 px). Com 100% de base nada cabe ao lado dele, então o menu desce
+     para a linha de baixo. Ele cresce com o texto (auto-crescimento do app.js, teto de 190 px) e depois rola. */
+  flex: 1 1 100%;
+  width: auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
 }
 .ck-app .cmp-bar {
-  gap: 2px;
-  flex-wrap: nowrap;
-  padding: 4px 6px 6px;
-  min-height: 36px;
-}
-.ck-app .cmp-gap {
-  min-width: 0;
-  flex: 1;
+  /* leva 5c: a caixa tem SEMPRE 2 linhas. Em cima só o campo; embaixo o menu em fila a partir da esquerda e o grupo da direita na ponta
+     (leva 5h: + , arquivo, desenho, microfone, contexto | agentes, modelo, ›, ■/↑ na caixa .cmp-dir, logo abaixo; leva 5i: ⚖ e 👥 antes do modelo). 4 px entre as linhas e
+     2 px entre os botões. O wrap deixa a linha de baixo quebrar numa coluna estreitíssima, sem nada sair da borda; o grupo da direita
+     segue na ponta da última linha e o texto na de cima. */
+  gap: 4px 2px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-top: 0;
+  padding: 6px;
 }
 .ck-app .cmp-bar button {
   height: 28px;
@@ -562,27 +592,49 @@
   min-height: 28px;
   flex-shrink: 0;
 }
-/* O Quadro vive AQUI, ao lado do microfone (pedido do Hugo, 21/09): saiu do
-   rodape da lateral, onde era um icone longe da conversa. Ficava escondido
-   desde o redesenho. */
-.ck-app .cmp-bar .p-fluxo {
+/* Leva 5h (spec, secao 4): a linha de baixo tem DOIS grupos. Na esquerda, direto na barra: +, enviar arquivo, desenhar, microfone e o contexto.
+   Na direita, numa caixa so': agentes, o chip do modelo, a sugestao ✨ e o › (quando aparecem) e o ■/↑ (leva 5i: com o ⚖ Debater antes do 👥). A caixa
+   vai para a ponta com margin-left: auto. Por que uma caixa e nao um auto-margin no primeiro item: na leva 5h o primeiro (agentes) nascia escondido
+   e um item escondido nao empurra nada (hoje o ⚖ e o 👥 nascem a vista, mas a caixa segue valendo); e numa coluna estreita (a barra quebra em
+   3 linhas abaixo de ~330 px) os itens soltos se espalhavam pelas linhas, com o ›/↑ encostados na esquerda da ultima. A caixa quebra de linha
+   inteira, e por dentro ela mesma pode quebrar (flex-wrap) sem sair da borda, sempre rente a direita (justify-content: flex-end). O gap e' o da
+   barra: 4 px entre linhas e 2 px entre botoes. */
+.ck-app .cmp-dir {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 4px 2px;
+  margin-left: auto;
+  min-width: 0;
+}
+/* Leva 5h (regra do Hugo, leva 5c: a caixa tem 2 linhas, o menu embaixo NUMA linha so'): com os agentes e o › a vista o grupo da direita nao cabia e
+   caia para uma 3a linha (painel de 386 px: 148 + 2 + 209 contra 354 uteis). O encaixarBarra (app.js) mede e marca o nivel em data-aperto no .cmp-bar;
+   cada nivel esconde so' o necessario, em ordem: 1) desenhar, 2) enviar arquivo, 3) os pontinhos do chip (os dois botoes seguem no menu do +). Nivel 0
+   ('' ou sem o atributo) = barra inteira. Especificidade (0,4,0): vence o .cb { display: grid } do style.css (0,1,0), o unico display desses botoes.
+   Rodada 2 da leva 5h, item 4: o nivel 4 mantem o que o 3 esconde e poe o teto de 72 px no botao do meio do chip (o .pm-modelo; so' a sigla de texto de
+   quem nao tem icone de familia chega a esse teto), a mesma regra do @container (max-width: 290px) la' embaixo.
+   Leva 5i (spec, secao 4): o ⚖ Debater (.p-debate) e o 👥 Workflow (.p-workflow) agora moram na direita, antes do chip, e a barra aperta mais cedo.
+   O nivel 5 e' o ultimo recurso: mantem tudo o que o 4 faz (inclusive o teto do chip) e tira os dois da barra; o menu do + passa a mostra-los so'
+   nesse nivel (app.js, menuMais). Mesma especificidade (0,4,0), que vence o display do .ck-app .cmp-bar :is(.p-workflow, .p-debate) do visual-mac.css (0,3,0). */
+.ck-app .cmp-bar:is([data-aperto="1"], [data-aperto="2"], [data-aperto="3"], [data-aperto="4"], [data-aperto="5"]) .p-desenhar,
+.ck-app .cmp-bar:is([data-aperto="2"], [data-aperto="3"], [data-aperto="4"], [data-aperto="5"]) .p-envarq,
+.ck-app .cmp-bar:is([data-aperto="3"], [data-aperto="4"], [data-aperto="5"]) .pm-sep,
+.ck-app .cmp-bar[data-aperto="5"] .p-debate,
+.ck-app .cmp-bar[data-aperto="5"] .p-workflow {
+  display: none;
+}
+.ck-app .cmp-bar:is([data-aperto="4"], [data-aperto="5"]) .pm-modelo {
+  max-width: 72px;
+}
+.ck-app .cmp-bar :is(.cont-chip, .sug-chip) {
   background: transparent;
   border-color: transparent;
   width: 28px;
   padding: 4px;
   justify-content: center;
 }
-.ck-app .cmp-bar .p-fluxo:hover {
-  background: var(--hover);
-}
-.ck-app .cmp-bar :is(.p-slash, .p-modoenvio, .cont-chip, .sug-chip) {
-  background: transparent;
-  border-color: transparent;
-  width: 28px;
-  padding: 4px;
-  justify-content: center;
-}
-.ck-app .cmp-bar :is(.p-slash, .p-modoenvio, .cont-chip, .sug-chip):hover {
+.ck-app .cmp-bar :is(.cont-chip, .sug-chip):hover {
   background: var(--hover);
 }
 /* O Continuar é a ação sugerida do momento, então é azul — mas em --focus, não
@@ -598,10 +650,24 @@
 .ck-app .cmp-bar .cont-chip:hover {
   color: var(--focus);
 }
+/* Leva 5h (decisão do Hugo, 08/10): o chip é um GRUPO de 3 botões, [logo do motor] · [família + anel] · [permissão] ▾, cada um com o seu
+   menuzinho. O .p-model é só o grupo (um div, role="group"): sem fundo, sem borda e sem teto de largura. O teto que prendia o chip de UM botão
+   (150, 115, 110, 105 e 86 px) saiu junto: quem encolhe, com elipse, é a sigla de texto do botão do meio (de quem não tem ícone de família). O
+   fundo e o hover são de cada botão, e a caixa .cmp-dir quebra por dentro se faltar lugar. */
 .ck-app .cmp-bar .p-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
   flex: 0 1 auto;
-  min-width: 28px;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
   border: 0;
+  background: transparent;
+  overflow: visible;
+}
+/* o hover do grupo (style.css) pintava o chip inteiro de uma vez; agora cada botão tem o dele */
+.ck-app .cmp-bar .p-model:hover {
   background: transparent;
 }
 .ck-app .p-model span {
@@ -609,22 +675,101 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
-.ck-app .modo-nome,
-.ck-app .p-modoenvio span:not(.ic),
-.ck-app .cp-txt {
-  display: none !important;
-}
-.ck-app .modo-btn {
-  width: 28px;
-  padding: 5px;
-}
-.ck-app .p-model {
+/* Os 3 botões: 28 px de altura e de largura mínima (o .cmp-bar button de cima), sem fundo, redondos, na cor dos outros ícones da barra, com o
+   fundo do hover. O ícone dentro de cada um herda a cor (currentColor), nos 4 temas e no visual Mac. */
+.ck-app .p-model .pm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-muted);
   font-size: 11px;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 4px;
+}
+.ck-app .p-model .pm-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+/* o motor e a permissão têm tamanho fixo (um símbolo só): o nome inteiro está no hover. O do meio encolhe: o .cmp-bar button põe flex-shrink: 0
+   em todo botão da barra, e esta regra (mais específica) devolve o encolher só a ele, com um teto para a sigla de texto. */
+.ck-app .cmp-bar .pm-motor {
+  flex: none;
+}
+.ck-app .cmp-bar .pm-perm {
+  flex: none;
+}
+.ck-app .cmp-bar .pm-modelo {
+  flex: 0 1 auto;
+  min-width: 28px;
+  max-width: 132px;
+  overflow: hidden;
+  gap: 3px;
+}
+/* o logo do motor: o desenho cheio de sempre (svgMotor, .logo-motor), em 14 px, na cor do botão */
+.ck-app .p-model .pm-motor .logo-motor {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+/* os pontos entre os botões: enfeite (aria-hidden), 6 px de largura iguais dos dois lados, e o clique atravessa */
+.ck-app .p-model .pm-sep {
+  flex: none;
+  width: 6px;
+  text-align: center;
+  opacity: .5;
+  pointer-events: none;
+}
+/* UI 3.1 e 3.5: a sigla de texto (Leva 5f: só para quem não tem ícone de família: Gemini, Grok, ACP, "indisponível") encolhe com elipse
+   (a regra .p-model span, acima) dentro do botão do meio; o ícone da permissão e os da família e do anel não encolhem. */
+.ck-app .p-model .pm-sigla {
+  flex: 0 1 auto;
+  min-width: 3ch;
+}
+/* Leva 5f (decisão do Hugo, 07/10): o botão do meio dos modelos conhecidos é [ícone da família][anel de peso], sem sigla nem nome (eles vão no
+   hover). Cada um é um SVG (display:block pelo .ic do style.css) num span que vira uma linha (flex) e NÃO encolhe: é símbolo, não texto com
+   elipse. 14 px, como o ícone da permissão; sem cor própria: o ico() desenha com currentColor, então a cor do botão (e a do hover) vale para
+   os dois, nos 4 temas e no visual Mac. Os 3 px entre os dois são o gap do próprio botão do meio (acima). */
+.ck-app .p-model .pm-familia,
+.ck-app .p-model .pm-peso {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.ck-app .p-model .pm-familia .ic,
+.ck-app .p-model .pm-peso .ic {
+  width: 14px;
+  height: 14px;
+}
+/* O ícone é um SVG (display:block pelo .ic do style.css): o span vira uma linha flex. */
+.ck-app .p-model .pm-modo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+/* 14 px, como os outros ícones pequenos (.ck-sel-barra .ic, .dt-levar .ic). Sem cor própria: o ico() desenha com currentColor,
+   então o .livre e o .rebaixado abaixo pintam o ícone. */
+.ck-app .p-model .pm-modo .ic {
+  width: 14px;
+  height: 14px;
+}
+.ck-app .p-model .pm-modo.livre {
+  color: var(--attention);
+}
+/* O sublinhado tracejado era um text-decoration, que não sublinha um SVG: a mesma linha vira a borda de baixo do span (sob o ícone); a
+   margem negativa devolve o 1 px dela, para o ícone não subir no botão. */
+.ck-app .p-model .pm-modo.rebaixado {
+  color: var(--attention);
+  border-bottom: 1px dashed currentColor;
+  margin-bottom: -1px;
+}
+/* o ▾ fecha o chip e e' do ULTIMO botão (a permissão): quem clica nele abre o menuzinho dela. No visual Mac é um seletor de dois chevrons, em máscara */
+.ck-app .cmp-bar .pm-perm::after {
+  content: "▾";
+  opacity: .7;
 }
 .ck-app .p-send,
 .ck-app .p-stop {
@@ -633,6 +778,15 @@
   border-radius: 5px;
   width: 28px;
   flex: none;
+  /* leva 5h: quem vai para a ponta DIREITA da linha de baixo e' o grupo todo (.cmp-dir, acima); o margin-left: auto que o botao tinha
+     (leva 5/5c) saiu, porque dois auto-margins na mesma linha dividiriam o vao e deixariam o ↑ solto no meio. */
+}
+/* UI 3.1: com ele trabalhando, o ↑ vira ■ enquanto o campo está vazio; com texto, volta o ↑ (Entra/Fila) */
+.ck-app .pane.ocupado .cmp-bar:has(.p-input:placeholder-shown) .p-send {
+  display: none;
+}
+.ck-app .pane.ocupado .cmp-bar:has(.p-input:not(:placeholder-shown)) .p-stop {
+  display: none;
 }
 .ck-danger-mode {
   color: var(--attention) !important;
@@ -832,6 +986,38 @@
   font-size: 11px;
   color: var(--ink-muted);
 }
+.ck-search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: none;
+}
+.ck-search-filter {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink-muted);
+}
+.ck-search-filter[aria-pressed="true"] {
+  background: var(--high);
+  border-color: var(--control-border);
+  color: var(--ink);
+}
+.ck-search-help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.ck-palette :is(.ck-search, .ck-search-status, .ck-search-help) {
+  flex: none;
+}
+html.visual-mac .ck-app .ck-palette .ck-search-filters {
+  padding: 0 16px;
+}
+html.visual-mac .ck-app .ck-palette .ck-search-help {
+  padding: 0 16px 4px;
+}
 .ck-engine-options,
 .ck-mode-options {
   display: flex;
@@ -917,6 +1103,50 @@
   flex-direction: column;
   gap: 10px;
 }
+/* Contas: identidade, limites e ação ficam juntos; sem medidor ampliado vazio. */
+.ck-layer.ck-account { width: min(720px, 100%); }
+.ck-account .ck-layer-body { gap: 14px; overflow: hidden; }
+.ck-account .ck-layer-body > :not(.ck-account-list) { flex: none; }
+.ck-account-context { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.ck-account-context span { color: var(--ink-muted); }
+.ck-account-status { margin: 0; font-size: 12px; min-height: 1.4em; color: var(--ink-muted); }
+.ck-account-status.ck-attention { color: var(--attention); }
+.ck-account-list { display: flex; flex-direction: column; gap: 12px; overflow: auto; min-height: 0; padding-right: 2px; overscroll-behavior: contain; }
+.ck-account-list > * { flex: none; }
+.ck-account .ck-account-card { padding: 16px; gap: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface, var(--raised)); }
+.ck-account .ck-account-current { background: color-mix(in srgb, var(--primary) 5%, var(--raised)); }
+.ck-account-card-head { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.ck-account-identity { min-width: 0; }
+.ck-account .ck-account-identity h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ck-account-identity p { margin: 4px 0 0; font-size: 12px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.ck-account-badge { flex: none; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 20px; background: var(--high); color: var(--ink-muted); }
+.ck-account-current .ck-account-badge { background: var(--primary); color: var(--on-primary); }
+.ck-account-windows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; }
+.ck-account-windows > :only-child { grid-column: 1/-1; }
+.ck-account .ck-usage-window { gap: 7px; }
+.ck-account .ck-usage-window small { color: var(--ink-muted); }
+.ck-account .ck-usage-window progress { appearance: none; border: 0; border-radius: 10px; height: 6px; overflow: hidden; }
+.ck-account .ck-usage-window progress::-webkit-progress-bar { background: var(--high); border-radius: 10px; }
+.ck-account .ck-usage-window progress::-webkit-progress-value { background: var(--primary); border-radius: 10px; }
+.ck-account .ck-usage-window[data-level="attention"] progress::-webkit-progress-value,
+.ck-account .ck-usage-window[data-level="limit"] progress::-webkit-progress-value { background: var(--attention); }
+.ck-account-note, .ck-account-empty { margin: 0; font-size: 12px; color: var(--ink-muted); line-height: 1.5; }
+.ck-account-estimate { font-size: 11px; color: var(--ink-muted); }
+.ck-account-estimate summary { cursor: pointer; }
+.ck-account-estimate p { margin: 6px 0 0; }
+.ck-account-use { align-self: flex-start; background: var(--high); border: 1px solid var(--line); }
+.ck-account-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.ck-account-actions .ck-account-note { flex-basis: 100%; }
+.ck-account-actions .ck-account-login { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.ck-account .ck-button { width: 36px; height: 36px; min-height: 36px; padding: 8px; border-radius: 9px; flex: none; }
+.ck-account .ck-button .ic { width: 18px; height: 18px; }
+@media (max-width: 560px) {
+  .ck-account .ck-layer-body { padding: 12px; }
+  .ck-account .ck-account-card { padding: 12px; }
+  .ck-account-windows { grid-template-columns: minmax(0, 1fr); }
+  .ck-account .ck-button { width: 44px; height: 44px; }
+  .ck-account-badge { max-width: 104px; text-align: center; }
+}
 .ck-usage-window {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -951,12 +1181,26 @@
   font-size: 12px;
   color: var(--attention);
 }
+/* 29/09: a janelinha que está saindo (fade de 150 ms, cockpit-anim.css) não
+   segura mais clique nenhum */
+.ck-overlay.ck-saindo,
+.modal.ck-saindo { pointer-events: none; }
+.ck-app .ck-overlay.ck-saindo,
+.ck-app .ck-overlay.ck-saindo * { pointer-events: none !important; }
+/* 29/09 (Hugo): o painel é contêiner (container-type, pra se medir) e isso
+   prende todo position: fixed de dentro dele: o véu do modal do painel cobria
+   só o painel, "uma parte da tela". Com a janelinha aberta (não o menu), o
+   painel deixa de ser contêiner e o véu cobre a janela inteira. As @container
+   só escondem detalhes de painel estreito (até 420 px) e voltam ao fechar. */
+.ck-app .pane:has(.p-modal:not(.hidden):not(.como-menu)) { container-type: normal; }
 .ck-app .modal.p-modal:not(.como-menu) {
   position: fixed;
-  inset: 5vh 5vw;
+  /* 29/09 (Hugo): o véu cobre a janela inteira. Era "inset: 5vh 5vw" e sobrava
+     uma moldura sem cinza em volta; os 5% viraram margem da caixa. */
+  inset: 0;
   z-index: 500;
   background: var(--scrim);
-  padding: 20px;
+  padding: max(20px, 5vh) max(20px, 5vw);
 }
 .ck-app .p-modal:not(.como-menu) .modal-cx {
   max-width: 100%;
@@ -967,12 +1211,313 @@
 .ck-app .p-modal.como-menu {
   z-index: 550;
 }
+/* ===== Janelinha do +: só ícones, colada no + (leva 5d, decisão do Hugo, 07/10) =====
+   Antes: a janela "Anexar", do tamanho do painel, no meio dele, com título, subtítulo e a descrição de cada item. Agora: uma janelinha pequena,
+   só de ícones, que abre PARA CIMA a partir do +, que fica na linha de baixo da caixa (canto inferior esquerdo do painel). Sem véu nem borrão: a
+   .p-modal segue cobrindo o painel, transparente, e é ela que recebe o clique fora (e o clique no próprio +), que fecha.
+   O app.js (menuMais) mede o + ao abrir e grava no .modal-cx duas medidas: --mi-esq (da borda de dentro do painel até a esquerda do +) e
+   --mi-base (do pé do painel até o topo do +). Os valores abaixo são a reserva, a conta da caixa de 2 linhas (leva 5c): margem de 8 + borda de 1
+   + respiro de 6 = 15 px do pé até a linha de baixo, mais os 28 px do botão = 43 px; e 8 + 1 + 6 - 1 (a borda do painel) = 14 px da esquerda.
+   Tudo sob .como-menu: a mesma caixa vira terminal, contas ou diff depois, e a classe menu-icones fica nela; sem a marca de menu, nada daqui vale. */
+.ck-app .p-modal.como-menu:has(> .modal-cx.menu-icones) {
+  background: transparent;
+  backdrop-filter: none;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones {
+  --mi-lado: 32px;
+  --mi-esq: 14px;
+  --mi-base: 43px;
+  position: absolute;
+  left: var(--mi-esq);
+  bottom: calc(var(--mi-base) + 4px);
+  /* a .modal é uma grade com place-items: center (o menu de antes ficava no meio). Para uma caixa absoluta com só left e bottom, o alinhamento
+     próprio dela mexe na posição nos navegadores novos (alinha dentro do que sobra entre os recuos): fica explícito, embaixo e à esquerda. */
+  place-self: end start;
+  /* 6 botões por linha: 6 x 32 + 5 x 2 de vão + 2 x 6 de respiro + 2 de borda = 216 px. O teto a mantém dentro do painel: numa coluna mais
+     estreita os botões quebram em mais linhas (flex-wrap) em vez de sair pela direita, e a altura máxima a impede de passar do topo. */
+  width: calc(6 * var(--mi-lado) + 5 * 2px + 2 * 6px + 2px);
+  max-width: calc(100% - var(--mi-esq) - 8px);
+  max-height: calc(100% - var(--mi-base) - 16px);
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 2px;
+  padding: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  overflow: auto;
+  transform-origin: left bottom;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--mi-lado);
+  height: var(--mi-lado);
+  min-height: var(--mi-lado);
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--ink-muted);
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi-ic {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  color: inherit;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi-ic .ic {
+  width: 16px;
+  height: 16px;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi:hover,
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi:focus-visible {
+  background: var(--hover);
+  color: var(--ink);
+}
+/* o anel de foco é o de sempre (.ck-app :focus-visible, 2 px, --focus); aqui ele entra no botão: a grade tem só 2 px de vão e a caixa rola */
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .mi:focus-visible {
+  outline-offset: -2px;
+}
+/* o traço fino entre os anexos e as ferramentas: ocupa a linha inteira, então o 2º grupo começa sempre numa linha nova */
+.ck-app .p-modal.como-menu > .modal-cx.menu-icones .menu-linha {
+  flex: 0 0 100%;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line-strong);
+}
+/* ===== Janelinhas do chip: motor, modelo e permissão (leva 5h, decisão do Hugo, 08/10) =====
+   O chip da caixa tem 3 botões e cada um abre a SUA janelinha: pequena, colada no botão, aberta para cima, como a do + (acima). Mesma caixa
+   (.modal-cx da .p-modal do painel), outra classe (menu-chip, mais mz-motor, mz-modelo ou mz-perm; o ACP leva mz-acp). A diferença para a do +:
+   o chip mora na ponta DIREITA da linha de baixo, então a janelinha se alinha pela direita (right) e cresce para a esquerda. O cockpit-ui.js
+   (chipAncorar) mede o botão e grava --mi-dir (do lado direito do painel até o dele) e --mi-base (do pé do painel até o topo dele); os valores
+   abaixo são a reserva, a conta da caixa de 2 linhas: 8 px da direita e 43 px do pé. Sem véu: a .p-modal segue cobrindo o painel, transparente, e
+   recebe o clique fora. A largura é a do conteúdo (a lista de modelos tem o mínimo dela); o teto a mantém dentro do painel. */
+.ck-app .p-modal.como-menu:has(> .modal-cx.menu-chip) {
+  background: transparent;
+  backdrop-filter: none;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip {
+  --mi-dir: 8px;
+  --mi-base: 43px;
+  position: absolute;
+  right: var(--mi-dir);
+  bottom: calc(var(--mi-base) + 4px);
+  left: auto;
+  /* a .modal é uma grade com place-items: center; para uma caixa absoluta o alinhamento próprio mexe na posição: fica explícito, embaixo e à direita */
+  place-self: end end;
+  width: max-content;
+  max-width: calc(100% - var(--mi-dir) - 8px);
+  max-height: calc(100% - var(--mi-base) - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  overflow: auto;
+  transform-origin: right bottom;
+}
+/* o mínimo da lista e a largura do ACP nunca passam do teto do painel (o min-width ganharia do max-width e a janelinha vazaria pela esquerda) */
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-modelo {
+  min-width: min(224px, calc(100% - var(--mi-dir) - 8px));
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-acp {
+  width: min(340px, calc(100% - var(--mi-dir) - 8px));
+}
+/* Rodada 2 da leva 5h, item 7: aberta pelo logo do motor do CABEÇALHO do painel (e não pelo chip), a janelinha cola em quem abriu. O cockpit-ui.js
+   (chipAncorar) mede esse botão e liga estas duas classes: mz-desce, quando há mais espaço embaixo do botão do que em cima (o cabeçalho fica no alto
+   do painel), e mz-esq, quando o botão está na metade esquerda. mz-desce desce a partir do PÉ do botão (--mi-topo: do topo do painel até o pé dele)
+   em vez de subir; mz-esq alinha pela esquerda (--mi-esq: da borda de dentro do painel até a esquerda do botão) em vez de pela direita. Os valores
+   abaixo são a reserva se não houver medida. O align-self e o justify-self explícitos pelo mesmo motivo do place-self do chip: a .modal é uma grade com
+   place-items: center, e o alinhamento próprio de uma caixa absoluta mexe na posição quando um dos recuos fica auto. */
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-desce {
+  --mi-topo: 44px;
+  top: calc(var(--mi-topo) + 4px);
+  bottom: auto;
+  align-self: start;
+  max-height: calc(100% - var(--mi-topo) - 16px);
+  transform-origin: right top;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-esq {
+  --mi-esq: 8px;
+  left: var(--mi-esq);
+  right: auto;
+  justify-self: start;
+  max-width: calc(100% - var(--mi-esq) - 8px);
+  transform-origin: left bottom;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-desce.mz-esq {
+  transform-origin: left top;
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-modelo.mz-esq {
+  min-width: min(224px, calc(100% - var(--mi-esq) - 8px));
+}
+.ck-app .p-modal.como-menu > .modal-cx.menu-chip.mz-acp.mz-esq {
+  width: min(340px, calc(100% - var(--mi-esq) - 8px));
+}
+.ck-app .menu-chip .mz-conteudo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ck-app .menu-chip .mz-linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+/* O item é um botão sem nada além do que mostra: ícone (ou logo), ou ícone + nome + anel nas linhas dos modelos. Sem texto fixo; o nome vai no hover
+   (title) e no leitor de tela (aria-label). O anel de foco é o de sempre (.ck-app :focus-visible); aqui ele entra no botão, porque o vão é de 2 px. */
+.ck-app .menu-chip .mz-item {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.ck-app .menu-chip .mz-item:hover,
+.ck-app .menu-chip .mz-item:focus-visible {
+  background: var(--hover);
+  color: var(--ink);
+}
+.ck-app .menu-chip .mz-item:focus-visible {
+  outline-offset: -2px;
+}
+.ck-app .menu-chip .mz-item .ic {
+  width: 16px;
+  height: 16px;
+}
+/* o escolhido fica destacado (fundo claro da cor primária + tinta cheia); o desligado fica apagado e não responde */
+.ck-app .menu-chip .mz-item.mz-sel {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--ink);
+}
+.ck-app .menu-chip .mz-item:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+/* "Sem pedir permissão" (o unlock) na cor de atenção, também escolhido e com o mouse em cima: nunca vira cinza */
+.ck-app .menu-chip .mz-perigo {
+  color: var(--attention);
+}
+.ck-app .menu-chip .mz-item.mz-perigo,
+.ck-app .menu-chip .mz-item.mz-perigo:hover {
+  color: var(--attention);
+}
+.ck-app .menu-chip .mz-icone {
+  width: 32px;
+  height: 32px;
+}
+/* o logo do motor (svgMotor) é cheio: o ico() desenha de traço, o logo-motor não */
+.ck-app .menu-chip .mz-icone .logo-motor {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+/* Leva 5i: a linha das IAs do ACP (depois do traço do menuzinho do motor) quebra de 5 em 5 logos, na grade dos 5 motores de cima: 5 botões de
+   32 px e 4 vãos de 2 px. Sem isto a janelinha ficava com a largura de dez logos numa linha só. */
+.ck-app .menu-chip .mz-ias {
+  max-width: calc(5 * 32px + 4 * 2px);
+}
+.ck-app .menu-chip .mz-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 260px;
+  overflow: auto;
+}
+.ck-app .menu-chip .mz-modelo-op {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.ck-app .menu-chip .mz-fam,
+.ck-app .menu-chip .mz-anel {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink-muted);
+}
+.ck-app .menu-chip .mz-nome {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* o esforço: o ícone brain e uma barrinha por nível, cada uma mais alta que a anterior (a altura vem do cockpit-ui.js); as barrinhas até o
+   nível escolhido ficam acesas em --focus (8:1 nos 4 temas; o --primary dá 3:1 no Azul) */
+.ck-app .menu-chip .mz-esforco {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 2px 6px 0;
+}
+.ck-app .menu-chip .mz-cerebro {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  color: var(--ink-muted);
+}
+.ck-app .menu-chip .mz-barra {
+  width: 24px;
+  height: 30px;
+  align-items: flex-end;
+  padding: 4px 0;
+}
+.ck-app .menu-chip .mz-barra > span {
+  display: block;
+  width: 6px;
+  border-radius: 2px;
+  background: var(--ink-faint);
+}
+.ck-app .menu-chip .mz-barra.mz-acesa > span {
+  background: var(--focus);
+}
+.ck-app .menu-chip .mz-rodape {
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.ck-app .menu-chip .mz-fim {
+  margin-left: auto;
+}
+.ck-app .menu-chip .mz-traco {
+  flex: none;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line-strong);
+}
+.ck-app .menu-chip .mz-aviso {
+  margin: 0;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.ck-app .menu-chip .mz-aviso[hidden] {
+  display: none;
+}
 .ck-app #modalGrupo,
 .ck-app #popGrupo {
   z-index: 800;
-}
-.ck-app #quadroFluxo {
-  z-index: 550;
 }
 .ck-logos-neutral .logo-motor,
 .ck-logos-neutral .marca-motor,
@@ -994,9 +1539,6 @@
   .ck-app .pane {
     min-width: 280px;
   }
-  .ck-app .p-model {
-    max-width: 115px;
-  }
 }
 @media (max-width: 600px) {
   .ck-layer-head {
@@ -1016,18 +1558,6 @@
   }
 }
 @container (max-width:360px) {
-  .ck-app .p-model {
-    max-width: 105px;
-  }
-  .ck-app .cmp-bar {
-    row-gap: 4px;
-  }
-  .ck-app .p-model > .ic {
-    display: none;
-  }
-  .ck-app .p-model {
-    max-width: 110px;
-  }
   .ck-app .p-cwd {
     display: none;
   }
@@ -1073,15 +1603,17 @@
 }
 /* "trabalhando" = ANEL FINO GIRANDO, o circulo de carregar que todo mundo ja'
    conhece. Os tres pontinhos ficaram na versao anterior e o Hugo recusou: ele
-   quer o padrao de carregamento, e minimalista. O anel e' uma borda de 1.5px
-   com tres lados transparentes -- uma so' propriedade animada (rotate), que e'
+   quer o padrao de carregamento, e minimalista. O anel e' uma borda de 1.5px:
+   o trilho inteiro apagado (--working a 28%) e o arco de dois lados (cima e
+   direita) em --working -- uma so' propriedade animada (rotate), que e'
    compositor puro e nao repinta nada.
    Os 12px sao os mesmos do selo cheio: mudar de estado nao desloca o logo. */
 .ck-g.working {
   width: 12px;
   height: 12px;
   background: transparent;
-  border: 1.5px solid transparent;
+  /* leva 5 (UI 5.4): o trilho inteiro apagado faz o anel ler "carregando"; so' os 2 lados pareciam um "(" solto */
+  border: 1.5px solid color-mix(in srgb, var(--working) 28%, transparent);
   border-top-color: var(--working);
   border-right-color: var(--working);
   animation: ck-anel 0.75s linear infinite;
@@ -1133,8 +1665,10 @@
   border-width: 0 1.6px 1.6px 0;
   transform: rotate(45deg);
 }
+/* leva 5 (UI 5.4): "guardada" = nada (a bolinha vazia parecia botao de marcar). O selo fica, invisivel, para o logo e o
+   titulo nao andarem quando o estado muda. */
 .ck-g.stored {
-  border: 1.5px solid var(--ink-faint);
+  visibility: hidden;
 }
 /* Minimalista: o halo vai a 2.0 (era 2.6) e comeca em 0.3 (era 0.45). Continua
    puxando o olho de longe, mas nao vira bolha em cima da linha -- o Hugo pediu
@@ -1269,12 +1803,10 @@
 .ck-brand .ck-brand-light {
   display: none;
 }
-html[data-tema="claro"] .ck-brand .ck-brand-light,
-html[data-tema="jornal"] .ck-brand .ck-brand-light {
+html[data-mac-luz="claro"] .ck-brand .ck-brand-light {
   display: block;
 }
-html[data-tema="claro"] .ck-brand .ck-brand-dark,
-html[data-tema="jornal"] .ck-brand .ck-brand-dark {
+html[data-mac-luz="claro"] .ck-brand .ck-brand-dark {
   display: none;
 }
 .ck-app .p-motor,
@@ -1416,9 +1948,10 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   gap: 8px;
 }
 .ck-settings-view .tema-bt {
-  --sample-canvas: #000;
-  --sample-surface: #0c0c0d;
-  --sample-raised: #141416;
+  /* leva 5e: a miniatura e' o desenho do tema em tres pecas: fundo (--work), lateral (--side) e painel (--raised) */
+  --sample-canvas: #08080a;
+  --sample-surface: #141417;
+  --sample-raised: #1f1f23;
   --sample-line: #29292e;
   --sample-ink: #f1f1f3;
   min-width: 0;
@@ -1433,22 +1966,22 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   font-weight: 600;
 }
 .ck-settings-view .tema-bt[data-tema="azul"] {
-  --sample-canvas: #061527;
-  --sample-surface: #0a203b;
-  --sample-raised: #102e53;
+  --sample-canvas: #050d1a;
+  --sample-surface: #0c1b33;
+  --sample-raised: #0d2748;
   --sample-line: #23466b;
 }
 .ck-settings-view .tema-bt[data-tema="claro"] {
-  --sample-canvas: #edf1f7;
-  --sample-surface: #f7f9fc;
+  --sample-canvas: #dde3ec;
+  --sample-surface: #f6f8fb;
   --sample-raised: #fff;
   --sample-line: #d1daea;
   --sample-ink: #111827;
 }
 .ck-settings-view .tema-bt[data-tema="jornal"] {
-  --sample-canvas: #f0ece2;
+  --sample-canvas: #e2dac7;
   --sample-surface: #f8f4eb;
-  --sample-raised: #fffdf8;
+  --sample-raised: #fdfbf6;
   --sample-line: #ded4c1;
   --sample-ink: #282116;
 }
@@ -1548,11 +2081,10 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   }
 }
 @container (max-width: 290px) {
-  .ck-app .cmp-bar {
-    flex-wrap: wrap;
-  }
-  .ck-app .p-model {
-    max-width: 70px;
+  /* leva 5h: o botão do meio de um modelo com ícones tem 41 px (5 + 14 + 3 + 14 + 5) e não encolhe abaixo disso; só a sigla de texto de quem
+     não tem ícone (Gemini, Grok, ACP) encolhe com elipse, e numa coluna estreita ela ganha um teto menor que o de coluna larga (132 px). */
+  .ck-app .p-model .pm-modelo {
+    max-width: 72px;
   }
 }
 .ck-engine-availability {
@@ -1637,15 +2169,30 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 .ck-plan-item.done {
   color: var(--ink-faint);
 }
+/* UI 4.5: plano concluído vira uma linha discreta na conversa */
+.ck-app .ck-plan-feito {
+  display: block;
+  width: fit-content;
+  margin: 2px var(--space-4) 8px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: 500 11px/1.4 var(--font-ui);
+}
+.ck-app .ck-plan-feito:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+/* Leva 5i: o ⚖ Debater e' um botao FIXO da barra, so' com o icone (o nome vive no title e no aria-label). Antes ele so' nascia, com um texto e um ponto, enquanto
+   o debate rodava; esse botao temporario se fundiu com este. O estado "rodando" esta no visual-mac.css, junto do 👥. */
 .ck-app .p-debate {
   width: 28px;
   height: 28px;
   min-width: 28px;
   padding: 4px;
   justify-content: center;
-}
-.ck-app .p-debate .pd-rot {
-  display: none !important;
 }
 .ck-app .co-dialog {
   background: var(--raised);
@@ -1656,6 +2203,9 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 .ck-app #avisoPaineis {
   display: none !important;
 }
+/* Só o caminho antigo: sem o .ck-pane-title (sem o visual novo) o renomearAqui põe o campo na barra .pane-nome, que este tema
+   esconde, e aqui ela aparece enquanto o campo está nela. Com o .ck-pane-title o campo vai para o cabeçalho (.pane-hd > .pn-input,
+   lá em cima), a barra nunca recebe o campo e esta regra nunca casa: a barra antiga não aparece mais no visual novo. */
 .ck-app .pane-nome:has(.pn-input) {
   display: flex !important;
   background: var(--raised);
@@ -1787,13 +2337,13 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   top: 2px;
   right: 2px;
   bottom: auto;
-  box-shadow: 0 0 0 2px var(--sunken);
+  box-shadow: 0 0 0 2px var(--side);
 }
 /* O RAIL RECOLHIDO NAO ANIMA. O selo tem 8px aqui: um anel de 1.5px nesse
    tamanho vira uma mancha e o halo passa por cima do logo do motor. E o rail
    e' o pior caso de custo -- 20 linhas empilhadas num canto que voce so' olha
    de relance. A forma ja' separa os quatro estados (cheio ambar / cheio cinza
-   / com visto / so' contorno), entao aqui ela trabalha sozinha. */
+   / com visto / sem selo, a guardada), entao aqui ela trabalha sozinha. */
 .ck-collapsed:not(.ck-peek) .ck-state.ck-g.working {
   display: inline-block;
   margin-inline: 0;
@@ -1956,7 +2506,56 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   max-height: min(640px, 76dvh);
 }
 .ck-agent {
-  width: min(380px, 100%);
+  width: min(840px, 100%);
+}
+.ck-agent-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+.ck-agent-models,
+.ck-agent-controls,
+.ck-agent-engines {
+  min-width: 0;
+}
+.ck-agent-models,
+.ck-agent-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ck-agent .ck-agent-feedback {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ck-agent .ck-agent-feedback[hidden] {
+  display: none;
+}
+.ck-agent .ck-model-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.ck-agent .ck-model-heading h3 { margin:0; }
+.ck-agent .ck-model-refresh { width:28px; height:28px; padding:5px; flex:none; }
+.ck-agent .ck-model-refresh svg { width:15px; height:15px; }
+.ck-agent .ck-model-title { display:flex; align-items:center; gap:8px; width:100%; min-width:0; }
+.ck-agent .ck-model-name { min-width:0; overflow-wrap:anywhere; }
+.ck-agent .ck-model-order { display:flex; align-items:center; gap:3px; margin-left:auto; }
+.ck-agent .ck-model-sort { width:28px; height:28px; padding:5px; flex:none; border-radius:8px; }
+.ck-agent .ck-model-sort svg { width:15px; height:15px; }
+.ck-agent .ck-model-sort.ck-selected { background:color-mix(in srgb,var(--accent) 12%,transparent); color:var(--accent); }
+.ck-agent .ck-model-metrics { display:block; font-size:10px; line-height:1.4; color:var(--ink-muted); margin-top:3px; }
+.ck-agent .ck-benchmark-source { margin:0; font-size:10px; line-height:1.5; color:var(--ink-muted); }
+.ck-agent .ck-benchmark-source a { color:inherit; text-decoration:underline; text-underline-offset:2px; }
+.ck-agent .ck-benchmark-explanation { display:block; }
+.ck-agent .ck-catalog-source { margin:0; font-size:11px; color:var(--ink-muted); }
+.ck-agent .ck-catalog-warning { margin:0; font-size:12px; }
+.ck-agent .ck-model-preserved { font-style:italic; }
+.ck-agent .ck-agent-account { align-self:flex-end; display:inline-flex; justify-content:center; width:36px; height:36px; padding:8px; }
+.ck-agent .ck-agent-account svg { width:18px; height:18px; }
+@media (max-width: 680px) {
+  .ck-agent-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
 }
 .ck-agent .ck-engine-options,
 .ck-agent .ck-mode-options {
@@ -1971,30 +2570,6 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   background: var(--high);
   color: var(--ink);
   border: 1px solid var(--line-strong);
-}
-@container (max-width: 360px) {
-  .ck-app .cmp-bar:has(.p-stop:not(.hidden)) {
-    flex-wrap: wrap;
-  }
-  .ck-app .cmp-bar:has(.p-stop:not(.hidden)) .p-model {
-    max-width: 96px;
-  }
-}
-/* Painel estreito: a barra tem que quebrar em duas linhas antes de estourar,
-   senao o Enviar sai pela borda (o .pane e' overflow:hidden e o clique nem
-   chega no botao). O Continuar e a Sugestao somam ~60px fixos: medido, a barra
-   com os dois estoura abaixo de 323px (com o Compactar na tela) -- 330 da'
-   folga. Acima disso ela cabe em UMA linha, e quebrar ali roubaria 32px de
-   conversa a toa. */
-@container (max-width: 330px) {
-  .ck-app .cmp-bar:has(.p-cont),
-  .ck-app .cmp-bar:has(.p-sugs) {
-    flex-wrap: wrap;
-  }
-  .ck-app .cmp-bar:has(.p-cont) .p-model,
-  .ck-app .cmp-bar:has(.p-sugs) .p-model {
-    max-width: 96px;
-  }
 }
 
 .ck-attention-count[data-count="0"] {
@@ -2011,7 +2586,10 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 }
 .ck-app #panes > .coluna {
   min-width: var(--layout-pane-min);
-  width: max(var(--layout-pane-min), calc((100% - 26px) / 5));
+  /* 29/09 (Hugo): a esteira mostra N sessões inteiras + meia (a meia avisa que
+     tem mais). N depende do monitor (app.js, ajustarEsteiraAoMonitor): 3,5 até
+     ~Full HD, 4,5 em 2K/4K. Era sempre 5 e as sessões ficavam estreitas. */
+  width: max(var(--layout-pane-min), calc((100% - 26px) / var(--colunas-visiveis, 3.5)));
   flex-shrink: 0;
   min-height: 0;
   overflow-y: auto;
@@ -2029,7 +2607,9 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 }
 .ck-app #panes::-webkit-scrollbar-thumb {
   background: var(--control-border);
-  border: 3px solid var(--canvas);
+  /* leva 5e: o anel era --canvas, a cor do fundo de antes; agora o fundo e' o --work e o anel viraria uma moldura de outra cor.
+     Transparente, o polegar (background-clip: content-box, la' no visual-mac.css) fica com os mesmos 6 px de espessura. */
+  border: 3px solid transparent;
   border-radius: var(--radius-pill);
 }
 /* O foco fica em volta da CAIXA DE ESCREVER, não da sessão inteira: a borda no
@@ -2142,14 +2722,16 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
    Passando de 7, ela para no teto e rola por dentro. */
 .ck-control-list { flex: 0 0 auto; height: auto; max-height: 200px; min-height: 30px; overflow-y: auto; overflow-x: hidden; }
 /* ===== as duas medidas ajustadas na mão (cfg.uiTorreAltura / cfg.uiSidebarLargura)
-   Sem valor gravado NADA daqui vale: a Torre fica no max-height: 44% da regra
-   acima e a barra nos 224px da variável. O atributo e a variável só aparecem
+   Sem valor gravado NADA daqui vale: a Torre fica no teto de 200px (max-height)
+   da regra acima e a barra nos 224px da variável. O atributo e a variável só aparecem
    quando o dono arrasta — por isso config antigo abre exatamente igual. */
-/* 0 0 + height: a Torre NAO encolhe, senão o histórico cheio roubava metade do
-   que o dono acabou de arrastar. O min() é o freio: os 320px reservam cabeçalho,
-   um pedaço de histórico, contas e rodapé, pra Torre grande não empurrar os
-   botões de baixo pra fora da lateral. */
-.ck-navigator[data-torre="manual"] .ck-control-list { flex: 0 0 auto; height: min(var(--ck-torre), calc(100% - 320px)); max-height: none; }
+/* flex 0 0: o histórico cheio não espreme a Torre abaixo do que ela precisa. O
+   min() é o freio: os 320px reservam cabeçalho, um pedaço de histórico, contas
+   e rodapé, pra Torre grande não empurrar os botões de baixo pra fora da lateral. */
+/* Leva 5 (UI 5.6): o valor da alca e' o TETO; a Torre encolhe ate' o conteudo (com 2 itens sobrava um buraco) */
+.ck-navigator[data-torre="manual"] .ck-control-list { flex: 0 0 auto; height: auto; max-height: min(var(--ck-torre), calc(100% - 320px)); }
+/* enquanto a alca e' arrastada, a Torre mostra o tamanho escolhido (senao a alca nao acompanha o mouse) */
+.ck-navigator[data-torre="manual"]:has(.ck-torre-divisor.ck-arrastando) .ck-control-list { height: min(var(--ck-torre), calc(100% - 320px)); }
 .ck-torre-divisor { flex: none; height: 9px; margin: -3px 0; position: relative; cursor: row-resize; }
 /* a linha fina no meio é o que se vê; a área de pegar é maior que ela */
 .ck-torre-divisor::after { content: ""; position: absolute; left: 8px; right: 8px; top: 4px; height: 1px; background: var(--line); border-radius: 1px; }
@@ -2163,6 +2745,9 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 .ck-peek .ck-largura-alca { display: none; }
 .ck-folder-heading { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line); padding: 8px 6px 2px; }
 .ck-folder-heading > svg { width: 14px; height: 14px; }
+/* 29/09: o ícone da Torre segue o do Histórico; recolhida, fica só o selo */
+.ck-nav-grouping > svg { width: 14px; height: 14px; flex: none; }
+.ck-collapsed:not(.ck-peek) .ck-nav-grouping > svg { display: none; }
 /* o "+" de nova conversa vive no fim deste cabeçalho (abre na pasta aberta) */
 .ck-folder-heading .ck-nav-label { flex: 1; }
 .ck-new-chat { flex: none; width: 24px; min-width: 24px; min-height: 24px; padding: 3px; margin: -3px 0; }
@@ -2179,12 +2764,68 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 .ck-collapsed:not(.ck-peek) .ck-folder-heading { justify-content: center; }
 
 /* ===== faixa horizontal de pastas, acima dos painéis =====
-   O dono pediu "apenas o nome": nada de contador, estado ou ícone repetido.
-   Quem precisa agir olha a TORRE; esta faixa só diz onde você está. */
+   Leva 5h (Hugo, 08/10, opção 1 de 4): as pastas são ABAS DE LARGURA IGUAL dentro de uma TRILHA, como no Safari. A trilha é uma cápsula
+   em --hover; a aba ativa LEVANTA (--tab-on, sombra leve, nome em negrito) e as outras ficam planas, no tom da trilha. As que não cabem
+   (menos de --aba-min cada) saem da trilha e vão para o ▾, no fim dela, e a ativa nunca sai (cockpit-ui.js: abasVisiveis e
+   organizarTrilha, que lê as medidas daqui). O selo laranja conta as conversas da pasta que pedem você. Antes (21/09) a faixa era "apenas
+   o nome", sem contador, e quem precisava agir olhava a Torre: o selo é decisão nova do Hugo. */
 .ck-app .ck-work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 /* sem min-height:0 o painel empurra a coluna e a faixa some pra fora da janela */
 .ck-app .ck-work > :is(#panes, #boasvindas) { min-height: 0; }
+/* Leva 5 (UI 6.3): coluna cortada a' direita = degrade na borda do #panes e botao com o nome da proxima (sinalDeMaisColunas) */
+/* leva 5e: a area de trabalho tem o fundo explicito (--work), um por tema, com o visual Mac ligado ou nao (antes: transparente no
+   visual Mac, e o fundo de verdade era o Mica do Windows sob a pelicula da janela) */
+.ck-app .ck-work { position: relative; background: var(--work); }
+.ck-app .ck-work[data-mais-direita]::after {
+  content: "";
+  position: absolute;
+  top: var(--ck-mais-topo, 0);
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  /* leva 5e: o degrade acaba na cor do PAINEL (a coluna cortada e' um painel), nao na do fundo */
+  background: linear-gradient(to right, transparent, var(--raised));
+}
+.ck-app .ck-mais-colunas {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 3;
+  transform: translateY(-50%);
+  display: block;   /* o .ck-button de base (cockpit-ui.css:84) é inline-flex e centraliza: aqui o texto corta com reticências */
+  max-width: 180px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-float);
+}
+/* peso 3 (2 classes + :hover): a regra de cima pesa 2, empata com .ck-button:hover e vem depois, e o fundo nunca mudava no hover */
+.ck-app .ck-mais-colunas:hover { background: var(--high); }
+.ck-app .ck-mais-colunas[hidden] { display: none; }
 .ck-place-bar {
+  /* leva 5h: as medidas da trilha moram aqui e o cockpit-ui.js as LÊ (medirTrilha): trocar um número aqui basta, a conta de quantas pastas
+     cabem acompanha. --aba-min: a aba mais estreita; --trilha-mais: o ▾. --aba-max: o teto de uma aba.
+     Rodada 2 da leva 5h, item 2: o teto voltou a ser 180px. Sem teto (100vw) as abas dividiam a faixa INTEIRA e a barra da janela, que é esta
+     mesma faixa, quase não arrastava mais: no visual Mac (1440 px, 3 pastas) a área que arrasta caiu de 62,5 % para 33 %, o maior trecho livre
+     de 496 para 13 px, e o duplo clique no meio da barra abria "Editar lugar" em vez de maximizar. Com o teto a trilha encolhe em volta das
+     abas e o + fica logo depois da última, com sobra de faixa. --faixa-arrasto: o vão que NUNCA falta entre o + e o ⋯ (o ::after da faixa,
+     logo abaixo), para a janela sempre ter onde ser arrastada, mesmo com dezenas de pastas: a conta (medirTrilha) o desconta da largura das
+     abas, então as pastas vão para o ▾ antes de comerem esse vão. */
+  --aba-min: 96px;
+  --aba-max: 180px;
+  --aba-h: 28px;
+  --trilha-vao: 2px;
+  --trilha-respiro: 3px;
+  --trilha-mais: 28px;
+  --faixa-arrasto: 120px;
   flex: none;
   display: flex;
   flex-wrap: nowrap;
@@ -2196,6 +2837,8 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   /* min-width:0 é o que impede a faixa de empurrar a janela: sem ele o flex
      deixa a coluna crescer até caber todas as pastas e a tela inteira rola */
   min-width: 0;
+  /* leva 5h: o normal é NÃO rolar (o que não cabe vai para o ▾); o resto fica como rede de segurança, para o intervalo entre a janela
+     mudar e a conta refazer (e para o ambiente sem ResizeObserver), e para a faixa nunca empurrar a janela. */
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -2205,8 +2848,8 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
      direita) e a tampa da cor da faixa é 'local' (anda com as pastas), então a
      sombra some sozinha ao chegar na última pasta e nem aparece se tudo coube. */
   scrollbar-width: none;
-  background-color: var(--sunken);
-  background-image: linear-gradient(var(--sunken), var(--sunken)),
+  background-color: var(--work);
+  background-image: linear-gradient(var(--work), var(--work)),
     linear-gradient(to left, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0));
   background-repeat: no-repeat;
   background-size: 16px 100%, 14px 100%;
@@ -2214,29 +2857,131 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
   background-attachment: local, scroll;
 }
 .ck-place-bar::-webkit-scrollbar { height: 0; display: none; }
-.ck-place-bar .ck-place-only { flex: 0 0 auto; max-width: 180px; margin: 0; padding: 0; border: 0; }
+/* Rodada 2 da leva 5h, item 2: o vão arrastável entre o + e o ⋯. É o último item da faixa (flex: 1 0 --faixa-arrasto): cresce com a sobra, mas NUNCA
+   encolhe abaixo da reserva, então quem encolhe é a trilha (e, antes dela, a conta manda as pastas para o ▾). Sem botão nenhum dentro, é janela:
+   -webkit-app-region: drag, e nele o duplo clique maximiza (o nativo do Windows), em vez de cair numa aba e abrir "Editar lugar". */
+/* conferência da rodada 2: a base do vão vem da conta (--faixa-arrasto-agora, escrita pela organizarTrilha): com folga é a reserva inteira e
+   quem encolhe são as abas; numa faixa estreita (janela no mínimo com a lateral larga, ou zoom) é só o que sobra depois de 1 aba + ▾, e o +
+   não cai mais em cima da aba ativa. Antes da primeira conta vale a reserva do CSS. */
+.ck-place-bar::after {
+  content: "";
+  flex: 1 0 var(--faixa-arrasto-agora, var(--faixa-arrasto));
+  min-width: 0;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+/* leva 5h: a TRILHA é a cápsula (raio 10, respiro de 3 e vão de 2 entre as abas). Ela encolhe com a faixa e cada aba encolhe junto. */
+.ck-place-trilha {
+  flex: 0 1 auto;
+  /* conferência da rodada 2: encolhe com a faixa, mas nunca abaixo de 1 aba + ▾ (antes ia a 0 e, numa faixa estreitíssima, a aba ativa vazava
+     por baixo do +); se nem isso couber, a faixa rola (a rede de segurança dela) em vez de sobrepor */
+  min-width: calc(var(--aba-min) + var(--trilha-vao) + var(--trilha-mais) + 2 * var(--trilha-respiro));
+  display: flex;
+  align-items: center;
+  gap: var(--trilha-vao);
+  padding: var(--trilha-respiro);
+  border-radius: 10px;
+  background: var(--hover);
+}
+/* cada aba é a seção da pasta: todas com a mesma base (--aba-max, grande: é o teto) e o mesmo encolhimento, então a trilha enche a faixa e as
+   abas dividem a largura por igual, até --aba-min (apertado; abaixo disso a conta manda a última para o ▾). O hidden é da conta
+   (organizarTrilha). */
+.ck-place-bar .ck-place-only {
+  flex: 0 1 auto;
+  width: var(--aba-max);
+  min-width: var(--aba-min);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ck-place-bar .ck-place-only[hidden] { display: none; }
 .ck-place-bar .ck-group-head {
-  width: auto;
-  height: 28px;
-  min-height: 28px;
+  width: 100%;
+  height: var(--aba-h);
+  min-height: var(--aba-h);
   padding: 0 var(--space-2);
-  gap: var(--space-1);
-  border-radius: var(--radius-sm);
+  gap: 6px;
+  justify-content: center;
+  border-radius: 8px;
   font-size: 12px;
   white-space: nowrap;
+  /* leva 5h: plana, no tom da trilha (na leva 5e cada aba tinha a superficie --tab; a trilha agora é a superficie delas) */
+  background: transparent;
+}
+/* hover discreto: o --hover é translúcido, então sobre a trilha (que já é --hover) a aba só escurece/clareia um degrau */
+.ck-place-bar .ck-group-head:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+/* leva 5e: o fundo da aba ativa e' opaco, e o fantasma da viagem do destaque (cockpit-anim.css) passou do nivel -1 para o 0, para
+   aparecer por cima dele. O icone e o nome sobem para o 1: o fantasma continua POR BAIXO do nome. */
+.ck-place-bar .ck-group-head > :is(.ck-group-icon, .ck-group-name) {
+  position: relative;
+  z-index: 1;
 }
 .ck-place-bar .ck-group-stats { display: none; }
 /* O icone fica: o Hugo pediu o de pasta de volta (21/09). Local = pasta,
    remoto = servidor -- da' pra ver de que tipo e' o lugar sem ler o nome. */
 .ck-place-bar .ck-group-icon { display: flex; flex: none; }
 .ck-place-bar .ck-group-icon .ic { width: 13px; height: 13px; }
+/* o nome não estica: ícone, nome e selo formam um grupo só, centrado na aba; nome comprido corta com reticências */
+.ck-place-bar .ck-group-name { flex: 0 1 auto; }
+/* a ativa LEVANTA: superfície --tab-on (a mais forte do tema; o --raised só entra se o tema não tiver), sombra leve e nome em negrito */
 .ck-place-bar .ck-place-only[data-current="true"] .ck-group-head {
-  background: var(--high);
+  background: var(--tab-on, var(--raised));
   color: var(--ink);
-  box-shadow: inset 0 -2px 0 var(--focus);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 0 0 0.5px var(--line);
 }
+/* o selo laranja: quantas conversas da pasta pedem você (--attention e --on-attention, os tokens de "sua vez" de cada tema) */
+.ck-place-selo {
+  flex: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--attention);
+  color: var(--on-attention);
+  font: 700 10px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.ck-place-selo[hidden] { display: none; }
+.ck-place-bar .ck-place-selo { position: relative; z-index: 1; }
+/* o ▾ no fim da trilha: só aparece quando alguma pasta ficou de fora; o ponto é o aviso de que uma delas pede você */
+.ck-place-bar .ck-place-more {
+  position: relative;
+  flex: none;
+  width: var(--trilha-mais);
+  min-width: var(--trilha-mais);
+  height: var(--aba-h);
+  min-height: var(--aba-h);
+  padding: 0;
+  border-radius: 8px;
+  justify-content: center;
+}
+.ck-place-bar .ck-place-more[hidden] { display: none; }
+.ck-place-bar .ck-place-more .ic { width: 14px; height: 14px; }
+.ck-place-bar .ck-place-more[data-pendentes]::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--attention);
+}
+/* o anel de foco (2 px, deslocado 2) passaria da altura da faixa e seria cortado pelo overflow dela: nos botões da faixa ele entra */
+.ck-place-bar :is(.ck-group-head, .ck-place-more, .ck-new-place):focus-visible { outline-offset: -2px; }
 .ck-place-bar .ck-new-place { flex: none; padding: var(--space-1); min-width: 28px; justify-content: center; }
-.ck-place-bar .ck-new-place span { display: none; }
+/* a listinha do ▾ mora no menuzinho ancorado do app (#popGrupo, .pop-global): uma linha por pasta, ícone · nome · selo */
+.pop-global .ck-place-item { align-items: center; }
+.pop-global .ck-place-item .mi-ic { margin-top: 0; }
+.pop-global .ck-place-item .mi-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term-code-form { margin-top: 10px; }
 .term-code-form label { display: block; margin-bottom: 4px; font-size: 12px; }
 .term-code-form > div { display: flex; gap: 6px; }
@@ -2247,6 +2992,537 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
 /* as pastas saíram da lateral: nenhuma regra de separador entre grupos pode
    alcançar os chips da faixa, senão cada um ganha uma linha em cima */
 .ck-place-bar .ck-place-only + .ck-place-only { margin-top: 0; padding-top: 0; border-top: 0; }
+
+/* ===== Ctrl+Tab: a lista de trocar de pasta (o gesto do Alt+Tab) =====
+   Outra superfície, não a faixa: cada pasta mostra ícone + nome + onde ela
+   fica (caminho ou usuário@host, esmaecido, com reticências). Sem contador e
+   sem estado — quem precisa agir olha a TORRE. Nasce só com o Ctrl segurado
+   (150 ms, cockpit-ui.js), então o toque rápido não pisca nada; e não tem
+   animação de entrada. A seleção fala a língua da aba ativa da faixa: fundo
+   --high + marca --focus de 2px (lá embaixo, aqui na borda esquerda, porque a
+   lista é vertical). Fica acima da janelinha do painel (500/550), que não
+   bloqueia a troca — o terminal mora nela. Sem véu: o trabalho continua à
+   vista, como no Alt+Tab. */
+.ck-troca-pasta {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  pointer-events: none;
+}
+.ck-troca-lista {
+  pointer-events: auto;
+  width: min(480px, 100%);
+  max-height: min(640px, 76dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}
+/* flex:none pelo mesmo motivo do .ck-result: numa coluna flex com 15 pastas
+   os itens encolheriam até o nome de um cair por cima do de baixo */
+.ck-troca-item {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.ck-troca-item:not([aria-selected="true"]):hover { background: var(--hover); }
+.ck-troca-item[aria-selected="true"] {
+  background: var(--high);
+  box-shadow: inset 2px 0 0 var(--focus);
+}
+.ck-troca-icone { display: inline-flex; flex: none; color: var(--ink-faint); }
+.ck-troca-icone .ic { width: var(--layout-logo); height: var(--layout-logo); }
+.ck-troca-item[aria-selected="true"] .ck-troca-icone { color: var(--ink-muted); }
+.ck-troca-texto { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 1px; }
+.ck-troca-texto strong,
+.ck-troca-texto small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-troca-texto strong { font-size: 13px; font-weight: 500; line-height: 1.35; }
+.ck-troca-texto small { font-size: 11px; line-height: 1.35; color: var(--ink-muted); }
+
+/* ===== Trecho selecionado: a barrinha e o trecho preso à próxima mensagem =====
+   Porte do Cockpit do Homero (26/09). A barra flutua 38 px acima do que foi
+   selecionado numa resposta pronta (app.js, mostrarBarraDoTrecho), no desenho
+   das camadas que flutuam: fundo --raised, fio --line-strong e a sombra de
+   flutuar. Fica abaixo das janelas do painel (500 e acima): ela só existe com a
+   seleção na conversa à vista. O trecho escolhido espera em cima da caixa de
+   escrever com o desenho da fila (.p-fila, style.css), em 2 linhas; no balão
+   enviado ele aparece citado em cima da fala, também em 2 linhas. Os botões
+   herdam do tema o alvo de 28 px (.ck-app button) e o anel de foco. */
+.ck-app .ck-sel-barra {
+  position: fixed;
+  z-index: 450;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+}
+.ck-app .ck-sel-barra button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.ck-app .ck-sel-barra button:hover {
+  background: var(--high);
+}
+.ck-app .ck-sel-barra .ic {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+.ck-app .p-citacao {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: var(--space-2) var(--space-2) 0;
+  padding: 5px 9px;
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+.ck-app .p-citacao .pc-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+}
+.ck-app .p-citacao .pc-ic .ic {
+  width: 12px;
+  height: 12px;
+}
+.ck-app .p-citacao .pc-txt {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ck-app .p-citacao .pc-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+}
+.ck-app .p-citacao .pc-x:hover {
+  background: var(--high);
+  color: var(--ink);
+}
+.ck-app .p-citacao .pc-x .ic {
+  width: 10px;
+  height: 10px;
+}
+/* Leva 5h: o selo "respondendo a pergunta" (o X do cartao de perguntas), irmao do trecho preso: mesma forma, com a borda na cor de foco
+   do tema para mostrar que e' um modo ligado (a proxima mensagem vira a resposta). */
+.ck-app .p-resp {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: var(--space-2) var(--space-2) 0;
+  padding: 5px 9px;
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  border: 1px solid var(--focus);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 16px;
+}
+.ck-app .p-resp .pr-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--focus);
+}
+.ck-app .p-resp .pr-ic .ic {
+  width: 12px;
+  height: 12px;
+}
+.ck-app .p-resp .pr-txt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-app .p-resp .pr-x {
+  flex: none;
+  /* alvo de 24 px (WCAG 2.5.8) sem engordar a linha do selo: a margem negativa devolve o que o botao tem a mais */
+  width: 24px;
+  height: 24px;
+  margin: -4px -4px -4px 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+}
+.ck-app .p-resp .pr-x:hover {
+  background: var(--high);
+  color: var(--ink);
+}
+.ck-app .p-resp .pr-x .ic {
+  width: 10px;
+  height: 10px;
+}
+.ck-app .msg-citacao {
+  max-width: 86%;
+  margin: 0 0 var(--space-1);
+  padding: 1px 0 1px var(--space-2);
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ===== Mais detalhes: a janelinha ao lado do painel =====
+   Tarefa 3 (26/09), porte do Cockpit do Homero. A camada do tema (openLayer
+   com naoModal, classe ck-detalhes) é janela NÃO modal: o fundo
+   (.ck-nao-modal, a classe vem do openLayer) não escurece e não segura o
+   clique (o chat continua usável ao lado); só a janela recebe o ponteiro. O
+   teclado também fica livre (cockpit-ui.js, keyLayer).
+   Presa à direita do painel de onde saiu o trecho (app.js,
+   posicionarMaisDetalhes: largura, topo e altura). Em cima o título, "Levar
+   pro chat" e o x; no meio (rola) o trecho e as perguntas e respostas; embaixo
+   (fixa) a caixa de perguntar. A explicação usa o desenho de markdown das
+   respostas (.msg-body, style.css); os pontinhos do "Pensando" são os do chat
+   (.trab-pts), que já param com movimento reduzido. */
+.ck-app .ck-overlay.ck-nao-modal {
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.ck-app .ck-overlay.ck-nao-modal > .ck-layer {
+  pointer-events: auto;
+}
+.ck-app .ck-layer.ck-detalhes {
+  position: fixed;
+  width: 440px;
+  max-height: none;
+  border-radius: var(--radius-lg);
+}
+.ck-app .ck-detalhes .ck-layer-head {
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+.ck-app .ck-detalhes .ck-layer-head h2 {
+  font-size: 14px;
+}
+.ck-app .ck-detalhes .dt-levar {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+.ck-app .ck-detalhes .dt-levar .ic {
+  width: 14px;
+  height: 14px;
+}
+.ck-app .ck-detalhes .dt-levar:disabled,
+.ck-app .ck-detalhes .dt-ir:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ck-app .ck-detalhes .ck-layer-body {
+  flex: 1;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.ck-app .ck-detalhes .dt-trecho {
+  flex: none;
+  padding: 1px 0 1px var(--space-2);
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ck-app .ck-detalhes .dt-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ck-app .ck-detalhes .dt-msg {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ck-app .ck-detalhes .dt-eu {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--high);
+  white-space: pre-wrap;
+}
+.ck-app .ck-detalhes .dt-pensando {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.ck-app .ck-detalhes .dt-erro {
+  color: var(--attention);
+}
+.ck-app .ck-detalhes .dt-pe {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.ck-app .ck-detalhes .dt-in {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 120px;
+  resize: none;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+}
+.ck-app .ck-detalhes .dt-in:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+.ck-app .ck-detalhes .dt-ir {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.ck-app .ck-detalhes .dt-ir .ic {
+  width: 16px;
+  height: 16px;
+}
+
+/* ===== Plano pronto: o cartão do ExitPlanMode na conversa =====
+   Tarefa 8 (26/09), porte do Cockpit do Homero. Classes .ck-plx-* de
+   propósito: as .pl-* são da checklist do plano (style.css, .pl-corpo com
+   132 px de altura) e cortariam o plano. O corpo usa o desenho de markdown
+   das respostas (.msg-body, style.css). Borda âmbar enquanto espera você;
+   respondido (.respondido) vira um registro calmo na conversa. A mesma peça
+   aparece nas Pendências (montarCorpoDaPendencia). */
+.ck-app .ck-plano-pronto {
+  margin: var(--space-2) 0;
+  border: 1px solid var(--attention);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+.ck-app .ck-plano-pronto.respondido {
+  border-color: var(--line);
+}
+.ck-app .ck-plx-cab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ck-app .ck-plx-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--attention);
+}
+.ck-app .ck-plano-pronto.respondido .ck-plx-ic {
+  color: var(--ink-muted);
+}
+.ck-app .ck-plx-ic .ic {
+  width: 14px;
+  height: 14px;
+}
+.ck-app .ck-plx-corpo {
+  max-height: 55vh;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  /* break-word e nao anywhere: caminho comprido quebra, mas a celula da
+     tabela nao parte a palavra ao meio (a tabela rola, .msg-body table) */
+  overflow-wrap: break-word;
+  user-select: text;
+}
+.ck-app .ck-plx-ajuste {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+}
+.ck-app .ck-plx-campo {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+.ck-app .ck-plx-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.ck-app .ck-plx-acoes button,
+.ck-app .ck-plx-mandar {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ck-app .ck-plx-ajustar,
+.ck-app .ck-plx-mandar {
+  border: 1px solid var(--line-strong);
+  background: var(--raised);
+  color: var(--ink);
+}
+.ck-app .ck-plx-ajustar:hover:not(:disabled),
+.ck-app .ck-plx-mandar:hover:not(:disabled) {
+  background: var(--high);
+}
+.ck-app .ck-plx-executar {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.ck-app .ck-plano-pronto button:disabled,
+.ck-app .ck-plx-campo:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ck-app .ck-plano-pronto button:focus-visible,
+.ck-app .ck-plx-campo:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+.ck-app .ck-plx-destino,
+.ck-app .ck-plx-estado {
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+.ck-app .ck-plano-pronto.respondido .ck-plx-estado {
+  padding-top: var(--space-2);
+}
+
+/* ===== Desfazer esta mudança: o botão no diff do passo =====
+   Tarefa 9 (27/09). Só no diff do PASSO: o do cartão de permissão mostra o
+   que ainda nem foi aplicado. A barra fica no topo do diff e presa nele
+   (o diff rola sozinho, até 320 px). Painel trabalhando (.pane.ocupado, a
+   mesma marca do setDot que o caret usa) esconde a barra: o agente pode
+   estar mexendo no mesmo arquivo. Volta sozinha quando o turno acaba; o
+   clique e o main conferem de novo. */
+.ck-app .ck-df-acoes {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.ck-app .ck-df-desfazer {
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ck-app .ck-df-desfazer:hover:not(:disabled) {
+  background: var(--high);
+}
+.ck-app .ck-df-desfazer:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+.ck-app .ck-df-desfazer:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+.ck-app .pane.ocupado .ck-df-acoes {
+  display: none;
+}
 
 /* ===== Tela baixa: o histórico sai e a Torre fica com tudo =====
    Pedido do Hugo em 21/09/2026: o desenho vale para Full HD; em tela menor
@@ -2309,3 +3585,6 @@ html[data-tema="jornal"] .ck-brand .ck-brand-dark {
     animation: none;
   }
 }
+
+.ck-history-period { padding: 12px 12px 5px; color: var(--ink-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.ck-navigator.ck-collapsed:not(.ck-peek) .ck-history-period { display: none; }

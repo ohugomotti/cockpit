@@ -21,7 +21,12 @@ function logos() {
 function icones() {
   const i = app.indexOf('const ICONES = ');
   const ctx = {}; vm.createContext(ctx);
-  return vm.runInContext('(' + app.slice(i + 'const ICONES = '.length, app.indexOf(';\n', i)) + ')', ctx);
+  /* Leva 4 (T2): os icones novos moram nos blocos Object.assign(ICONES, {...}) logo depois do literal
+     (a linha do literal e' gigante e fica intocada). Ler so' o literal fazia "todo icone usado existe" reprovar
+     pencil-line, list-end, shield-check, bell e wand-sparkles, que existem. Le' ate' o "const ico =", como o
+     mapa() do icones-um-sentido.test.js. */
+  vm.runInContext(app.slice(i, app.indexOf('\nconst ico = ', i)).replace('const ICONES', 'var ICONES'), ctx);
+  return ctx.ICONES;
 }
 /* svgMotor + marcaDoMotor de verdade, com o LOGO e o MOTORES do fonte */
 function geradores() {

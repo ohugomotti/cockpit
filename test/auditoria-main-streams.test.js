@@ -3,10 +3,24 @@ const test=require('node:test'),assert=require('node:assert/strict'),vm=require(
 const {lerFonte,pegarBloco}=require('../testes/raiz');const source=lerFonte('main.js');
 function fake(){const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.stdin=new PassThrough();p.kill=()=>{};return p;}
 function fragment(stream,text){for(const b of Buffer.from(text))stream.write(Buffer.from([b]));}
-function harness(name,extra={}){const p=fake();const c={console,Promise,Map,Set,Buffer,Array,Error,setTimeout,clearTimeout,HOME:'C:/QA',buildEnv:()=>({}),spawnBin:()=>p,...extra};vm.createContext(c);vm.runInContext(pegarBloco(source,'function '+name+'(',name),c);return{p,c};}
+function harness(name,extra={}){const p=fake();const c={console,Promise,Map,Set,Buffer,Array,Error,setTimeout,clearTimeout,HOME:'C:/QA',buildEnv:()=>({}),acharBin:n=>n,engineUpdateQuitting:false,engineUpdates:{codexReady:true,codexError:null},spawnBin:()=>p,...extra};vm.createContext(c);vm.runInContext(pegarBloco(source,'function '+name+'(',name),c);return{p,c};}
 for(const invalid of [false,true])test('Codex stdout '+(invalid?'ignores JSON non-objects':'preserves fragmented UTF-8'),async()=>{
- const seen=[];const {p,c}=harness('codexStart',{codex:{ready:null},codexIncoming:m=>{assert.ok(m&&typeof m==='object'&&!Array.isArray(m));seen.push(m);},codexReq:async()=>({}),codexNote:()=>{}});await c.codexStart();
+ const seen=[];const {p,c}=harness('codexStart',{capabilities:require('../src/cockpit-capabilities'),interactionBroker:{cancelScope(){}},codex:{ready:null},codexIncoming:m=>{assert.ok(m&&typeof m==='object'&&!Array.isArray(m));seen.push(m);},codexReq:async()=>({}),codexNote:()=>{}});await c.codexStart();
  if(invalid)p.stdout.write('null\n[]\n42\n"text"\n');fragment(p.stdout,JSON.stringify({method:'text',params:{text:'Ação 🙂'}})+'\n');assert.equal(seen.length,1);assert.equal(seen[0].params.text,'Ação 🙂');
+});
+test('Codex aguarda a atualização e abre somente um servidor para pedidos simultâneos',async()=>{
+ let release;const ready=new Promise(r=>release=r);
+ const updates={codexReady:false,codexError:null,waitForCodex:()=>ready};
+ const {p,c}=harness('codexStart',{engineUpdates:updates,capabilities:require('../src/cockpit-capabilities'),interactionBroker:{cancelScope(){}},codex:{ready:null},codexIncoming:()=>{},codexReq:async()=>({}),codexNote:()=>{}});
+ let starts=0;c.spawnBin=()=>{starts++;return p;};
+ const one=c.codexStart(),two=c.codexStart();assert.equal(starts,0);
+ updates.codexReady=true;release();await Promise.all([one,two]);assert.equal(starts,1);
+});
+test('Codex não liga enquanto o app fecha ou a recuperação está pendente',async()=>{
+ for(const extra of [{engineUpdateQuitting:true},{engineUpdates:{codexReady:true,codexError:new Error('recuperação pendente')}}]){
+  const {c}=harness('codexStart',extra);let starts=0;c.spawnBin=()=>{starts++;throw Error('não deveria abrir');};
+  await assert.rejects(c.codexStart());assert.equal(starts,0);
+ }
 });
 for(const invalid of [false,true])test('CLI stdout '+(invalid?'ignores JSON non-objects':'preserves fragmented UTF-8'),()=>{
  const seen=[],st={engine:'gemini',primeira:true,sessao:'fake',cwd:'C:/QA'};const {p,c}=harness('cliEnviar',{cliPanes:new Map([['p',st]]),CLIS:{gemini:{bin:'fake',args:()=>[]}},emit:()=>{},cliEvento:(_id,_st,m)=>{assert.ok(m&&typeof m==='object'&&!Array.isArray(m));seen.push(m);}});c.cliEnviar('p','test');

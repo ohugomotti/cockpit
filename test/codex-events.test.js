@@ -14,6 +14,7 @@ function harness() {
   const source = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8');
   const events = [], replies = [];
   const context = { proto, codexApprovalDetails, Buffer, events, replies, resultadoFerramenta,
+    require: name => require('../src/' + name.replace(/^\.\//, '')),
     observabilidade: criarObservabilidade((pane, type, data) => events.push({ pane, type, ...data })),
     codex: { threadToPane: new Map([['t1', 0], ['t2', 2]]), paneMsgId: new Map(), paneTurn: new Map() },
     pendingApprovals: new Map(), perguntasCodex: new Map(),
@@ -22,6 +23,8 @@ function harness() {
     codexErro: (id, error) => replies.push({ id, error }),
     descartarPermissoes: () => {},
   };
+  context.codexScope = (paneId, p = {}) => ({ paneId, generation: 1, engine: 'codex', threadId: p.threadId || 't1', cwd: __dirname });
+  context.interactionBroker = require('../src/cockpit-interactions').createInteractionBroker({ emit: context.emit });
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function idDoItem('), source.indexOf('function codexStart(')) +
     source.slice(source.indexOf('function paneOf('), source.indexOf('function fileChangeArg(')), context);
@@ -104,14 +107,17 @@ test('perguntas já representadas não duplicam; opcionais ausentes são acresce
   assert.equal(proto.normalizeAgentMessage({ text: 'Onde? Projeto', questions }).text, 'Onde? Projeto\n\nDrive');
 });
 
-test('elicitação recusada avisa e ferramenta dinâmica devolve motivo explícito', () => {
+test('elicitação aguarda resposta e ferramenta desconhecida é recusada explicitamente', async () => {
   const h = harness();
   h.codexServerRequest({ id: 0, method: 'mcpServer/elicitation/request', params: { threadId: 't1', mode: 'form', message: 'Informe dados', requestedSchema: { type: 'object', properties: {} } } });
+  assert.equal(h.replies.length, 0);
+  assert.equal(h.events[0].type, 'connector-request');
+  h.interactionBroker.respond({ token: h.events[0].token, paneId: '0', action: 'decline' });
   assert.equal(h.replies[0].result.action, 'decline');
-  assert.equal(h.events[0].error, true);
   h.codexServerRequest({ id: 1, method: 'item/tool/call', params: { threadId: 't1', tool: 'host-tool' } });
+  await new Promise(r => setImmediate(r));
   assert.equal(h.replies[1].result.success, false);
-  assert.match(h.replies[1].result.contentItems[0].text, /host-tool/);
+  assert.match(h.replies[1].result.contentItems[0].text, /desconhecida/);
 });
 
 test('MCP Codex chega no tool-end como texto/imagem/recurso, nunca como base64 em JSON', () => {

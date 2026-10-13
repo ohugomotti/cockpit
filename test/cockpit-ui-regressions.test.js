@@ -189,3 +189,93 @@ test("foco horizontal traz última sessão inteira e impede o campo de desfazer 
   assert.equal(area.scrollLeft,430);
   assert.equal(options.preventScroll,true);
 });
+/* Dialogo de lugar (Novo/Editar lugar): a consulta de motores roda num timer de
+   800 ms. Fechar o dialogo nesse meio tempo (fecharModalGlobal esconde o modal e
+   esvazia o .modal-cx) nao cancelava o timer, e o readRemote do app.js ia ler
+   '#abHost' de um modal vazio -- TypeError no console. Se o mesmo .modal-cx ja'
+   tinha virado outro dialogo, lia o formulario errado. O DOM daqui e' minimo mas
+   e' arvore de verdade: append/before/prepend movem o no', e fechar/reabrir faz
+   exatamente o que fecharModalGlobal/abrirModalGlobal fazem com o cx. */
+function placeDialogHarness(existing) {
+  const match=(n,sel)=>{
+    const m=/^([a-z]+)?(?:#([\w-]+))?((?:\.[\w-]+)*)((?:\[[\w-]+="[^"]*"\])*)$/i.exec(sel);
+    assert.ok(m,"seletor fora do DOM de teste: "+sel);
+    return (!m[1]||n.tagName===m[1].toUpperCase())&&(!m[2]||n.id===m[2])&&
+      m[3].split(".").filter(Boolean).every(c=>n.classes.has(c))&&
+      [...m[4].matchAll(/\[([\w-]+)="([^"]*)"\]/g)].every(([,k,v])=>n.getAttribute(k)===v);
+  };
+  class El {
+    constructor(tag,{cls="",text="",...props}={}){
+      Object.assign(this,{tagName:tag.toUpperCase(),parentNode:null,children:[],classes:new Set(cls.split(" ").filter(Boolean)),
+        dataset:{},attrs:{},listeners:{},id:"",value:"",textContent:text,customError:""},props);
+    }
+    get classList(){const c=this.classes;return{add:x=>c.add(x),remove:x=>c.delete(x),contains:x=>c.has(x)};}
+    get isConnected(){let n=this;while(n.parentNode)n=n.parentNode;return n.isDocument===true;}
+    get previousElementSibling(){const s=this.parentNode?.children;return s?.[s.indexOf(this)-1]||null;}
+    get validity(){return{valid:!this.customError};}
+    set innerHTML(html){for(const c of [...this.children])c.remove();}
+    setCustomValidity(m){this.customError=m;}
+    getAttribute(k){return k.startsWith("data-")?this.dataset[k.slice(5)]:this.attrs[k];}
+    setAttribute(k,v){this.attrs[k]=String(v);}
+    addEventListener(t,fn){(this.listeners[t]||=[]).push(fn);}
+    remove(){const s=this.parentNode?.children;if(s)s.splice(s.indexOf(this),1);this.parentNode=null;}
+    place(nodes,at){for(const n of nodes)n.remove();this.children.splice(at(),0,...nodes);for(const n of nodes)n.parentNode=this;}
+    append(...n){this.place(n,()=>this.children.length);}
+    prepend(...n){this.place(n,()=>0);}
+    before(...n){const p=this.parentNode;p.place(n,()=>p.children.indexOf(this));}
+    closest(sel){for(let n=this;n;n=n.parentNode)if(!n.isDocument&&match(n,sel))return n;return null;}
+    contains(n){for(;n;n=n.parentNode)if(n===this)return true;return false;}
+    querySelectorAll(sel){const all=n=>n.children.flatMap(c=>[c,...all(c)]);return all(this).filter(n=>match(n,sel));}
+    querySelector(sel){return this.querySelectorAll(sel)[0]||null;}
+  }
+  const el=(tag,props,...kids)=>{const n=new El(tag,props);n.append(...kids);return n;};
+  const doc=new El("html",{isDocument:true}),cx=el("div",{cls:"modal-cx"}),modal=el("div",{id:"modalGrupo",cls:"modal"},cx);
+  doc.append(modal);
+  // so' o que o placeDialog toca do formulario do abrirModalAbaLocal, com SSH ja' escolhido
+  cx.append(el("div",{cls:"mo-top"},el("span",{cls:"mo-tit"})),el("input",{id:"abNome"}),
+    el("div",{cls:"tipo-toggle"},el("button",{cls:"tipo-bt",dataset:{tipo:"local"}}),el("button",{cls:"tipo-bt on",dataset:{tipo:"ssh"}})),
+    el("div",{id:"abCorpoSsh",cls:"mo-form"},el("input",{id:"abHost",value:existing?.host||""}),el("input",{id:"abUsuario",value:existing?.usuario||""}),
+      el("label",{cls:"mo-dica",attrs:{for:"abPorta"}}),el("input",{id:"abPorta",value:"22"}),
+      el("button",{id:"abEscolherChave",onclick:async()=>{}}),el("input",{id:"abCaminho",value:existing?.caminhoRemoto||""})),
+    el("div",{id:"abCorpoConectores",cls:"mo-form"}),el("div",{cls:"mo-dica",text:"Cor"}),el("div",{cls:"cor-linha"}),
+    el("div",{id:"abDestinoErro",cls:"mo-dica hidden"}),el("button",{id:"abOk"}));
+  const timers=new Map(),probes=[];let timerId=0,reads=0;
+  // mesmo formato do readRemote que o app.js passa: le' os campos direto do cx
+  const readRemote=()=>{reads++;const f=s=>cx.querySelector(s).value.trim();
+    return{host:f("#abHost"),usuario:f("#abUsuario"),porta:Number(f("#abPorta")),chave:"C:\\chaves\\id_ed25519",caminhoRemoto:f("#abCaminho")||"~"};};
+  const ctx={q:(s,parent)=>parent.querySelector(s),node:(tag,cls,text)=>new El(tag,{cls:cls||"",text:text??""}),ico:()=>"",
+    parseSshAddress:UI.parseSshAddress,formatSshAddress:UI.formatSshAddress,MOTORES:["claude","codex"],nomeDoMotor:e=>e,abasLocais:()=>[],
+    setTimeout:fn=>{timers.set(++timerId,fn);return timerId;},clearTimeout:id=>timers.delete(id),
+    window:{api:{motoresDisponiveis:async r=>{probes.push(r);return{claude:{disponivel:true}};}}}};
+  vm.runInNewContext(extractUi("placeDialog")+"\nthis.open=placeDialog;",ctx);
+  ctx.open(cx,existing,readRemote);
+  const compact=cx.querySelector("#abEndereco");
+  return {probes,el,reads:()=>reads,status:()=>cx.querySelector(".ck-place-probe"),
+    type(value){compact.value=value;for(const fn of compact.listeners.input)fn();},
+    close(){modal.classList.add("hidden");cx.innerHTML="";},
+    reopen(...kids){modal.classList.remove("hidden");cx.innerHTML="";cx.append(...kids);},
+    fire(){const due=[...timers.values()];timers.clear();return Promise.all(due.map(fn=>fn()));}};
+}
+test("consulta de motores do lugar não lê o formulário depois que o modal fecha ou vira outro diálogo", async () => {
+  const open=placeDialogHarness(null);
+  open.type("qa@host-b:/srv/app");
+  await open.fire();
+  assert.deepEqual(open.probes.map(r=>[r.usuario,r.host,r.porta,r.caminhoRemoto]),[["qa","host-b",22,"/srv/app"]]);
+  assert.match(open.status().textContent,/Motores encontrados: claude/);
+
+  const closed=placeDialogHarness(null);
+  closed.type("qa@host-b:/srv/app");
+  closed.close();
+  const readsBeforeClosedTimer=closed.reads();
+  await assert.doesNotReject(closed.fire());
+  assert.equal(closed.reads(),readsBeforeClosedTimer,"modal fechado: o formulário não existe mais");
+  assert.equal(closed.probes.length,0);
+
+  const reused=placeDialogHarness({tipo:"ssh",nome:"srv",usuario:"qa",host:"host-a",caminhoRemoto:"~"});
+  reused.close();
+  reused.reopen(reused.el("div",{cls:"mo-top"},reused.el("span",{cls:"mo-tit",text:"Outro diálogo"})));
+  const readsBeforeReusedTimer=reused.reads();
+  await assert.doesNotReject(reused.fire());
+  assert.equal(reused.reads(),readsBeforeReusedTimer,"modal reaproveitado: não lê o formulário do outro diálogo");
+  assert.equal(reused.probes.length,0);
+});

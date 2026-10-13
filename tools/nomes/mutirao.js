@@ -1,19 +1,22 @@
 'use strict';
-/* Mutirao dos nomes: da' o nome de 3 palavras as conversas que ficaram sem ele.
+/* Mutirao dos nomes: da' o nome automatico as conversas que ficaram sem ele.
 
-   O Cockpit so' batiza conversa NOVA, na 1a mensagem (src/renderer/app.js,
-   podeGerarTituloAuto). Tudo que foi conversado antes de a leva 41 existir - ou
-   fora do Cockpit, no `claude` e no `codex` do terminal - ficou sem nome. Este
-   script e' o mutirao de tras pra frente: varre o disco, acha o que esta' sem
-   nome e pede o mesmo titulo de 3 palavras.
+   O Cockpit da' nome as conversas que passam por ele (src/renderer/app.js:
+   no envio do 1o pedido e no fim dos turnos). Tudo que foi conversado antes de
+   a leva 41 existir - ou fora do Cockpit, no `claude` e no `codex` do terminal
+   - ficou sem nome. Este script e' o mutirao de tras pra frente: varre o
+   disco, acha o que esta' sem nome e pede o mesmo nome que a tela pediria.
 
    NAO faz parte do app: nada aqui e' empacotado, nada aqui e' chamado pelo
    main.js. E' ferramenta de terminal, rodada na mao pelo dono.
 
-   Por que ele NAO escreve um prompt proprio: o titulo tem que sair igualzinho
+   Por que ele NAO escreve um prompt proprio: o nome tem que sair igualzinho
    ao que a tela produz. Entao quem gera e' o gerador do app (src/titulo-auto.js,
-   gerarTitulo -> montarPrompt/argumentos/lerSaida/posProcessar). Aqui so' mora
-   a parte que a tela nao tem: achar o arquivo, ler o 1o pedido e gravar.
+   gerarTitulo -> montarPedido/interpretarSaida, o mesmo pedido e a mesma
+   validacao da tela), pelo executor unico do claude -p rapido
+   (src/claude-rapido.js: pedido pelo stdin, ambiente limpo, so' com a
+   assinatura -- nunca API paga), que o dependencias() monta. Aqui so' mora a
+   parte que a tela nao tem: achar o arquivo, ler o 1o pedido e gravar.
 
    Cuidados de proposito:
    - o Cockpit pode estar ABERTO lendo/gravando o nomes.json. Por isso o arquivo
@@ -35,6 +38,7 @@ const path = require('path');
 const readline = require('readline');
 
 const T = require('../../src/titulo-auto');
+const { criarClaudeRapido } = require('../../src/claude-rapido');
 const plat = require('../../src/plataforma');
 
 const DIAS_PADRAO = 7;
@@ -53,9 +57,18 @@ const PULAR_PASTA = new Set(['subagents', 'workflows']);   // igual ao main.js: 
    sua: o contexto que o app-server injeta, o cabecalho de arquivo colado e o
    sub-agente "guardian", que o proprio Codex sobe pra avaliar permissao e que
    nasce com originator "cockpit" (medido: 77 das 87 threads que o Cockpit abriu
-   neste PC sao isso). Sem esse filtro o mutirao batizaria robo. */
-const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|<workspace_roots>|<INSTRUCTIONS>|^Caveat:|^The following is the Codex agent history|^# Files mentioned by the user:|^Responda (apenas|exatamente) COCKPIT_|^# AGENTS\.md instructions for|^<(task-notification|local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)>/i;
-const ehTecnico = (t) => !t || TECNICO.test(String(t).trim().slice(0, 400));
+   neste PC sao isso). Sem esse filtro o mutirao batizaria robo.
+   O guardian e o cabecalho de arquivo mencionado NAO ficam copiados aqui: os
+   padroes moram no titulo-auto.js (T.FALA_*), o mesmo que o main.js le (Task
+   11b). O main.js so' pula o guardian; do arquivo mencionado ele tira so' o
+   cabecalho, porque o pedido vem junto no mesmo turno. Aqui a fala inteira
+   continua sendo pulada, como sempre foi. */
+const TECNICO = /<recommended_plugins>|<environment_context>|<user_instructions>|<system-reminder>|<available_tools>|<plugins>|<workspace_roots>|<INSTRUCTIONS>|^Caveat:|^Responda (apenas|exatamente) COCKPIT_|^# AGENTS\.md instructions for|^<(task-notification|local-command-stdout|local-command-stderr|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)>/i;
+const ehTecnico = (t) => {
+  if (!t) return true;
+  const s = String(t).trim().slice(0, 400);
+  return TECNICO.test(s) || T.FALA_SUBAGENTE_CODEX.test(s) || T.FALA_ARQUIVOS_CODEX.test(s);
+};
 
 /* Conversa que nao e' de gente: o proprio Cockpit conferindo se o app subiu
    ("Responda apenas COCKPIT_111_OK") e o `codex exec` das tarefas agendadas
@@ -198,8 +211,13 @@ function caminhoNomes(o) {
   const base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   return path.join(base, 'cockpit', 'nomes.json');
 }
+/* Rodada 2 da leva 5: como o lerNomesSeguro do main.js. Sem arquivo = nenhum nome ainda ({}). Arquivo que existe mas nao abre
+   como objeto (vazio, zeros ou pela metade de uma queda; preso; uma pasta no lugar) = null, e quem grava recusa: com o {} de
+   antes o lote gravava so' os nomes novos e o gravarSeguro copiava o arquivo estragado por cima do .bak (os nomes seus sumiam). */
 function lerNomes(arq) {
-  try { return JSON.parse(fs.readFileSync(arq, 'utf8')); } catch { return {}; }
+  let v;
+  try { v = JSON.parse(fs.readFileSync(arq, 'utf8')); } catch (e) { return e && e.code === 'ENOENT' ? {} : null; }
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
 /* mesmo cuidado do gravarSeguro do main.js: escreve no .tmp, guarda um .bak e
    so' entao troca por rename. O Cockpit pode estar lendo o arquivo neste
@@ -209,8 +227,11 @@ function gravarSeguro(destino, texto) {
   const tmp = destino + '.tmp';
   try {
     fs.mkdirSync(path.dirname(destino), { recursive: true });
+    // rodada 2 da leva 5: o arquivo que existe mas nao abre como objeto nao e' trocado nem vira .bak (a copia boa fica)
+    const existe = fs.existsSync(destino);
+    if (existe && !lerNomes(destino)) return false;
     fs.writeFileSync(tmp, texto);
-    try { if (fs.existsSync(destino)) fs.copyFileSync(destino, destino + '.bak'); } catch {}
+    try { if (existe) fs.copyFileSync(destino, destino + '.bak'); } catch {}
     fs.renameSync(tmp, destino);
     return true;
   } catch { try { fs.unlinkSync(tmp); } catch {} return false; }
@@ -243,24 +264,30 @@ function escolher(achados, nomes, agora, dias) {
 /* o gerador (o MESMO do app)                                          */
 /* ------------------------------------------------------------------ */
 
+/* Tarefa 6 (27/09): o executor unico do claude -p rapido, montado pro mutirao
+   (e' outro processo, de terminal: a instancia do app mora no main.js). O
+   mesmo claude que o app acha, o mesmo ambiente (que o executor limpa de API
+   paga) e o settings dele na pasta do app (a do nomes.json, ou pastaSettings).
+   So' roda com a conta de assinatura. */
 function dependencias(pastaSettings) {
   const pasta = pastaSettings || path.dirname(caminhoNomes());
   return {
-    spawn: plat.spawnBin,
-    bin: () => (plat.EH_WIN ? plat.acharBin('claude') : path.join(plat.HOME, '.local/bin/claude')),
-    env: plat.buildEnv,
-    matar: plat.matarProcesso,
-    arqSettings: () => T.arquivoDeSettings(pasta),
-    cwd: os.tmpdir(),
+    claudeRapido: criarClaudeRapido({
+      acharBin: (nome) => (plat.EH_WIN ? plat.acharBin(nome) : path.join(plat.HOME, '.local/bin', nome)),
+      spawn: plat.spawnBin,
+      buildEnv: plat.buildEnv,
+      pastaDados: () => pasta,
+    }),
   };
 }
 
-/* motivo que o gerador devolve quando a CULPA e' de fora (conta, cota, rede,
-   prazo, Claude que nao subiu). "resposta-torta" e "vazio" nao entram: o modelo
-   respondeu, so' nao deu titulo - isso e' pular, nao e' erro, e nao pode
-   derrubar o mutirao. */
-const ehErro = (motivo) => motivo === 'motor' || motivo === 'prazo' || motivo === 'sem-claude'
-  || motivo === 'formato' || motivo === 'erro' || /^codigo-/.test(String(motivo || ''));
+/* motivo que o gerador devolve quando a CULPA e' de fora (conta que nao e'
+   assinatura ou deslogada, cota, rede, prazo, Claude que nao subiu).
+   "resposta-torta", "sem-assunto", "sem-pedido" e "vazio" nao entram: o
+   modelo respondeu (ou nem havia o que nomear), so' nao deu nome - isso e'
+   pular, nao e' erro, e nao pode derrubar o mutirao. */
+const ERROS_DE_FORA = ['motor', 'prazo', 'sem-claude', 'formato', 'erro', 'falhou', 'sem-login', 'conta-api', 'conta-desconhecida'];
+const ehErro = (motivo) => ERROS_DE_FORA.includes(motivo) || /^codigo-/.test(String(motivo || ''));
 
 /* ------------------------------------------------------------------ */
 /* o mutirao                                                           */
@@ -285,6 +312,10 @@ async function mutirao(o) {
   varrer(raizCodex, achados, 0, 'codex');
 
   const nomes = lerNomes(arqNomes);
+  if (!nomes) {   // rodada 2 da leva 5: existe mas nao abre; o Cockpit le a copia (.bak) e aqui nada e' gravado
+    fala('O nomes.json existe mas nao abriu (vazio, pela metade ou preso): nada foi feito, para nao apagar os nomes que voce deu.');
+    return { nomeadas: 0, puladas: 0, erros: 0, parou: true, pauta: [] };
+  }
   let { dentro, fora } = escolher(achados, nomes, agora, dias);
   fala('Conversas no disco: ' + achados.length
     + ' | dos ultimos ' + dias + ' dias e sem nome: ' + dentro.length
@@ -302,7 +333,8 @@ async function mutirao(o) {
     // o id de dentro do arquivo pode desmentir o do nome: revalida o "ja tem nome"
     if (T.nomeDaConversa(nomes, chave).nome) { puladas++; continue; }
     if (!op.robos && ROBO.test(origem || '')) { puladas++; continue; }
-    if (!prompt || soComandoOuContinue(prompt)) { puladas++; continue; }
+    // saudacao, teste de conexao e mensagem de skill tambem nao viram nome (a mesma regra da tela)
+    if (!prompt || soComandoOuContinue(prompt) || !T.ehPedidoNomeavel(prompt)) { puladas++; continue; }
     pauta.push({ ...a, id: chave, prompt });
   }
   fala('Com 1o pedido de gente: ' + pauta.length + ' | puladas na leitura: ' + puladas);
@@ -327,6 +359,11 @@ async function mutirao(o) {
     const rs = await Promise.all(lote.map((p) => gerar(p.prompt).catch(() => ({ titulo: '', motivo: 'erro' }))));
     // relido do disco a cada lote: o Cockpit aberto pode ter gravado no meio
     const atuais = lerNomes(arqNomes);
+    if (!atuais) {   // rodada 2 da leva 5: existe mas nao abre (preso, ou estragado no meio): para sem gravar, os nomes seus ficam
+      parou = true;
+      fala('\nParei: o nomes.json nao abriu neste lote (preso ou estragado). Nada deste lote foi gravado; rode de novo daqui a pouco.');
+      break;
+    }
     let mudou = false;
     for (let k = 0; k < lote.length; k++) {
       const p = lote[k], r = rs[k] || {};
@@ -377,12 +414,23 @@ function lerArgumentos(argv) {
     else if (a === '--codex') o.codex = lista[++i];
     else if (a === '--pausa') o.pausaMs = Number(lista[++i]) || 0;
     else if (a === '--robos') o.robos = true;
+    else if (a === '--help' || a === '-h' || a === '--ajuda') o.ajuda = true;
   }
   return o;
 }
 
+/* --help so' mostra isto: antes, uma bandeira que ele nao conhecia caia no
+   mutirao de verdade (chama o modelo e grava o nomes.json). */
+const USO = [
+  'Mutirao dos nomes: da o nome automatico as conversas do disco que ficaram sem nome.',
+  'Uso:',
+  '  node tools/nomes/mutirao.js --simular            (nao chama modelo, nao grava)',
+  '  node tools/nomes/mutirao.js --dias 7 --limite 50',
+  'Bandeiras: --simular, --dias N, --limite N, --nomes <nomes.json>, --claude <pasta>, --codex <pasta>, --pausa <ms>, --robos, --help',
+].join('\n');
+
 module.exports = {
-  DIAS_PADRAO, JUNTOS, PAUSA_MS, ERROS_SEGUIDOS,
+  DIAS_PADRAO, JUNTOS, PAUSA_MS, ERROS_SEGUIDOS, USO,
   ROBO, ehTecnico, semContexto, soComandoOuContinue, textoClaude, textoCodex,
   criarLeitor, lerConversa, varrer, idDoNome,
   caminhoNomes, lerNomes, gravarSeguro, escolher, ehErro, dependencias,
@@ -391,6 +439,9 @@ module.exports = {
 
 if (require.main === module) {
   const o = lerArgumentos(process.argv.slice(2));
-  mutirao(o).then((r) => { process.exitCode = r.parou ? 1 : 0; })
-    .catch((e) => { console.error('mutirao: ' + (e && e.message || e)); process.exitCode = 1; });
+  if (o.ajuda) process.stdout.write(USO + '\n');
+  else {
+    mutirao(o).then((r) => { process.exitCode = r.parou ? 1 : 0; })
+      .catch((e) => { console.error('mutirao: ' + (e && e.message || e)); process.exitCode = 1; });
+  }
 }

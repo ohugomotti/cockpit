@@ -1,10 +1,10 @@
 /* Olha a TELA DE VERDADE com os quatro motores.
 
    Teste de funcao nao prova nada disto: se a coluna do Gemini existe, se o
-   cartao da conta dele para de vazar pro Codex, se o Grok diz que a lista nao
-   foi ligada em vez de mentir "nenhuma conversa", e se a tela sobe sem erro no
-   console. Duas auditorias em cima do codigo passaram batido na leva 28 - o que
-   pegou os bloqueadores foi rodar.
+   cartao da conta dele para de vazar pro Codex, se o Grok mostra a lista vazia
+   sem aviso de motor (R4-03), e se a tela sobe sem erro no console. Duas
+   auditorias em cima do codigo passaram batido na leva 28 - o que pegou os
+   bloqueadores foi rodar.
 
    Uso:  node testes/tela-quatro-motores.js
 */
@@ -230,8 +230,9 @@ function tirarIsca() { try { fs.rmSync(PASTA_ISCA, { recursive: true, force: tru
     // teste ficou preso nos quatro de antes
     checa('os contadores por motor nao viram NaN', listas.cacheTemOsQuatro === 'claude,codex,gemini,grok,acp' && listas.genNaoEhNaN,
       listas.cacheTemOsQuatro + ' / ' + listas.genNaoEhNaN);
-    checa('o Grok diz que a lista nao foi ligada, em vez de "nenhuma conversa"',
-      /não foi ligada/i.test(listas.grok), JSON.stringify(listas.grok));
+    // R4-03: o motor sem lista volta VAZIO e sem aviso; o painel so' mostra o texto de lista vazia
+    checa('o Grok mostra a lista vazia, sem aviso de motor',
+      /^Nenhuma conversa ainda\.$/i.test(listas.grok), JSON.stringify(listas.grok));
     checa('a coluna do Gemini respondeu alguma coisa', listas.gemini.length > 0, JSON.stringify(listas.gemini));
     checa('a conversa gravada do Gemini aparece na lista',
       /conversa de teste da leva 29/i.test(listas.gemini), JSON.stringify(listas.gemini));

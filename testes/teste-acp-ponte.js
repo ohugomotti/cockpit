@@ -263,7 +263,8 @@ function montar(roteiro, opts) {
     await ate(() => t.eventos.some((e) => e.kind === 'turn-end'), 3000);
     const nova = t.acp.sessoes().find((s) => s.id === 's1');
     checa('R3 a transcricao guarda so o que voce escreveu (titulo da lista)', !!nova && nova.title === 'pergunta nova', JSON.stringify(nova));
-    const hist = t.acp.historico('s1', nova && nova.file);
+    // Tarefa 5 (26/09): o historico le a transcricao em blocos (async)
+    const hist = await t.acp.historico('s1', nova && nova.file);
     checa('R3 o historico nao tem o prefixo', hist.some((m) => m.role === 'user' && m.text === 'pergunta nova') && !hist.some((m) => /Estou continuando/.test(m.text || '')));
     t.acp.parar('p9');
     try { fs.rmSync(pastaDados, { recursive: true, force: true }); } catch {}

@@ -220,7 +220,16 @@ test('pintarTorre: agrupa vazios, agentes num conteiner fixo no fim, relogio and
   assert.match(bloco, /painéis vazios/);
   assert.match(bloco, /pintarAgentesDaTorre\(\);\s*\n[^\n]*buscarSessoesDeFora[^\n]*\n\}$/, 'pintarTorre tem que terminar pintando os agentes');
   assert.match(pegarBloco(app, 'function pintarAgentesDaTorre(', 'pintarAgentesDaTorre'), /\$\('#torre \.torre-agentes'\)[\s\S]*paintAgents\(a\)/, 'agentes fora do conteiner fixo');
-  assert.match(app, /case 'agent-state': if \(torreVisivel\(\)\) pintarAgentesDaTorre\(\);/, 'agent-state ainda pinta solto no #torre');
+  const P = { id: 'p-torre' };
+  let visivel = false, pintadas = 0;
+  const ctx = vm.createContext({ panes: new Map([[P.id, P]]), acharPainel: () => P,
+    torreVisivel: () => visivel, pintarAgentesDaTorre: () => pintadas++, coletarNomeDoAgente() {} });
+  vm.runInContext(pegarBloco(app, 'function tratarEventoDoPainel('), ctx);
+  ctx.tratarEventoDoPainel({ kind: 'agent-state', paneId: P.id, agent: { id: 'a1' } });
+  assert.equal(pintadas, 0, 'Torre fechada não deve ser redesenhada');
+  visivel = true;
+  ctx.tratarEventoDoPainel({ kind: 'agent-state', paneId: P.id, agent: { id: 'a1' } });
+  assert.equal(pintadas, 1, 'Torre aberta repinta pelo contêiner fixo, sem pintar solto');
   assert.ok(!/:hover'\)\)\s*\{\s*pintarTorre/.test(app), 'hover ainda congela a torre inteira');
   assert.match(app, /document\.hidden/);
   // o clique no guardado cai pro id da sessao quando o painel volta com id novo

@@ -20,7 +20,9 @@ for (const f of ['function tipoDoPasso(', 'function legendaDaFala(', 'function m
 checa('Bash/Terminal sao terminal', ctx.tipoDoPasso('Bash') === 'terminal' && ctx.tipoDoPasso('Terminal') === 'terminal');
 checa('Read/Edit/Write sao arquivo', ['Read', 'Edit', 'Write', 'MultiEdit'].every((n) => ctx.tipoDoPasso(n) === 'arquivo'));
 checa('Grep/Glob/WebSearch sao busca', ['Grep', 'Glob', 'WebSearch', 'WebFetch'].every((n) => ctx.tipoDoPasso(n) === 'busca'));
-checa('o resto e outro', ctx.tipoDoPasso('Task') === 'outro' && ctx.tipoDoPasso('mcp__x__y') === 'outro');
+// leva 5i: o Task/Agent (e o spawnAgent do Codex) ganhou o tipo "agente", com filtro proprio; antes caia em "outro" e sumia entre os passos
+checa('o agente tem tipo proprio', ['Task', 'Agent', 'spawnAgent'].every((n) => ctx.tipoDoPasso(n) === 'agente'));
+checa('o resto e outro', ctx.tipoDoPasso('mcp__x__y') === 'outro' && ctx.tipoDoPasso('mcp__cockpit__plano') === 'outro');
 
 // --- legenda do "trabalhando…" ---
 checa('pega a ULTIMA linha util, sem markdown', ctx.legendaDaFala('## Bloco 3\n\n- item\n\n**Rodando a auditoria** agora') === 'Rodando a auditoria agora');
@@ -40,7 +42,8 @@ checa('com fila: nao (a fila ja vai continuar)', ctx.podeContinuar({ busy: false
 
 // --- o teto de 8 passos sumiu ---
 checa('nao ha mais "while (box.children.length > 8)" no app', !app.includes('while (box.children.length > 8)'));
-checa('passo() chama ajustarCaixaDePassos (incremental, com o passo novo)', /function passo\(P, frase, id, nome\)[\s\S]*?ajustarCaixaDePassos\(box, d\)/.test(app));
+// leva 4 (T3, UI 4.1): passo() ganhou o 5o parametro (o comando cru do terminal). A prova e' a chamada incremental, nao a lista de parametros
+checa('passo() chama ajustarCaixaDePassos (incremental, com o passo novo)', /function passo\(P, frase, id, nome[^)]*\)[\s\S]*?ajustarCaixaDePassos\(box, d\)/.test(app));
 checa('passo() so move a caixa quando ela nao esta no fim (custo constante)', /if \(ultimo !== box\) P\.chat\.appendChild\(box\)/.test(app));
 checa('erro fica a vista mesmo recolhido (css)', lerFonte('renderer', 'style.css').includes('.passos.recolhido .passo.erro{display:flex}'));
 

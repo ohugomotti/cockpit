@@ -18,7 +18,9 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
-const { lerFonte, pegarBloco } = require('./raiz');
+const { lerFonte, pegarBloco, RAIZ } = require('./raiz');
+// Tarefa 5 (26/09): reabrir le o arquivo inteiro em blocos (varrerLinhas, async)
+const { varrerLinhas } = require(path.join(RAIZ, 'src', 'historico-leitura'));
 
 const NL = String.fromCharCode(10);
 let falhas = 0;
@@ -53,10 +55,14 @@ const ctx = {
     grok: { nome: 'Grok', pastaSessoes: () => path.join(CASA, '.grok', 'sessions'), conversas: false },
   },
   ipcMain: { handle() {} },
+  varrerLinhas,
 };
 vm.createContext(ctx);
-for (const a of ['function cliFalaDeGente(', 'function cliLerConversa(', 'function cliMapaProjetos(',
-  'function cliSessions(', 'function cliHistory(', 'function comandosDoCli(', 'function descricaoDoToml(']) {
+/* Tarefa 5 (26/09): a regra do mapa virou o cliMontador (linha a linha), a
+   lista le so' a cabeca (cliLerCabeca) e reabrir le o arquivo inteiro em
+   blocos -- cliLerConversa e cliHistory sao async agora. */
+for (const a of ['function cliFalaDeGente(', 'function cliMontador(', 'function cliLerCabeca(', 'async function cliLerConversa(',
+  'function cliMapaProjetos(', 'function cliSessions(', 'async function cliHistory(', 'function comandosDoCli(', 'function descricaoDoToml(']) {
   vm.runInContext(pegarBloco(txt, a, a), ctx);
 }
 ctx.CLIS.gemini.comandos = true;
@@ -103,6 +109,8 @@ fs.writeFileSync(path.join(CASA, '.gemini', 'projects.json'),
 
 /* ---------------------------- o que se cobra ---------------------------- */
 
+// async: reabrir a conversa (cliHistory) espera a leitura em blocos (Tarefa 5)
+(async () => {
 console.log(NL + 'A lista de conversas');
 const lista = ctx.cliSessions('gemini');
 {
@@ -128,7 +136,7 @@ console.log(NL + 'Motor sem formato confirmado');
 }
 
 console.log(NL + 'Reabrir a conversa');
-const h = ctx.cliHistory(ARQ, 60);
+const h = await ctx.cliHistory(ARQ);
 {
   const papeis = h.map((m) => m.role).join(',');
   checa('o <session_context> nao volta pra tela',
@@ -229,3 +237,4 @@ try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 console.log('');
 if (falhas) { console.log(falhas + ' FALHA(S)'); process.exit(1); }
 console.log('todas passaram');
+})().catch((e) => { console.log('ESTOUROU:', e && e.stack || e); process.exit(1); });

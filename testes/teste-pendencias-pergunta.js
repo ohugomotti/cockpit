@@ -12,7 +12,7 @@ const checa = (nome, ok, det) => { console.log((ok ? '  ok   ' : '  FALHA') + ' 
 class El {
   constructor(tag) {
     this.tagName = String(tag || 'div').toUpperCase();
-    this.style = {}; this.dataset = {};
+    this.style = {}; this.dataset = {}; this.attributes = {};
     this.filhos = []; this.texto = ''; this._html = ''; this.eventos = {};
     this.classes = new Set(); this.pai = null; this.type = ''; this.placeholder = ''; this.value = '';
   }
@@ -21,6 +21,8 @@ class El {
   // classList.add), entao sem isso coletarPorClasse nunca acharia nada
   get className() { return [...this.classes].join(' '); }
   set className(v) { this.classes = new Set(String(v || '').split(/\s+/).filter(Boolean)); }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) { return this.attributes[name] ?? null; }
   get classList() {
     const eu = this;
     return {
@@ -55,6 +57,8 @@ function montarCtx() {
   const ctx = {
     ...globaisFalsos(), console,
     $, document: { createElement: (t) => new El(t) },
+    // leva 5h: o cartao desenha o ✕ e as setas com ico(); aqui o desenho nao importa
+    ico: (nome) => '<svg data-ico="' + nome + '"></svg>',
     // Task 5 fez proximaPergunta chamar sincronizarPendencias() no final; aqui a
     // funcao e' extraida isolada (sem o resto do app.js), entao precisa do mesmo
     // tipo de no-op que pintarAbasLocal ja recebe - efeito colateral fora do que
@@ -85,14 +89,22 @@ async function testaDuasSubPerguntasNoContainerAlternativo() {
     }],
   };
   ctx.desenharPergunta(P, outro);
-  checa('as DUAS sub-perguntas aparecem no container alternativo', outro.textContent.includes('Qual pasta?') && outro.textContent.includes('Confirma?'));
+  /* Leva 5h: antes as duas sub-perguntas apareciam EMPILHADAS no cartao. Agora e' uma pergunta por pagina: as duas continuam
+     no container (e e' por isso que o que voce marcou numa nao se perde ao ir e voltar), mas so' a pagina atual aparece. */
+  checa('as DUAS sub-perguntas estao no container alternativo (uma por pagina)', outro.textContent.includes('Qual pasta?') && outro.textContent.includes('Confirma?'));
+  const paginas = coletarPorClasse(outro, 'perg-item');
+  checa('uma por pagina: so a primeira aparece', paginas.length === 2 && !paginas[0].classes.has('hidden') && paginas[1].classes.has('hidden'));
+  checa('o Responder fica so na ultima pagina', coletarPorClasse(outro, 'perg-pe')[0].classes.has('hidden'));
 
   const opcoes = coletarPorClasse(outro, 'perg-op');
   const btSrc = opcoes.find((b) => b.textContent.includes('src'));
   const btSim = opcoes.find((b) => b.textContent.includes('sim'));
   await btSrc.disparar('click');
+  checa('marcar a escolha unica da 1a pagina leva (sozinho) para a 2a', paginas[0].classes.has('hidden') && !paginas[1].classes.has('hidden'));
   await btSim.disparar('click');
+  checa('opções selecionadas também informam seu estado ao leitor de tela', btSrc.getAttribute('aria-pressed') === 'true' && btSim.getAttribute('aria-pressed') === 'true');
   const btOk = coletarPorClasse(outro, 'perg-ok')[0];
+  checa('o Responder aparece na ultima pagina', !btOk.pai.classes.has('hidden'));
   checa('botao Responder habilitado depois de marcar as 2', !btOk.disabled);
   await btOk.disparar('click');
   checa('perguntaResponder recebe as DUAS respostas, uma por sub-pergunta (nao so a ultima)', JSON.stringify(ctx._respostas) === JSON.stringify([{ id: 'q1', respostas: ['src', 'sim'] }]));

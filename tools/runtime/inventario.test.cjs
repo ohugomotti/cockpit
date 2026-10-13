@@ -1,0 +1,7 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {inventory,compare}=require('./inventario.cjs');
+const sample=()=>({abas:[{id:'a',host:'a.example',chave:'chave-ficticia',caminhoRemoto:'/srv',paineis:[{paneId:'p',engine:'claude',sessaoId:'s',rascunho:'NÃO MOSTRAR'}]}],abaAtiva:'a',tema:'jornal',defMode:'plan',conectoresQuando:{a:1},conectoresVistos:['a'],temposTrabalho:{p:3}});
+test('cache de conectores e tempo não são confundidos com perda de preferências',()=>{const a=sample(),b=sample();b.conectoresQuando={b:2};b.conectoresVistos=['b'];b.temposTrabalho={p:10};assert.ok(Object.values(compare(inventory(a),inventory(b))).every(Boolean));});
+test('host, pasta, chave, modo, sessão e rascunho divergentes são detectados',()=>{for(const change of [b=>b.abas[0].host='outro',b=>b.abas[0].caminhoRemoto='/outro',b=>b.abas[0].chave='outra',b=>b.defMode='bypass',b=>b.abas[0].paineis[0].sessaoId='outro',b=>b.abas[0].paineis[0].rascunho='outro']){const a=sample(),b=sample();change(b);assert.ok(Object.values(compare(inventory(a),inventory(b))).some(value=>!value));}});
+test('novos defaults são permitidos e relatórios não contêm texto nem chave',()=>{const a=sample(),b=sample();b.novaPreferencia=true;b.abas[0].novoDefault=false;assert.ok(Object.values(compare(inventory(a),inventory(b))).every(Boolean));const text=JSON.stringify(inventory(a));assert.ok(!text.includes('NÃO MOSTRAR'));assert.ok(!text.includes('chave-ficticia'));assert.ok(!text.includes('/srv'));});

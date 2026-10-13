@@ -64,6 +64,7 @@ function montarPalco(fonteJanela) {
   };
   vm.createContext(ctx);
   vm.runInContext(pegarBloco(app, 'function fecharTerminalEmSilencio('), ctx);
+  vm.runInContext(pegarBloco(app, 'function cancelarSaidaDoModal('), ctx);
   vm.runInContext(pegarBloco(app, 'function ajustarTerminal('), ctx);
   vm.runInContext(pegarBloco(app, 'function textoVisivelDoTerminal('), ctx);
   vm.runInContext(fonteJanela, ctx);

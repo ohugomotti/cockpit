@@ -44,8 +44,10 @@ test('a faixa de pastas nasce numa coluna própria, com o + no fim, e as pastas 
   assert.match(ui, /work = node\("div", "ck-work"\)/);
   assert.match(ui, /panesBox\.before\(work\)/);
   assert.match(ui, /work\.append\(placeBar\)/);
-  // pasta entra ANTES do botão de nova pasta: o + é sempre o último
-  assert.match(ui, /placeBar\.insertBefore\(g\.el, newPlace\)/);
+  /* leva 5h (abas do Safari): a pasta entra na TRILHA, antes do ▾ que é o último item dela, e o + vem logo depois da trilha. Antes ela
+     entrava direto na faixa, antes do botão de nova pasta (placeBar.insertBefore(g.el, newPlace)). test/abas-safari.test.js prova a ordem. */
+  assert.match(ui, /alinharEmOrdem\(trilha, secoes\)/);
+  assert.match(ui, /placeBar\.append\(trilha, newPlace\)/);
   assert.match(ui, /newPlace = button\("plus", "Nova pasta", \(\) => abrirModalAbaLocal\(\)/);
   // e nenhuma pasta vai mais para a lista da lateral
   assert.doesNotMatch(ui, /sessionList\.append\(g\.el\)/);
@@ -66,9 +68,13 @@ test('a faixa rola na horizontal sem quebrar linha e sem empurrar a janela', () 
   assert.match(css, /\.ck-place-bar::-webkit-scrollbar\s*\{[^}]*height:\s*0/);
   // e a pasta que vira ativa se mostra sozinha quando a faixa está rolada
   assert.match(ui, /groups\.get\("place:" \+ place\?\.id\)\?\.el\.scrollIntoView/);
+  /* leva 5h (abas do Safari): a aba deixou de ser um chip que não encolhe e que a faixa rola (flex: 0 0 auto + max-width). Todas partem da
+     mesma base (--aba-max) e encolhem juntas, então têm sempre a mesma largura, até o mínimo (--aba-min); o que não cabe no mínimo vai para
+     o ▾ (test/abas-safari.test.js). O overflow da faixa ficou só como rede de segurança, e é por isso que as asserções de cima valem. */
   const chip = regra('.ck-place-bar .ck-place-only');
-  assert.match(chip, /flex:\s*0 0 auto/, 'pasta não encolhe: quem rola é a faixa');
-  assert.match(chip, /max-width/);
+  assert.match(chip, /flex:\s*0 1 auto/, 'as abas encolhem juntas, todas com a mesma base');
+  assert.match(chip, /width:\s*var\(--aba-max\)/);
+  assert.match(chip, /min-width:\s*var\(--aba-min\)/);
   const trabalho = regra('.ck-app .ck-work');
   assert.match(trabalho, /flex-direction:\s*column/);
   assert.match(trabalho, /min-width:\s*0/);
@@ -77,8 +83,10 @@ test('a faixa rola na horizontal sem quebrar linha e sem empurrar a janela', () 
 /* A primeira versão escondia o ícone nas pastas locais, para deixar "só o nome".
    O Hugo pediu o ícone de pasta de volta em 21/09/2026: ele distingue pasta de
    servidor sem obrigar a ler o nome. O que continua valendo é o resto da regra
-   de compactação — nada de contador, e nome longo com reticências. */
-test('a pasta mostra o ícone e o nome, sem contador', () => {
+   de compactação — nada dos contadores de estado do grupo (o .ck-group-stats segue escondido), e nome longo com reticências.
+   Leva 5h: a aba ganhou o selo laranja com o número das conversas que pedem você (decisão do Hugo, 08/10); ele é outro elemento
+   (.ck-place-selo, test/abas-safari.test.js) e não volta com os contadores de estado. */
+test('a pasta mostra o ícone e o nome, sem os contadores de estado do grupo', () => {
   assert.match(regra('.ck-place-bar .ck-group-stats'), /display:\s*none/);
   const icone = regra('.ck-place-bar .ck-group-icon');
   assert.match(icone, /display:\s*flex/, 'o ícone de pasta tem que aparecer');
@@ -92,8 +100,13 @@ test('a pasta mostra o ícone e o nome, sem contador', () => {
 
 test('a pasta ativa se destaca com token que já existe, não com cor inventada', () => {
   const ativa = regra('.ck-place-bar .ck-place-only[data-current="true"] .ck-group-head');
-  assert.match(ativa, /var\(--focus\)/);
-  assert.match(ativa, /var\(--high\)/);
+  // leva 5e: --tab-on em vez de --high. O --high é o degrau de hover e de seleção do tema (nos claros é MAIS ESCURO que o fundo da
+  // faixa e some nele); a aba ativa precisa de uma superfície mais forte que a das outras abas em todo tema.
+  assert.match(ativa, /var\(--tab-on/);
+  /* leva 5h: a ativa LEVANTA (superfície, sombra leve e nome em negrito) em vez de ganhar o traço de foco embaixo (inset 0 -2px 0 var(--focus)) */
+  assert.match(ativa, /font-weight:\s*700/);
+  assert.match(ativa, /box-shadow:\s*0 1px 3px/);
+  assert.doesNotMatch(ativa, /var\(--focus\)/, 'o traço de foco embaixo da aba saiu com o desenho antigo');
   assert.doesNotMatch(ativa, /#[0-9a-f]{3,8}\b/i, 'nada de cor crua fora dos tokens');
 });
 
@@ -118,8 +131,11 @@ test('a Torre e o histórico pintam pela MESMA função de linha', () => {
      mudou e e' outro: quem monta a linha das DUAS listas continua sendo a
      mesma sessionRow, e ninguem monta .ck-session por fora dela. */
   assert.match(ui, /const r = sessionRow\(rows, row\);/);
-  assert.match(ui, /controlList\.append\(r\.el\);/);
-  assert.match(ui, /sessionList\.append\(sessionRow\(histRows, row\)\.el\)/);
+  assert.match(ui, /linhasDaTorre\.push\(r\.el\);/);
+  assert.match(ui, /sequencia\.push\(sessionRow\(histRows, row\)\.el\)/);
+  // leva 3 (R4-01): as duas listas entram na ordem pelo mesmo alinharEmOrdem, que só move o que está fora do lugar
+  assert.match(ui, /alinharEmOrdem\(controlList, linhasDaTorre, /);
+  assert.match(ui, /alinharEmOrdem\(sessionList, sequencia, /);
   // tres ocorrencias: a definicao e as duas listas. Uma quarta seria um
   // terceiro caminho de montagem, que e' o que este teste existe pra impedir.
   assert.equal((ui.match(/sessionRow\(/g) || []).length, 3);
@@ -228,19 +244,24 @@ test('o histórico se recarrega sozinho quando o cache é zerado no fim do turno
   /* o bug: o app zera histCache[motor] no turn-end e a recarga estava atrás de
      "se a lista antiga estiver visível", que no tema ck-app nunca está */
   assert.match(ui, /function historicoFaltando\(\) \{/);
-  assert.match(ui, /else if \(historicoFaltando\(\)\) loadPlaceHistory\(\);/);
+  assert.match(ui, /else if \(historicoFaltando\(\)\) loadPlaceHistory\(motoresSemCache\(\)\);/);
   const guarda = pedaco('historicoFaltando');
   assert.match(guarda, /MOTORES\.some\(\(engine\) => histCache\[engine\] == null\)/);
   // sem trava vira laço: a repintura chamaria a recarga, que repinta, que chama…
   assert.match(guarda, /historyLoading \|\| Date\.now\(\) - historyTried < 2000/);
   // e o temporizador só é re-armado por quem ainda é dono da pasta atual
-  assert.match(pedaco('loadPlaceHistory'),
-    /if \(\(abaAtual\(\)\?\.id \|\| ""\) === place\) \{\s*\n\s*historyTimer = setTimeout/);
+  // leva 3: ...e só pela recarga COMPLETA (motores === MOTORES). A parcial, dos motores sem cache, não limpa
+  // nem rearma o relógio dos 5 min: cada fim de turno o zerava e a recarga completa nunca rodava
+  const recargaCompleta = pedaco('loadPlaceHistory');
+  assert.match(recargaCompleta, /const completa = motores === MOTORES;/);
+  assert.match(recargaCompleta, /if \(completa\) clearTimeout\(historyTimer\);/);
+  assert.match(recargaCompleta,
+    /if \(\(abaAtual\(\)\?\.id \|\| ""\) === place\) \{\s*\n\s*if \(completa\) historyTimer = setTimeout/);
 });
 
 test('nada de segundo caminho de leitura: quem lê sessão continua sendo o loadHist', () => {
-  assert.match(ui, /function loadPlaceHistory\(\)/);
-  assert.match(ui, /MOTORES\.map\(\(engine\) =>\s*Promise\.resolve\(loadHist\(engine\)\)/);
+  assert.match(ui, /function loadPlaceHistory\(motores = MOTORES\)/);
+  assert.match(ui, /motores\.map\(\(engine\) =>\s*Promise\.resolve\(loadHist\(engine\)\)/);
   assert.match(ui, /if \(historyPlace !== \(place\?\.id \|\| ""\)\) \{/);
   assert.match(ui, /const saved = historyRows\(data\)/, 'a repintura reaproveita o liveRows que já montou');
   // a recarga só conhece o loadHist; ela não fala com a ponte de sessões, e é a

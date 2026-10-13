@@ -1,0 +1,7 @@
+{
+  "name": "cockpit-sonda-electron44",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sonda de leitura das APIs do Electron usadas pelo Cockpit (leva 0, L0-a). Nao faz parte do app.",
+  "main": "main.js"
+}

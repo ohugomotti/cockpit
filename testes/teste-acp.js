@@ -64,7 +64,8 @@ checa('e o fim do passo sai sem duplicar o inicio', e3b.length === 1 && e3b[0].k
 const s4 = { ferramentas: new Map() };
 acp.traduzirUpdate(s4, { sessionUpdate: 'tool_call', toolCallId: 'w1', title: 'Write novo.txt', kind: 'edit', status: 'pending' });
 const e4 = acp.traduzirUpdate(s4, { sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'in_progress', content: [{ type: 'diff', path: 'C:/x/novo.txt', oldText: null, newText: 'oi' }] });
-checa('diff tardio vira tool-mudanca (arquivo novo)', e4.length === 1 && e4[0].kind === 'tool-mudanca' && e4[0].mudanca.tipo === 'write-novo', JSON.stringify(e4));
+// Leva final: oldText null nao comprova que o arquivo e novo; desfazer deve recusar.
+checa('diff tardio vira tool-mudanca (origem incerta)', e4.length === 1 && e4[0].kind === 'tool-mudanca' && e4[0].mudanca.tipo === 'write-incerto', JSON.stringify(e4));
 // falha
 const e5 = acp.traduzirUpdate(s4, { sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'failed', rawOutput: { erro: 'EACCES' } });
 checa('status failed vira erro com a saida crua', e5[0].kind === 'tool-end' && e5[0].error === true && /EACCES/.test(e5[0].output));

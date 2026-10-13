@@ -1,0 +1,615 @@
+{
+  "de": "32.3.3",
+  "para": "44.5.1",
+  "chrome": {
+    "de": "128.0.6613.186",
+    "para": "152.0.7977.130"
+  },
+  "node": {
+    "de": "20.18.1",
+    "para": "24.21.0"
+  },
+  "sumiu": [
+    {
+      "api": "clipboard.readBuffer",
+      "modulo": "clipboard",
+      "membro": "readBuffer",
+      "instancia": false,
+      "de": {
+        "existe": true,
+        "typeof": "function",
+        "length": 0
+      },
+      "para": {
+        "existe": false,
+        "typeof": "undefined",
+        "length": null
+      },
+      "usos": [
+        "src/main.js:4291",
+        "src/main.js:4301"
+      ]
+    },
+    {
+      "api": "clipboard.readImage",
+      "modulo": "clipboard",
+      "membro": "readImage",
+      "instancia": false,
+      "de": {
+        "existe": true,
+        "typeof": "function",
+        "length": 0
+      },
+      "para": {
+        "existe": false,
+        "typeof": "undefined",
+        "length": null
+      },
+      "usos": [
+        "src/main.js:4423"
+      ]
+    }
+  ],
+  "apareceu": [
+    {
+      "api": "WebFrameMain#detached",
+      "modulo": "WebFrameMain",
+      "membro": "detached",
+      "instancia": true,
+      "de": {
+        "existe": false,
+        "typeof": "undefined",
+        "length": null
+      },
+      "para": {
+        "existe": true,
+        "typeof": "boolean",
+        "length": null
+      },
+      "usos": [
+        "src/cockpit-ipc-security.js:25"
+      ]
+    },
+    {
+      "api": "WebFrameMain#isDestroyed",
+      "modulo": "WebFrameMain",
+      "membro": "isDestroyed",
+      "instancia": true,
+      "de": {
+        "existe": false,
+        "typeof": "undefined",
+        "length": null
+      },
+      "para": {
+        "existe": true,
+        "typeof": "function",
+        "length": 0
+      },
+      "usos": [
+        "src/cockpit-ipc-security.js:26"
+      ]
+    }
+  ],
+  "mudouTypeof": [],
+  "mudouAridade": [
+    {
+      "api": "clipboard.writeText",
+      "modulo": "clipboard",
+      "membro": "writeText",
+      "instancia": false,
+      "de": {
+        "existe": true,
+        "typeof": "function",
+        "length": 0
+      },
+      "para": {
+        "existe": true,
+        "typeof": "function",
+        "length": 1
+      },
+      "usos": [
+        "src/main.js:4450"
+      ]
+    }
+  ],
+  "virouPromise": [
+    {
+      "api": "clipboard.readText",
+      "chamada": "clipboard.readText()",
+      "usos": [
+        "src/main.js:4447"
+      ],
+      "tipoAntes": "string",
+      "tipoResolvidoAgora": "string"
+    },
+    {
+      "api": "clipboard.has",
+      "chamada": "clipboard.has('image/png')",
+      "usos": [],
+      "tipoAntes": "boolean",
+      "tipoResolvidoAgora": "boolean"
+    },
+    {
+      "api": "clipboard.read",
+      "chamada": "clipboard.read('text/uri-list')",
+      "usos": [
+        "src/main.js:4312"
+      ],
+      "tipoAntes": "string",
+      "tipoResolvidoAgora": "Array"
+    }
+  ],
+  "passouAFalhar": [
+    {
+      "api": "clipboard.availableFormats",
+      "chamada": "clipboard.availableFormats()",
+      "usos": [],
+      "tipoAntes": "Array",
+      "erroAgora": "TypeError: clipboard.availableFormats is not a function"
+    },
+    {
+      "api": "clipboard.readImage",
+      "chamada": "clipboard.readImage()",
+      "usos": [
+        "src/main.js:4423"
+      ],
+      "tipoAntes": "NativeImage",
+      "erroAgora": "TypeError: clipboard.readImage is not a function"
+    },
+    {
+      "api": "clipboard.readBuffer",
+      "chamada": "clipboard.readBuffer('FileNameW')",
+      "usos": [
+        "src/main.js:4291",
+        "src/main.js:4301"
+      ],
+      "tipoAntes": "Buffer",
+      "erroAgora": "TypeError: clipboard.readBuffer is not a function"
+    }
+  ],
+  "voltouAFuncionar": [],
+  "mudouTipoRetorno": [
+    {
+      "api": "clipboard.read",
+      "chamada": "clipboard.read('text/uri-list')",
+      "usos": [
+        "src/main.js:4312"
+      ],
+      "de": "string",
+      "para": "Array"
+    }
+  ],
+  "naoVerificaveis": [
+    {
+      "api": "contextBridge.(módulo)",
+      "modulo": "contextBridge",
+      "membro": "(módulo)",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload-recorte.js:4",
+        "src/preload.js:1"
+      ]
+    },
+    {
+      "api": "ipcRenderer.(módulo)",
+      "modulo": "ipcRenderer",
+      "membro": "(módulo)",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload-recorte.js:4",
+        "src/preload.js:1"
+      ]
+    },
+    {
+      "api": "contextBridge.exposeInMainWorld",
+      "modulo": "contextBridge",
+      "membro": "exposeInMainWorld",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload-recorte.js:6",
+        "src/preload.js:21"
+      ]
+    },
+    {
+      "api": "ipcRenderer.invoke",
+      "modulo": "ipcRenderer",
+      "membro": "invoke",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload-recorte.js:7",
+        "src/preload-recorte.js:8",
+        "src/preload-recorte.js:9",
+        "src/preload.js:24",
+        "src/preload.js:25",
+        "src/preload.js:27",
+        "src/preload.js:28",
+        "src/preload.js:39",
+        "src/preload.js:41",
+        "src/preload.js:42",
+        "src/preload.js:43",
+        "src/preload.js:44",
+        "src/preload.js:46",
+        "src/preload.js:50",
+        "src/preload.js:51",
+        "src/preload.js:52",
+        "src/preload.js:53",
+        "src/preload.js:54",
+        "src/preload.js:55",
+        "src/preload.js:56",
+        "src/preload.js:57",
+        "src/preload.js:58",
+        "src/preload.js:59",
+        "src/preload.js:60",
+        "src/preload.js:61",
+        "src/preload.js:62",
+        "src/preload.js:64",
+        "src/preload.js:65",
+        "src/preload.js:66",
+        "src/preload.js:67",
+        "src/preload.js:68",
+        "src/preload.js:69",
+        "src/preload.js:72",
+        "src/preload.js:73",
+        "src/preload.js:74",
+        "src/preload.js:75",
+        "src/preload.js:76",
+        "src/preload.js:77",
+        "src/preload.js:78",
+        "src/preload.js:79",
+        "src/preload.js:81",
+        "src/preload.js:83",
+        "src/preload.js:84",
+        "src/preload.js:85",
+        "src/preload.js:86",
+        "src/preload.js:87",
+        "src/preload.js:88",
+        "src/preload.js:89",
+        "src/preload.js:90",
+        "src/preload.js:91",
+        "src/preload.js:92",
+        "src/preload.js:93",
+        "src/preload.js:94",
+        "src/preload.js:95",
+        "src/preload.js:96",
+        "src/preload.js:97",
+        "src/preload.js:98",
+        "src/preload.js:99",
+        "src/preload.js:100",
+        "src/preload.js:101",
+        "src/preload.js:102",
+        "src/preload.js:103",
+        "src/preload.js:104",
+        "src/preload.js:105",
+        "src/preload.js:106",
+        "src/preload.js:107",
+        "src/preload.js:108",
+        "src/preload.js:110",
+        "src/preload.js:111",
+        "src/preload.js:112",
+        "src/preload.js:113",
+        "src/preload.js:114",
+        "src/preload.js:115",
+        "src/preload.js:116",
+        "src/preload.js:117",
+        "src/preload.js:118",
+        "src/preload.js:119",
+        "src/preload.js:121",
+        "src/preload.js:122",
+        "src/preload.js:124",
+        "src/preload.js:125",
+        "src/preload.js:126",
+        "src/preload.js:128",
+        "src/preload.js:129",
+        "src/preload.js:132",
+        "src/preload.js:134",
+        "src/preload.js:136",
+        "src/preload.js:137",
+        "src/preload.js:138",
+        "src/preload.js:139",
+        "src/preload.js:140",
+        "src/preload.js:141",
+        "src/preload.js:142",
+        "src/preload.js:144",
+        "src/preload.js:145",
+        "src/preload.js:146",
+        "src/preload.js:147",
+        "src/preload.js:148",
+        "src/preload.js:149",
+        "src/preload.js:150",
+        "src/preload.js:151",
+        "src/preload.js:152",
+        "src/preload.js:153",
+        "src/preload.js:154",
+        "src/preload.js:155",
+        "src/preload.js:156",
+        "src/preload.js:157",
+        "src/preload.js:158",
+        "src/preload.js:161",
+        "src/preload.js:162",
+        "src/preload.js:163",
+        "src/preload.js:164",
+        "src/preload.js:165",
+        "src/preload.js:166",
+        "src/preload.js:167",
+        "src/preload.js:168",
+        "src/preload.js:169",
+        "src/preload.js:170",
+        "src/preload.js:171",
+        "src/preload.js:172",
+        "src/preload.js:173",
+        "src/preload.js:174",
+        "src/preload.js:175",
+        "src/preload.js:176",
+        "src/preload.js:177",
+        "src/preload.js:178",
+        "src/preload.js:179",
+        "src/preload.js:180",
+        "src/preload.js:181",
+        "src/preload.js:182",
+        "src/preload.js:183",
+        "src/preload.js:184",
+        "src/preload.js:185",
+        "src/preload.js:186",
+        "src/preload.js:188",
+        "src/preload.js:190",
+        "src/preload.js:191",
+        "src/preload.js:192",
+        "src/preload.js:193"
+      ]
+    },
+    {
+      "api": "webUtils.(módulo)",
+      "modulo": "webUtils",
+      "membro": "(módulo)",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload.js:1"
+      ]
+    },
+    {
+      "api": "ipcRenderer.sendSync",
+      "modulo": "ipcRenderer",
+      "membro": "sendSync",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload.js:9",
+        "src/preload.js:35"
+      ]
+    },
+    {
+      "api": "ipcRenderer.on",
+      "modulo": "ipcRenderer",
+      "membro": "on",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload.js:17"
+      ]
+    },
+    {
+      "api": "ipcRenderer.removeListener",
+      "modulo": "ipcRenderer",
+      "membro": "removeListener",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload.js:18"
+      ]
+    },
+    {
+      "api": "webUtils.getPathForFile",
+      "modulo": "webUtils",
+      "membro": "getPathForFile",
+      "instancia": false,
+      "motivo": "só existe no preload/renderer; conferido pela tipagem oficial",
+      "usos": [
+        "src/preload.js:23"
+      ]
+    },
+    {
+      "api": "Dock#setBadge",
+      "modulo": "Dock",
+      "membro": "setBadge",
+      "instancia": true,
+      "motivo": "só existe no macOS",
+      "usos": [
+        "src/visual-mac-native.js:199",
+        "src/visual-mac-native.js:220"
+      ]
+    }
+  ],
+  "disponiveis": {
+    "BrowserWindow": {
+      "sumiram": [],
+      "novos": [
+        "clearPersistedState"
+      ]
+    },
+    "BrowserWindow (instância)": {
+      "sumiram": [
+        "isWebViewFocused"
+      ],
+      "novos": [
+        "getAccentColor",
+        "isContentProtected",
+        "isSnapped",
+        "setAccentColor",
+        "snapped"
+      ]
+    },
+    "Menu (instância)": {
+      "sumiram": [
+        "getCommandIdAt",
+        "getLabelAt",
+        "getSublabelAt",
+        "getToolTipAt",
+        "isEnabledAt",
+        "isItemCheckedAt",
+        "isVisibleAt",
+        "setSublabel",
+        "worksWhenHiddenAt"
+      ],
+      "novos": [
+        "setCustomType"
+      ]
+    },
+    "Session (instância)": {
+      "sumiram": [],
+      "novos": [
+        "clearSharedDictionaryCache",
+        "clearSharedDictionaryCacheForIsolationKey",
+        "extensions",
+        "getPreloadScripts",
+        "getSharedDictionaryInfo",
+        "getSharedDictionaryUsageInfo",
+        "registerPreloadScript",
+        "unregisterPreloadScript"
+      ]
+    },
+    "WebContents (instância)": {
+      "sumiram": [
+        "canGoToIndex",
+        "equal",
+        "getNativeView"
+      ],
+      "novos": [
+        "caretBrowsingEnabled",
+        "clone",
+        "copyVideoFrameAt",
+        "focusedFrame",
+        "getOrCreateDevToolsTargetId",
+        "getZoomMode",
+        "isCaretBrowsingEnabled",
+        "saveVideoFrameAs",
+        "setCaretBrowsingEnabled",
+        "setZoomMode",
+        "zoomMode"
+      ]
+    },
+    "WebFrameMain (instância)": {
+      "sumiram": [],
+      "novos": [
+        "collectJavaScriptCallStack",
+        "copyVideoFrameAt",
+        "detached",
+        "frameToken",
+        "isDestroyed",
+        "printToPDF",
+        "saveVideoFrameAs"
+      ]
+    },
+    "app": {
+      "sumiram": [],
+      "novos": [
+        "getAccessibilitySupportFeatures",
+        "getRecentDocuments",
+        "isHardwareAccelerationEnabled",
+        "setAccessibilitySupportFeatures",
+        "setClientCertRequestPasswordHandler",
+        "setToastActivatorCLSID",
+        "toastActivatorCLSID"
+      ]
+    },
+    "clipboard": {
+      "sumiram": [
+        "availableFormats",
+        "readBookmark",
+        "readBuffer",
+        "readFindText",
+        "readHTML",
+        "readImage",
+        "readRTF",
+        "writeBookmark",
+        "writeBuffer",
+        "writeFindText",
+        "writeHTML",
+        "writeImage",
+        "writeRTF"
+      ],
+      "novos": []
+    },
+    "globalShortcut": {
+      "sumiram": [],
+      "novos": [
+        "isSuspended",
+        "setSuspended"
+      ]
+    },
+    "nativeImage": {
+      "sumiram": [],
+      "novos": [
+        "createMenuSymbol"
+      ]
+    },
+    "nativeTheme": {
+      "sumiram": [],
+      "novos": [
+        "shouldUseDarkColorsForSystemIntegratedUI"
+      ]
+    },
+    "net": {
+      "sumiram": [],
+      "novos": [
+        "WebSocket"
+      ]
+    },
+    "safeStorage": {
+      "sumiram": [],
+      "novos": [
+        "decryptStringAsync",
+        "encryptStringAsync",
+        "isAsyncEncryptionAvailable"
+      ]
+    },
+    "systemPreferences": {
+      "sumiram": [
+        "isAeroGlassEnabled"
+      ],
+      "novos": []
+    }
+  },
+  "extras": {
+    "de": {
+      "commandLineUserDataDir": {
+        "igualAoPassado": true,
+        "igualIgnorandoMaiusculas": true,
+        "virouMinusculo": false,
+        "passadoTinhaMaiuscula": true
+      },
+      "ponteCarregaRetornoDoReadText": {
+        "lanca": false
+      },
+      "ClipboardItem": "undefined",
+      "clipboardSelection": "undefined",
+      "mainFrameMesmoObjeto": true,
+      "sessaoDaJanelaEhAPadrao": true
+    },
+    "para": {
+      "commandLineUserDataDir": {
+        "igualAoPassado": true,
+        "igualIgnorandoMaiusculas": true,
+        "virouMinusculo": false,
+        "passadoTinhaMaiuscula": true
+      },
+      "ponteCarregaRetornoDoReadText": {
+        "lanca": true,
+        "erro": "Error: #<Promise> could not be cloned."
+      },
+      "ClipboardItem": "function",
+      "clipboardSelection": "undefined",
+      "mainFrameMesmoObjeto": true,
+      "sessaoDaJanelaEhAPadrao": true
+    }
+  },
+  "conferencia": {
+    "readImageSumiu": true,
+    "readTextVirouPromise": true,
+    "ok": true
+  }
+}

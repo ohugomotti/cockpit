@@ -138,11 +138,21 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
   const agentes = new Map(), chamadas = new Map(), conectores = new Map(), sessoes = new Map(), aliases = new Map();
   function limitado(map, limite) { while (map.size > limite) map.delete(map.keys().next().value); }
   function publicar(reg) { enviar(reg.paneId, 'agent-state', { agent: { ...reg } }); }
+  /* Leva 5i (organograma dos agentes): o tempo de cada agente na tela. startedAt e' a PRIMEIRA vez que o registro viu o agente e nunca
+     recomeça (nem quando um agente do Codex volta a rodar depois de parar: a tela mostra o tempo desde que ele nasceu). endedAt e' o
+     momento em que ele saiu do trabalho ATIVO (rodando, iniciando, esperando voce): fica 0 enquanto trabalha e, ja' parado, o fim nao
+     anda quando chega uma mensagem nova. A tela conta ao vivo (agora - startedAt) com endedAt 0 e, parado, mostra endedAt - startedAt:
+     o tempo de um agente concluido deixa de crescer. */
+  const ATIVOS = new Set(['running', 'pending', 'waiting']);
   function agente(engine, paneId, id, dados) {
     if (!id || paneId == null) return;
-    const k = chave(engine, paneId, id), antes = agentes.get(k);
+    const k = chave(engine, paneId, id), antes = agentes.get(k), t = agora();
     const reg = { id, engine, paneId, threadId: '', parentId: '', task: 'Subagente', state: 'unknown',
-      model: '', source: '', controlSupported: false, ...antes, ...dados, updatedAt: agora() };
+      model: '', source: '', controlSupported: false, ...antes, ...dados, updatedAt: t };
+    reg.startedAt = Number(antes?.startedAt) || Number(dados?.startedAt) || t;
+    reg.endedAt = ATIVOS.has(reg.state) ? 0
+      : (antes && !ATIVOS.has(antes.state) && antes.endedAt) ? antes.endedAt
+      : Number(dados?.endedAt) || t;
     agentes.set(k, reg); limitado(agentes, LIMITES.agentes); publicar(reg); return reg;
   }
   function resetar(engine, paneId, sessionId) {
@@ -174,9 +184,9 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
     conector(engine, paneId, item.servidor, { ultimaChamada: { estado: erro ? 'falhou' : 'sucesso',
       ferramenta: item.ferramenta, quando: agora(), ...(erro ? { erro: 'A ferramenta devolveu falha.' } : {}) } });
   }
-  function observarCodex(method, params, paneId) {
+  function observarCodex(method, params, paneId, origin = 'local') {
     const tid = idTexto(params.threadId || params.thread?.id), it = params.item || {};
-    const conhecido = [...agentes.values()].find(a => a.engine === 'codex' && a.threadId === tid);
+    const conhecido = [...agentes.values()].find(a => a.engine === 'codex' && a.threadId === tid && (a.origin || 'local') === origin);
     const dono = paneId ?? conhecido?.paneId;
     if (dono == null) return;
     if (paneId != null && tid) resetar('codex', paneId, tid);
@@ -187,8 +197,12 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
         const id = idTexto(raw); if (!id) continue;
         const atual = agentes.get(chave('codex', dono, id));
         const st = estados[id];
-        const dados = { threadId: id, parentId: idTexto(it.senderThreadId || tid), source: 'codex.collabAgentToolCall' };
-        if (!atual || it.tool === 'spawnAgent') dados.task = texto(it.prompt, 1000) || 'Subagente Codex';
+        const dados = { threadId: id, parentId: idTexto(it.senderThreadId || tid), source: 'codex.collabAgentToolCall', origin, historySupported: true };
+        // Tarefa 7: o comeco do pedido vai junto -- dele sai o nome em portugues (nomes-agentes.js)
+        if (!atual || it.tool === 'spawnAgent') { dados.task = texto(it.prompt, 1000) || 'Subagente Codex'; dados.pedido = texto(it.prompt, 300); }
+        // leva 5i: a chamada que criou o agente vira o passo "Chamando um agente" (main.js); o id do passo e' o do item, nao o da thread.
+        // passoId deixa a tela achar esse passo quando o nome em portugues chega (app.js, aplicarNomesDosAgentes)
+        if (it.tool === 'spawnAgent' && it.id) dados.passoId = idTexto(it.id);
         if (it.model) dados.model = texto(it.model, 100);
         if (st?.status) dados.state = estadoAgente(st.status);
         else if (!atual) dados.state = 'unknown'; // término da chamada NÃO é término do agente
@@ -197,6 +211,10 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
       }
     }
     if (conhecido) {
+      if (method === 'thread/status/changed') {
+        const status = params.status?.type || params.status;
+        agente('codex', dono, conhecido.id, { state: ({ active: 'running', idle: 'idle', systemError: 'failed', notLoaded: 'shutdown' })[status] || estadoAgente(status) });
+      }
       if (method === 'turn/started') agente('codex', dono, conhecido.id, { state: 'running' });
       if (method === 'turn/completed') agente('codex', dono, conhecido.id, {
         state: params.turn?.status === 'failed' || params.turn?.error ? 'failed'
@@ -228,6 +246,8 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
         const id = idTexto(c.id);
         agente('claude', paneId, id, { parentId: pai || idTexto(m.session_id),
           task: texto(c.input?.description || c.input?.prompt, 1000) || 'Subagente Claude',
+          // Tarefa 7: o tipo do subagente e o comeco do pedido -- deles sai o nome em portugues (nomes-agentes.js)
+          tipo: texto(c.input?.subagent_type, 100), pedido: texto(c.input?.prompt, 300),
           model: texto(c.input?.model, 100), state: 'running', background: c.input?.run_in_background === true,
           source: 'claude.tool_use' });
       }
@@ -261,6 +281,9 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
       if (id) agente('claude', paneId, id, {
         ...(task ? { threadId: task } : {}),
         ...(m.description ? { task: texto(m.description, 1000) } : {}),
+        // so' quando vem (task_started): o andamento sem eles nao apaga o que o tool_use trouxe
+        ...(m.subagent_type ? { tipo: texto(m.subagent_type, 100) } : {}),
+        ...(m.prompt ? { pedido: texto(m.prompt, 300) } : {}),
         ...(m.summary ? { message: texto(m.summary, 2000) } : {}),
         state: m.subtype === 'task_notification' ? estadoAgente(m.status) : 'running', source: 'claude.' + m.subtype });
     }
@@ -276,6 +299,21 @@ function criarObservabilidade(enviar = () => {}, agora = Date.now) {
     }
   }
   return { observarCodex, observarClaude, encerrarPainel,
+    ownerOfThread(threadId, origin = 'local') { return [...agentes.values()].find(a => a.engine === 'codex' && a.threadId === threadId && (a.origin || 'local') === origin)?.paneId; },
+    restoreCodex(paneId, rootId, threads, origin = 'local') {
+      resetar('codex', paneId, rootId);
+      for (const t of threads.slice(0, LIMITES.agentes)) {
+        if (!t?.id || t.id === rootId) continue;
+        const spawn = t.source?.subAgent?.thread_spawn || t.source?.subAgent?.threadSpawn || {};
+        const estado = ({ active: 'running', idle: 'idle', systemError: 'failed', notLoaded: 'shutdown' })[t.status?.type] || 'unknown';
+        // leva 5i: a thread traz o horario real (segundos do Unix): vira o comeco e, ja' parada, o fim do tempo que a tela mostra
+        const criada = Number(t.createdAt) > 0 ? Number(t.createdAt) * 1000 : 0, mexida = Number(t.updatedAt) > 0 ? Number(t.updatedAt) * 1000 : 0;
+        agente('codex', paneId, idTexto(t.id), { threadId: idTexto(t.id), parentId: idTexto(t.parentThreadId || spawn.parent_thread_id || rootId), origin,
+          task: texto(t.name || t.preview, 1000) || 'Subagente Codex', model: texto(t.model, 100), historySupported: true,
+          state: estado, source: 'codex.thread/list',
+          ...(criada ? { startedAt: criada } : {}), ...(mexida && !ATIVOS.has(estado) ? { endedAt: mexida } : {}) });
+      }
+    },
     encerrarMotor(engine, motivo) {
       const paineis = new Set([...agentes.values(), ...conectores.values()].filter(v => v.engine === engine).map(v => v.paneId));
       for (const p of paineis) encerrarPainel(p, engine, motivo);

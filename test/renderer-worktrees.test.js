@@ -27,6 +27,8 @@ function context(api = {}) {
     window: { api }, note: (_p, message, error) => messages.push({ message, error }),
     modoValido: (_engine, value) => value, esforcoDe: p => p.effort,
     remotoDoPane: () => null, conectoresForaDaAba: () => [],
+    // Leva final: trocar de conversa agora tambem descarta o trecho preso.
+    limparCitacao: p => { p.citacao = null; },
     destravarPainel: noop, esquecerPassos: noop, pintarAnexos: noop, pintarTokens: noop,
     pintarNome: noop, esconderPermissao: noop, limparPlano: noop, limparAuditoria: noop,
     zerarTurno: noop, mostrarPastaNoPainel: noop, atualizarGit: noop, setDot: noop,

@@ -1,11 +1,7 @@
-/* botao "Debater" do painel: icone + rotulo (o rotulo some em painel estreito --
-   @container no fim do style.css). Rodando: .ativo com um ponto pulsando; a
-   largura nao pula porque o texto nao muda. */
+/* botao "Debater" do painel. Leva 5i: e' um botao FIXO da barra (so' o icone; o texto e o ponto do botao temporario de antes sairam) e a barra o redesenha
+   em visual-mac.css; esta base e' so' a de reserva. Rodando: .rodando (o anel que pulsa mora no visual-mac.css e usa o co-pulsa daqui). */
 .p-debate{display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;color:var(--fg);padding:3px 8px;border:1px solid var(--line);border-radius:5px;flex:none;position:relative}
-.p-debate .ic{width:13px;height:13px;flex:none}
-.p-debate:hover,.p-debate.ativo{color:var(--fg-strong);border-color:var(--fg-dim);background:var(--hover2)}
-.pd-ponto{display:none;width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
-.p-debate.ativo .pd-ponto{display:inline-block;animation:co-pulsa 1.4s ease-in-out infinite}
+.p-debate:hover,.p-debate.rodando{color:var(--fg-strong);border-color:var(--fg-dim);background:var(--hover2)}
 @keyframes co-pulsa{0%,100%{opacity:1}50%{opacity:.25}}
 /* acao principal do dialogo: cor NEUTRA do tema (o --accent e' o azul do Codex
    e no jornal dava ~3,4:1). No tema motti a acao comum e' o indigo da marca
@@ -47,4 +43,4 @@ html[data-tema="motti"] .co-dialog{--co-acao-fundo:var(--motti-indigo,#2f55ff);-
 .co-agents{display:flex;flex-direction:column;gap:2px}.co-agent{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-radius:7px;font-size:12px;overflow-wrap:anywhere}.co-agent:hover{background:var(--hover)}.co-agent strong{font-weight:500;display:flex;gap:8px;align-items:flex-start}.co-agent-logo{flex:none;display:inline-flex;margin-top:2px}.co-agent .co-agent-state,.co-agent>.co-hint,.co-agent>p{padding-left:22px}.co-agent .co-hint{margin:0}.co-agent-state{color:var(--fg-strong)}.co-tool-resources{padding:8px;font-size:12px;overflow-wrap:anywhere}.co-resource-link{color:var(--accent);text-decoration:underline;text-align:left}.co-tool-resources pre{white-space:pre-wrap;max-height:200px;overflow:auto}
 /* janela estreita (o dialogo mede a janela, nao o painel) */
 @media(max-width:700px){.co-dialog{width:calc(100vw - 12px);height:calc(100dvh - 12px);border-radius:8px}.co-dialog-head{padding:16px;gap:10px}.co-dialog h2{font-size:19px}.co-dialog-body{padding:14px 16px}.co-model-grid{grid-template-columns:1fr}.co-inverter{justify-self:center}.co-actions{padding:12px 16px}.co-actions .co-salvos{max-width:none;flex:1 1 100%}.co-espaco{display:none}.co-message{padding:12px}.co-dialog-head p{font-size:12px}}
-@media(prefers-reduced-motion:reduce){.co-dialog *,.p-debate .pd-ponto{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){.co-dialog *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}

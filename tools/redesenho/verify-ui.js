@@ -35,14 +35,26 @@ async function main() {
     await client.send('Page.reload', { ignoreCache: true });
     await delay(350); await client.ready();
     // Uma aba em segundo plano pode adiar requestAnimationFrame por até um segundo.
+    const tower = () => evaluate('[...document.querySelectorAll(".ck-control-list .ck-session")].map(n=>({key:n.dataset.key,state:n.dataset.state}))');
     for(let attempt=0;attempt<40;attempt++) {
-      if(await evaluate('document.querySelectorAll(".ck-control-list .ck-session").length===3'))break;
+      if((await tower()).length>=2)break;
       await delay(100);
     }
     await check('Três sessões e estados preservados', async () => {
       const state = await evaluate('__qa.snapshot()');
       assert.equal(state.panels.length, 3); assert.equal(state.panels[0].permissions, 1); assert.equal(state.panels[1].busy, true);
-      assert.deepEqual(await evaluate('[...document.querySelectorAll(".ck-control-list .ck-session")].map(n=>n.dataset.state)'), ['attention','working','done']);
+      /* Concluída JÁ LIDA é histórico e fica fora da Torre (inControlTower no cockpit-ui.js;
+         test/cockpit-control-tower.test.js: 'já lida é histórico, não Torre'). O terceiro painel
+         só nasce lido se a janela do Chrome tiver foco no turn-end do fixture (app.js:
+         uiUnread = ... || !document.hasFocus()). marcarConclusaoLida é o caminho do clique no
+         painel e não faz nada quando ele já está lido: tira do check o foco da janela. */
+      const third = await evaluate('__qa.panels[2]');
+      await evaluate(`marcarConclusaoLida(__qa.panel(${JSON.stringify(third)}))`);
+      assert.deepEqual(await evaluate(`(p=>({state:CockpitUI.stateOf(p),unread:!!p.uiUnread}))(__qa.panel(${JSON.stringify(third)}))`),{state:'done',unread:false});
+      let rows = await tower();
+      for(let attempt=0;attempt<40&&rows.some(row=>row.key===third);attempt++){await delay(100);rows=await tower();}
+      assert.deepEqual(rows.map(row=>row.state), ['attention','working']);
+      assert.ok(!rows.some(row=>row.key===third),'Concluída e lida fica fora da Torre');
     });
     await check('Barra inicia aberta com 224px', async () => assert.equal(await evaluate('document.querySelector(".ck-navigator").getBoundingClientRect().width'), 224));
     await check('Medidores de conta não sobrepõem números nem áreas de clique',async()=>{
@@ -54,7 +66,7 @@ async function main() {
       }
     });
     await check('Arrastar lugar conserva o nó até soltar e mantém sessões',async()=>{
-      await evaluate(`(() => {const head=document.querySelector('.ck-group-head');__qa.dragged=head;__qa.dragData=new DataTransfer();head.dispatchEvent(new DragEvent('dragstart',{dataTransfer:__qa.dragData}));__qa.dragMutations=0;__qa.dragObserver=new MutationObserver(records=>{__qa.dragMutations+=records.filter(r=>r.type==='childList').length;});__qa.dragObserver.observe(document.querySelector('.ck-place-bar'),{childList:true});CockpitUI.refresh();})()`);
+      await evaluate(`(() => {const head=document.querySelector('.ck-group-head');__qa.dragged=head;__qa.dragData=new DataTransfer();head.dispatchEvent(new DragEvent('dragstart',{dataTransfer:__qa.dragData}));__qa.dragMutations=0;__qa.dragObserver=new MutationObserver(records=>{__qa.dragMutations+=records.filter(r=>r.type==='childList').length;});__qa.dragObserver.observe(document.querySelector('.ck-place-trilha'),{childList:true});CockpitUI.refresh();})()`);
       await delay(350);
       assert.equal(await evaluate('__qa.dragMutations'),0);
       await evaluate(`__qa.dragObserver.disconnect();document.querySelectorAll('.ck-group-head')[1].dispatchEvent(new DragEvent('drop',{dataTransfer:__qa.dragData}));__qa.dragged.dispatchEvent(new DragEvent('dragend'))`);
@@ -107,6 +119,39 @@ async function main() {
       await evaluate(`__qa.emit('onMenu','toggleSidebar')`);await delay(150);
       assert.equal(await evaluate('ckNavigator.classList.contains("ck-collapsed")'),false);
       assert.equal(await engineCalls(),before);
+    });
+    await check('Ctrl+Tab troca de pasta como o Alt+Tab',async()=>{
+      /* O Ctrl entra como tecla propria (keyDown/keyUp): e' soltar o Ctrl que
+         confirma a troca (soltarTrocaPasta, cockpit-ui.js). Modificadores do
+         CDP: Ctrl=2, Shift=8. Trocar de pasta pode guardar e restaurar painel,
+         mas nada pode ser ENVIADO a um motor (um \t no campo, uma aprovacao). */
+      const envios=()=>evaluate(`__qa.calls.filter(c=>/^(paneSend|approve|perguntaResponder)$/.test(c.method)).length`);
+      const before=await envios(),origem=await evaluate('cfg.abaAtiva');
+      const ate=async expr=>{for(let n=0;n<60;n++){if(await evaluate(`(()=>{try{return !!(${expr});}catch{return false;}})()`))return;await delay(50);}throw new Error('Não chegou em: '+expr);};
+      const tecla=(type,key,code,vk,modifiers)=>client.send('Input.dispatchKeyEvent',{type,key,code,modifiers,windowsVirtualKeyCode:vk});
+      const ctrl=type=>tecla(type,'Control','ControlLeft',17,type==='keyDown'?2:0);
+      const tab=async(modifiers=2)=>{await tecla('keyDown','Tab','Tab',9,modifiers);await tecla('keyUp','Tab','Tab',9,modifiers);};
+      const lista=()=>evaluate(`[...document.querySelectorAll('.ck-troca-pasta [role=option]')].map(n=>n.getAttribute('aria-selected'))`);
+      // segurando o Ctrl a lista aparece: a pasta atual primeiro, a seguinte ja' marcada
+      await ctrl('keyDown');await tab();await delay(260);
+      assert.deepEqual(await lista(),['false','true','false']);
+      assert.equal(await evaluate(`document.querySelector('.ck-troca-pasta strong').textContent`),'Produto');
+      await client.screenshot('qa-troca-pasta.png');
+      // Shift+Tab volta na lista; Esc fecha sem trocar
+      await tab(10);assert.deepEqual(await lista(),['true','false','false']);
+      await tecla('keyDown','Escape','Escape',27,2);await tecla('keyUp','Escape','Escape',27,2);await ctrl('keyUp');await delay(120);
+      assert.equal(await evaluate('!!document.querySelector(".ck-troca-pasta")'),false);
+      assert.equal(await evaluate('cfg.abaAtiva'),origem);
+      // toque rapido troca sem mostrar a lista; o segundo toque volta (ordem de uso)
+      await ctrl('keyDown');await tab();await ctrl('keyUp');
+      await ate(`cfg.abaAtiva==='qa-site' && !trocandoAba`);
+      assert.equal(await evaluate('!!document.querySelector(".ck-troca-pasta")'),false);
+      await ctrl('keyDown');await tab();await ctrl('keyUp');
+      await ate(`cfg.abaAtiva===${JSON.stringify(origem)} && !trocandoAba`);
+      // "Proxima pasta" do menu nativo passa pelo mesmo caminho
+      await evaluate(`__qa.emit('onMenu','pastaProxima')`);await ate(`cfg.abaAtiva==='qa-site' && !trocandoAba`);
+      await evaluate(`__qa.emit('onMenu','pastaProxima')`);await ate(`cfg.abaAtiva===${JSON.stringify(origem)} && !trocandoAba && panes.size===3`);
+      assert.equal(await envios(),before);
     });
     await check('F6 abre pendência; Esc não nega nem aprova', async () => {
       const before=await engineCalls(); await key('F6','F6');
@@ -162,15 +207,29 @@ async function main() {
       await key('Escape','Escape');
       assert.ok(await evaluate('__qa.calls.some(c=>c.method==="contasCompararCancelar")'));
     });
+    /* A busca tem debounce de 180 ms (palette no cockpit-ui.js): digitar as duas consultas de
+       uma vez nem disparava a antiga. A corrida real: a antiga já está no ar quando a atual
+       começa, a atual responde primeiro e a antiga chega depois. Quem descarta a antiga é o
+       valid() (seq===searchSeq) dentro de search(). */
     await check('Busca descarta resposta antiga que chega depois da consulta atual', async () => {
       await evaluate(`__qa.searchPending={};__qa.override('buscarArquivos',options=>new Promise(resolve=>__qa.searchPending[options.termo]=resolve))`);
       await key('k','KeyK',2);
-      await evaluate(`(() => {const n=document.querySelector('.ck-search');n.value='/antigo';n.dispatchEvent(new Event('input'));n.value='/atual';n.dispatchEvent(new Event('input'));__qa.searchPending.atual([{nome:'atual.js',path:'C:/QA/atual.js'}]);})()`);
-      await delay(100);
+      const type = text => evaluate(`(() => {const n=document.querySelector('.ck-search');n.value=${JSON.stringify(text)};n.dispatchEvent(new Event('input'));})()`);
+      const inFlight = async term => {
+        const pending = `typeof __qa.searchPending[${JSON.stringify(term)}]==='function'`;
+        await delay(300);
+        for(let attempt=0;attempt<30&&!await evaluate(pending);attempt++)await delay(100);
+        assert.equal(await evaluate(pending),true,`A busca por "${term}" não chegou a buscarArquivos`);
+      };
+      const shown = () => evaluate('document.querySelector(".ck-results").textContent');
+      await type('/antigo'); await inFlight('antigo');
+      await type('/atual'); await inFlight('atual');
+      await evaluate(`__qa.searchPending.atual([{nome:'atual.js',path:'C:/QA/atual.js'}])`);
+      for(let attempt=0;attempt<30&&!/atual\.js/.test(await shown());attempt++)await delay(100);
       await evaluate(`__qa.searchPending.antigo([{nome:'antigo.js',path:'C:/QA/antigo.js'}])`);
-      await delay(100);
-      assert.match(await evaluate('document.querySelector(".ck-results").textContent'),/atual.js/);
-      assert.doesNotMatch(await evaluate('document.querySelector(".ck-results").textContent'),/antigo.js/);
+      await delay(300);
+      assert.match(await shown(),/atual\.js/);
+      assert.doesNotMatch(await shown(),/antigo\.js/);
       await key('Escape','Escape');
     });
     await check('Cancelar retomada não envia prompt quando vence o horário', async () => {

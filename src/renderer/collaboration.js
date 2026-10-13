@@ -380,11 +380,16 @@
     } catch (error) { if (d.open) errorIn(alert, error); }
     if (d.open) topic.focus();
   }
-  const TITULO_DEBATER = 'Debater com Codex e Claude (os dois leem o projeto; só roda quando você iniciar)';
+  /* Leva 5i (spec, secao 4): o ⚖ Debater virou botao FIXO da barra (index.html; o app.js liga o clique dele ao open(P) em ligarBotoesDaBarra). O botao
+     temporario que nascia antes do ■ enquanto o debate rodava (UI 3.1) se fundiu com ele e saiu: aqui so' se marca o ESTADO. Rodando, o proprio ⚖ ganha
+     .rodando (o anel que pulsa e' do CSS) e o hover e o aria-label dizem que ha' um debate em andamento; terminou, falhou ou foi interrompido, volta ao
+     normal. O clique e' o mesmo nos dois estados: o open(P) devolve o foco ao dialogo aberto ou abre o debate desta conversa (P.debateId). */
   function pintarBotao(P, rodando) {
-    const b = P?.el?.querySelector('.p-debate'); if (!b) return;
-    b.classList.toggle('ativo', !!rodando);
-    b.title = rodando ? 'Debate em andamento — clique para acompanhar' : TITULO_DEBATER;
+    const b = P?.el?.querySelector('.p-debate');
+    if (!b) return;
+    b.classList.toggle('rodando', !!rodando);
+    b.title = rodando ? 'Debate em andamento — clique para acompanhar' : 'Debater com Codex e Claude';
+    b.setAttribute('aria-label', b.title);
   }
   window.api.onDebateEvent?.(state => {
     if (current && !current.loadingHistory && (current.state?.id === state.id || (current.starting && state.paneId === current.P.id))) current.render(state);
@@ -479,6 +484,26 @@
      lingua das outras secoes da Torre; sem agente, so' "nenhum" (a dica fixa
      ocupava espaco toda vez). Manda os paineis que ainda existem: agente
      encerrado de painel fechado nao volta mais. */
+  async function openAgentHistory(a) {
+    const d = dialog(a.task || 'Conversa do subagente', 'Somente leitura · abrir não inicia trabalho');
+    d.classList.add('co-agent-history');
+    const close = d.querySelector('.co-close'); close.textContent = '×'; close.title = 'Fechar'; close.setAttribute('aria-label', 'Fechar');
+    const body = el('div', 'co-dialog-body', 'Carregando…'); d.append(body);
+    try {
+      const r = check(await window.api.agentHistory({ paneId: a.paneId, threadId: a.threadId }));
+      if (!d.isConnected) return;
+      body.replaceChildren();
+      for (const m of r.messages || []) if (m.role === 'user' || m.role === 'bot') {
+        const row = el('article', 'co-history-message'); row.append(el('strong', '', m.role === 'user' ? 'Pedido' : 'Resposta'));
+        const text = el('div', 'md'); text.innerHTML = mdSeguro(m.text || ''); row.append(text); body.append(row);
+      }
+      if (!body.children.length) body.textContent = 'Este agente ainda não tem mensagens gravadas.';
+    } catch (e) { if (d.isConnected) errorIn(body, e); }
+  }
+  function agentHistoryButton(a) {
+    const b = button('', 'co-agent-history-open', () => openAgentHistory(a));
+    b.innerHTML = ico('book-open'); b.title = 'Ler a conversa deste agente'; b.setAttribute('aria-label', b.title); return b;
+  }
   async function paintAgents(box) {
     if (!window.api.agentesSessao || !box) return;
     const generation = ++agentsGeneration;
@@ -492,14 +517,22 @@
       section.append(head);
       for (const a of items) {
         const owner = acharPainel(a.paneId); const card = el('article', 'co-agent');
-        const titulo = el('strong', '', (typeof nomeDoMotor === 'function' ? nomeDoMotor(a.engine) : String(a.engine || '')) + ' → ' + (a.task || 'Tarefa sem descrição'));
+        /* Tarefa 7: o nome em portugues de gente (app.js, nomeDoAgente), quando ja'
+           chegou: titulo de 2 palavras e a linha logo abaixo; o nome tecnico do
+           motor fica no passar do mouse. Sem ele (falhou, ainda nao chegou), o de hoje. */
+        const bom = typeof nomeDoAgente === 'function' ? nomeDoAgente(a) : null;
+        const titulo = el('strong', '', (typeof nomeDoMotor === 'function' ? nomeDoMotor(a.engine) : String(a.engine || '')) + ' → ' + (bom ? bom.titulo : (a.task || 'Tarefa sem descrição')));
+        if (bom && a.task) titulo.title = a.task;
         if (typeof marcaDoMotor === 'function') { const logo = el('span', 'co-agent-logo'); logo.innerHTML = marcaDoMotor(a.engine); titulo.prepend(logo); }
-        card.append(titulo,
+        card.append(titulo);
+        if (bom && bom.linha) card.append(el('span', 'co-hint', bom.linha));
+        card.append(
           el('span', 'co-hint', (owner?.titulo || 'Conversa') + (a.parentId ? ' · tarefa vinculada a um agente' : '')),
           el('span', 'co-agent-state', ({ idle: 'Aguardando próximo turno', shutdown: 'Encerrado', notFound: 'Agente não encontrado' })[a.state]
             || agentLabels[a.state] || 'Sem estado confirmado'));
         if (a.model) card.append(el('span', 'co-hint', a.model));
         if (a.message || a.result) card.append(el('p', '', String(a.message || a.result).slice(0, 400)));
+        if (a.historySupported && a.threadId && window.api.agentHistory) card.append(agentHistoryButton(a));
         section.append(card);
       }
       box.replaceChildren(section);   // troca no lugar: a secao nao some nem pula entre uma pintura e outra
@@ -512,22 +545,404 @@
       const row = el('div'); const name = item.nome || item.uri || 'Recurso';
       let abrivel = false;
       try { const u = new URL(item.uri); abrivel = item.abrivel === true && /^https?:$/.test(u.protocol) && !u.username && !u.password; } catch {}
-      if (abrivel) row.append(button(name, 'co-resource-link', () => window.api.abrirLink(item.uri)));
+      // leva 5i: o link do passo abre no navegador interno do painel (abrirLinkDaTela, do app.js); Ctrl+clique e a preferencia mandam ao do Windows
+      if (abrivel) row.append(button(name, 'co-resource-link', (e) => (typeof abrirLinkDaTela === 'function' ? abrirLinkDaTela(P, item.uri, e) : window.api.abrirLink(item.uri))));
       else row.append(el('span', '', name));
       if (item.texto) row.append(el('pre', '', item.texto)); box.append(row);
     }
     step.append(box);
   }
-  function attach(P) {
-    if (!P?.el || P.el.querySelector('.p-debate')) return;
-    /* icone + rotulo; o rotulo some em painel estreito (@container no fim do
-       style.css). Rodando: classe ativo com um ponto pulsando -- o texto nao
-       muda ("Debatendo…" fazia a largura pular). */
-    const b = button('', 'p-debate', () => open(P)); b.title = TITULO_DEBATER; b.setAttribute('aria-label', 'Debater com Codex e Claude');
-    b.innerHTML = (typeof ico === 'function' ? ico('messages-square') : '') + '<span class="pd-rot">Debater</span><span class="pd-ponto" aria-hidden="true"></span>';
-    P.el.querySelector('.p-close')?.before(b);
+  /* ======================= Workflow dos agentes: o organograma (leva 5i) =======================
+     A camada de sempre (.ck-workflow), com outro desenho: no topo o cartao da CONVERSA, que coordena a equipe; embaixo, um cartao por agente
+     ligado ao pai por linhas de organograma. Os filhos da conversa ficam numa fileira (tronco do pai, barra e perninhas) e quebram em linhas
+     quando nao cabem; os netos em diante PENDEM do pai (lista vertical com trilho), porque um cartao de 164 px nao cabe ao lado do outro
+     dentro de um ramo. Os concluidos de um mesmo pai viram um cartao "N concluidos", que abre ao clique; o clique num agente abre o detalhe.
+     A repintura e' INCREMENTAL: cada cartao e' guardado pelo id do agente (view.cards). A cada 1,5 s o que mudou troca so' o seu texto, o que
+     entrou ganha um cartao novo, o que saiu e' removido e a ordem so' mexe nos nos que mudaram de lugar (antes a arvore era refeita inteira, e
+     a rolagem voltava ao topo). O tempo (m:ss) anda a cada segundo: so' o texto, so' de quem trabalha e so' com a camada aberta.
+     Estado = cor + simbolo do ico(); o NOME do estado so' vai no hover e no aria-label. */
+  const ESTADOS_AG = {
+    running:     { cls: 'rodando',   nome: 'Trabalhando',           icone: 'play',  vivo: true },
+    pending:     { cls: 'rodando',   nome: 'Iniciando',             icone: 'play',  vivo: true },
+    waiting:     { cls: 'precisa',   nome: 'Precisa de você',       icone: 'hand',  vivo: true },
+    completed:   { cls: 'concluido', nome: 'Concluído',             icone: 'check', vivo: false },
+    failed:      { cls: 'falhou',    nome: 'Falhou',                icone: 'x',     vivo: false },
+    interrupted: { cls: 'parado',    nome: 'Interrompido',          icone: 'minus', vivo: false },
+    shutdown:    { cls: 'parado',    nome: 'Encerrado',             icone: 'minus', vivo: false },
+    notFound:    { cls: 'parado',    nome: 'Agente não encontrado', icone: 'minus', vivo: false },
+    idle:        { cls: 'parado',    nome: 'Parado entre turnos',   icone: 'minus', vivo: false },
+  };
+  const SEM_ESTADO = { cls: 'parado', nome: 'Sem estado confirmado', icone: 'minus', vivo: false };
+  const estadoDoAgente = (estado) => (Object.hasOwn(ESTADOS_AG, estado) ? ESTADOS_AG[estado] : SEM_ESTADO);
+  // o texto numa linha so', no teto, com reticencias
+  const cortar = (texto, max) => {
+    const s = String(texto == null ? '' : texto).replace(/\s+/g, ' ').trim();
+    return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
+  };
+  // o tipo do agente quando o nome em portugues ainda nao chegou: "general-purpose" vira "General purpose"
+  const humanizarTipo = (tipo) => { const s = String(tipo || '').replace(/[-_]+/g, ' ').trim(); return s ? s[0].toUpperCase() + s.slice(1) : ''; };
+  /* O modelo, curto e legivel, como no chip: "Sonnet 5.5", "Haiku 4.5", "GPT-6 Astra". O agente do Claude manda o id inteiro ou so' o apelido
+     (sonnet, opus, haiku); o do Codex, o id (gpt-6-astra). O que nao conheco sai como veio, cortado. */
+  function modeloCurto(modelo) {
+    const id = String(modelo || '').trim().replace(/\[1m\]$/i, '');
+    if (!id || /^inherit$/i.test(id)) return '';
+    const c = id.match(/^claude-(opus|sonnet|fable|haiku)-(\d+)(?:-(\d)(?=-|$))?/i);
+    if (c) return c[1][0].toUpperCase() + c[1].slice(1).toLowerCase() + ' ' + c[2] + (c[3] ? '.' + c[3] : '');
+    const g = id.match(/^gpt-(\d+(?:\.\d+)?)(?:-([a-z]+))?$/i);
+    if (g) return 'GPT-' + g[1] + (g[2] ? ' ' + g[2][0].toUpperCase() + g[2].slice(1).toLowerCase() : '');
+    if (/^[a-z]+$/i.test(id)) return id[0].toUpperCase() + id.slice(1).toLowerCase();
+    return cortar(id, 18);
   }
-  window.CockpitCollaboration = { open, health, paintAgents, resources, attach,
-    _t: { esforcosDoModelo, esforcoEscolhido, contextOf, tamanhoTexto, estadoDaFala, statusDoDebate } };
+  /* O estado da CONVERSA (o cartao do topo): precisa de voce (permissao, pergunta que bloqueia ou plano esperando), trabalhando ou parada.
+     As mesmas condicoes que o CockpitWork.active usa para pausar o relogio da conversa. */
+  function estadoDaConversa(P) {
+    const espera = !!(P.pedindoPerm || P.filaPerm?.length || P.planoPendente
+      || (P.filaPerg || []).some((q) => q.bloqueante !== false) || (P.perguntaAberta && P.perguntaAberta.bloqueante !== false));
+    if (espera) return { cls: 'precisa', nome: 'Esperando você', icone: 'hand' };
+    return P.busy ? { cls: 'rodando', nome: 'Trabalhando', icone: 'play' } : { cls: 'parado', nome: 'Parada', icone: 'minus' };
+  }
+  const NOME_DO_FUNDO = { comando: 'Comando', agente: 'Agente' };
+  /* O que o cartao de um agente mostra, tudo texto simples (sem DOM): nome curto (o do Haiku; sem ele, o tipo do agente), funcao numa linha
+     (a "linha" do Haiku; sem ela, a tarefa cortada em 60), o estado (cor, simbolo e o nome para o hover), o modelo e os dois horarios do tempo.
+     n vem do CockpitWork.graph; raw e' o registro do main (so' ele sabe se a conversa do agente pode ser lida). */
+  function modeloDoNo(n, raw) {
+    const bom = raw && typeof nomeDoAgente === 'function' ? nomeDoAgente(raw) : null;
+    const fundo = n.kind === 'background';
+    const est = fundo ? ESTADOS_AG.running : estadoDoAgente(n.state);
+    const tarefa = /^Subagente(?: Claude| Codex)?$/.test(n.title) ? '' : n.title;
+    return {
+      id: n.id, parentId: n.parentId, parent: n.parent, estado: n.state, cls: est.cls, estadoNome: est.nome, icone: est.icone, vivo: est.vivo,
+      nome: cortar(bom?.titulo || (fundo ? NOME_DO_FUNDO[n.tipo] || 'Segundo plano' : humanizarTipo(n.tipo)) || 'Agente', 28),
+      funcao: cortar(bom?.linha || tarefa, 60),
+      modelo: modeloCurto(n.model),
+      t0: n.startedAt || 0, t1: est.vivo ? 0 : (n.endedAt || n.updatedAt || 0),
+      tarefa: cortar(tarefa, 300), detalhe: String(n.detail || '').slice(0, 600),
+      historico: !!(raw && raw.historySupported && raw.threadId),
+    };
+  }
+  /* A arvore do organograma, pura (sem DOM). itens: os modeloDoNo, um por agente; raiz: os ids que contam como a propria conversa (sessaoId e
+     resumeId). Devolve { raiz, soltos }; cada posicao e' { item, filhos } ou, para o cartao dos concluidos, { grupo: true, chave, total, membros }.
+     Ordem entre irmaos: quem precisa de voce, depois os que rodam, depois os outros (a do registro, dentro de cada grupo).
+     Concluidos: so' o agente concluido com TODA a descendencia concluida pode ir para o cartao; com 2 ou mais irmaos assim, viram "N concluidos"
+     (um so' fica como cartao comum: trocar um cartao por outro cartao nao poupa nada). Quem tem vinculo ausente ou cortado (ciclo) nao ganha pai
+     inventado: vai para "soltos", como o CockpitWork.graph ja' prometia. */
+  function montarArvore(itens, raiz) {
+    const porId = new Map(itens.map((i) => [i.id, i]));
+    const filhosDe = new Map(), daConversa = [], soltos = [];
+    for (const i of itens) {
+      if (i.parent && porId.has(i.parent)) { if (!filhosDe.has(i.parent)) filhosDe.set(i.parent, []); filhosDe.get(i.parent).push(i); }
+      else if (!i.parentId || raiz.has(i.parentId)) daConversa.push(i);
+      else soltos.push(i);
+    }
+    const prioridade = (i) => (i.cls === 'precisa' ? 0 : i.cls === 'rodando' ? 1 : 2);
+    const ordenar = (lista) => lista.map((i, k) => [i, k]).sort((a, b) => prioridade(a[0]) - prioridade(b[0]) || a[1] - b[1]).map((p) => p[0]);
+    const concluidoInteiro = (i) => i.cls === 'concluido' && (filhosDe.get(i.id) || []).every(concluidoInteiro);
+    const contar = (i) => 1 + (filhosDe.get(i.id) || []).reduce((soma, f) => soma + contar(f), 0);
+    const posicao = (i) => ({ item: i, filhos: irmaos(filhosDe.get(i.id) || [], i.id) });
+    function irmaos(lista, dono) {
+      const ordem = ordenar(lista), fechados = ordem.filter(concluidoInteiro);
+      if (fechados.length < 2) return ordem.map(posicao);
+      const dentro = new Set(fechados);
+      return [...ordem.filter((i) => !dentro.has(i)).map(posicao),
+        { grupo: true, chave: 'c:' + dono, total: fechados.reduce((soma, i) => soma + contar(i), 0), membros: fechados.map(posicao) }];
+    }
+    return { raiz: irmaos(daConversa, 'conversa'), soltos: ordenar(soltos).map(posicao) };
+  }
+  // o selo: o simbolo do ico() na cor do estado; o nome do estado so' no hover e no aria-label (nunca palavra solta)
+  function pintarSelo(selo, icone, nomeDoEstado) {
+    selo.innerHTML = typeof ico === 'function' ? ico(icone) : '';
+    selo.title = nomeDoEstado; selo.setAttribute('aria-label', nomeDoEstado);
+  }
+  function novoCartao(view, item) {
+    const no = el('div', 'org-no'); no.setAttribute('role', 'listitem');
+    const cartao = el('button', 'org-card'); cartao.type = 'button'; cartao.dataset.agentId = item.id; cartao.setAttribute('aria-expanded', 'false');
+    const topo = el('span', 'org-topo'), titulo = el('span', 'org-nome'), selo = el('span', 'org-selo'), funcao = el('span', 'org-funcao');
+    const rodape = el('span', 'org-rodape'), tempo = el('span', 'org-tempo'), modelo = el('span', 'org-modelo');
+    selo.setAttribute('role', 'img'); tempo.setAttribute('role', 'timer');
+    topo.append(titulo, selo); rodape.append(tempo, modelo); cartao.append(topo, funcao, rodape); no.append(cartao);
+    cartao.addEventListener('click', () => selecionar(view, item.id));
+    return { id: item.id, no, cartao, titulo, selo, funcao, tempo, modelo, grupo: null, item, f: {}, t0: 0, t1: 0, vivo: false };
+  }
+  // o tempo do cartao: ao vivo (agora - inicio) enquanto trabalha; parado, o fim menos o inicio. So' mexe no texto quando ele muda.
+  function escreverTempo(e, agora) {
+    const texto = e.t0 ? minSeg(Math.max(0, (e.vivo ? agora : (e.t1 || e.t0)) - e.t0)) : '';
+    if (e.f.tempo !== texto) { e.tempo.textContent = texto; e.f.tempo = texto; }
+  }
+  // troca so' o que mudou: nome, funcao, modelo, o selo (cor e simbolo) e o hover; o tempo vai pelo escreverTempo
+  function atualizarCartao(e, item) {
+    e.item = item;
+    const f = e.f;
+    if (f.nome !== item.nome) { e.titulo.textContent = item.nome; f.nome = item.nome; }
+    if (f.funcao !== item.funcao) { e.funcao.textContent = item.funcao; f.funcao = item.funcao; }
+    if (f.modelo !== item.modelo) { e.modelo.textContent = item.modelo; f.modelo = item.modelo; }
+    const marca = item.estado + '|' + item.cls + '|' + item.icone + '|' + item.estadoNome;
+    if (f.marca !== marca) {
+      e.cartao.dataset.estado = item.cls; e.cartao.dataset.state = item.estado;   // estado = o visual (CSS); state = o do motor (como era antes)
+      pintarSelo(e.selo, item.icone, item.estadoNome); f.marca = marca;
+    }
+    // o hover do cartao e' a tarefa como o motor a mandou (muitas vezes em ingles): o nome tecnico fica aqui, nao na tela
+    const dica = item.tarefa && item.tarefa !== item.funcao ? item.tarefa : '';
+    if (f.dica !== dica) { e.cartao.title = dica; f.dica = dica; }
+    e.t0 = item.t0; e.t1 = item.t1; e.vivo = item.vivo;
+    escreverTempo(e, Date.now());
+  }
+  function pintarAbertura(g, aberto) {
+    if (g.f.aberto === aberto) return;
+    g.f.aberto = aberto; g.lista.hidden = !aberto; g.cartao.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+  }
+  function alternarGrupo(view, chave) {
+    const g = view.grupos.get(chave);
+    if (!g) return;
+    if (view.abertos.has(chave)) view.abertos.delete(chave); else view.abertos.add(chave);
+    pintarAbertura(g, view.abertos.has(chave));
+    medirFilas(view);
+  }
+  // o cartao "N concluidos" (check + numero): abre a lista dos concluidos, pendurada embaixo dele
+  function novoGrupo(view, chave) {
+    const no = el('div', 'org-no org-no-grupo'); no.setAttribute('role', 'listitem');
+    const cartao = el('button', 'org-card org-concluidos'); cartao.type = 'button'; cartao.dataset.estado = 'concluido'; cartao.dataset.grupo = chave;
+    cartao.setAttribute('aria-expanded', 'false');
+    const selo = el('span', 'org-selo'), total = el('span', 'org-total'), seta = el('span', 'org-seta');
+    selo.setAttribute('role', 'img'); seta.innerHTML = typeof ico === 'function' ? ico('chevron-down') : '';
+    cartao.append(selo, total, seta);
+    const lista = el('div', 'org-grupo org-pendurado'); lista.setAttribute('role', 'list'); lista.hidden = true;
+    no.append(cartao, lista);
+    cartao.addEventListener('click', () => alternarGrupo(view, chave));
+    return { chave, no, cartao, selo, total, lista, f: {} };
+  }
+  function atualizarGrupo(view, g, posicao) {
+    if (g.f.total !== posicao.total) {
+      const rotulo = posicao.total + (posicao.total === 1 ? ' concluído' : ' concluídos');
+      g.total.textContent = String(posicao.total); g.f.total = posicao.total;
+      pintarSelo(g.selo, 'check', rotulo); g.cartao.title = rotulo; g.cartao.setAttribute('aria-label', rotulo);
+    }
+    pintarAbertura(g, view.abertos.has(g.chave));
+  }
+  // poe os nos na ordem pedida mexendo so' no que esta fora do lugar (um no que ja' esta certo nao e' tocado)
+  function acomodar(caixa, desejados) {
+    desejados.forEach((no, i) => { const atual = caixa.children[i]; if (atual !== no) caixa.insertBefore(no, atual || null); });
+  }
+  function caixaDeFilhos(classe) { const c = el('div', classe); c.setAttribute('role', 'list'); return c; }
+  function pintarArvore(view, arvore) {
+    const vistos = new Set();
+    const lugar = (caixa, posicoes) => {
+      const desejados = [];
+      for (const p of posicoes) {
+        if (p.grupo) {
+          let g = view.grupos.get(p.chave);
+          if (!g) { g = novoGrupo(view, p.chave); view.grupos.set(p.chave, g); }
+          atualizarGrupo(view, g, p);
+          vistos.add('g:' + p.chave);
+          lugar(g.lista, p.membros);
+          desejados.push(g.no);
+        } else {
+          let e = view.cards.get(p.item.id);
+          if (!e) { e = novoCartao(view, p.item); view.cards.set(p.item.id, e); }
+          atualizarCartao(e, p.item);
+          vistos.add(p.item.id);
+          if (p.filhos.length) {
+            if (!e.grupo) { e.grupo = caixaDeFilhos('org-grupo org-pendurado'); e.no.append(e.grupo); }
+            lugar(e.grupo, p.filhos);
+          } else if (e.grupo) { e.grupo.remove(); e.grupo = null; }
+          desejados.push(e.no);
+        }
+      }
+      acomodar(caixa, desejados);
+    };
+    lugar(view.linha, arvore.raiz);
+    lugar(view.listaSoltos, arvore.soltos);
+    for (const [id, e] of view.cards) if (!vistos.has(id)) { e.no.remove(); view.cards.delete(id); }
+    for (const [chave, g] of view.grupos) if (!vistos.has('g:' + chave)) { g.no.remove(); view.grupos.delete(chave); view.abertos.delete(chave); }
+  }
+  // recomeca a arvore do zero (a saida de emergencia se o DOM recusar uma mudanca de lugar, o que so' acontece com um vinculo que se inverte)
+  function reiniciarArvore(view) {
+    view.cards.clear(); view.grupos.clear(); view.linha.replaceChildren(); view.listaSoltos.replaceChildren();
+  }
+  /* As fileiras da conversa: quando os filhos nao cabem numa linha eles quebram, e cada fileira precisa da sua barra. Aqui so' se LE onde cada
+     um caiu (offsetTop) e se marca em quem e' o primeiro, o ultimo e o unico da fileira (data-fila); o desenho das linhas e' do CSS. Com mais de
+     uma fileira o grupo ganha data-filas e a altura do trilho (--org-trilho), que liga as barras. Sem medida (sem layout), nao marca nada: o CSS
+     cai no :first-child e :last-child, certo para uma fileira so'. So' escreve o que mudou. */
+  function medirFilas(view) {
+    const grupo = view.linha;
+    if (!grupo) return;
+    const nos = [...grupo.children];
+    const topos = nos.map((n) => n.offsetTop);
+    if (!nos.length || !topos.every(Number.isFinite)) return;
+    const filas = [];
+    topos.forEach((topo, i) => { const ultima = filas.at(-1); if (ultima && Math.abs(topos[ultima[0]] - topo) <= 2) ultima.push(i); else filas.push([i]); });
+    const marcas = nos.map(() => 'meio');
+    for (const fila of filas) {
+      if (fila.length === 1) marcas[fila[0]] = 'so';
+      else { marcas[fila[0]] = 'ini'; marcas[fila.at(-1)] = 'fim'; }
+    }
+    nos.forEach((n, i) => { if (n.dataset.fila !== marcas[i]) n.dataset.fila = marcas[i]; });
+    if (filas.length > 1) {
+      if (grupo.dataset.filas !== String(filas.length)) grupo.dataset.filas = String(filas.length);
+      const trilho = topos[filas.at(-1)[0]] + 'px';
+      if (grupo.style.getPropertyValue('--org-trilho') !== trilho) grupo.style.setProperty('--org-trilho', trilho);
+    } else if (grupo.dataset.filas !== undefined) { delete grupo.dataset.filas; grupo.style.removeProperty('--org-trilho'); }
+  }
+  /* O detalhe: um painel unico embaixo da arvore (cartao estreito nao comporta o texto). Mostra o nome, o modelo, a tarefa como o motor a mandou,
+     a mensagem ou o resultado do agente e o botao "ler a conversa". So' e' refeito quando o conteudo muda (o foco nao se perde a cada 1,5 s). */
+  function selecionar(view, id) {
+    view.selecionado = view.selecionado === id ? '' : id;
+    pintarSelecao(view);
+  }
+  function pintarSelecao(view) {
+    if (view.selecionado && !view.cards.has(view.selecionado)) view.selecionado = '';   // o agente saiu da lista
+    for (const e of view.cards.values()) {
+      const aberto = e.id === view.selecionado;
+      if (e.f.aberto !== aberto) { e.cartao.setAttribute('aria-expanded', aberto ? 'true' : 'false'); e.f.aberto = aberto; }
+    }
+    pintarDetalhe(view);
+  }
+  function pintarDetalhe(view) {
+    const e = view.selecionado ? view.cards.get(view.selecionado) : null;
+    if (!e) { if (!view.detalhe.hidden) view.detalhe.hidden = true; view.detalheAssinatura = ''; return; }
+    const item = e.item, assinatura = JSON.stringify([item.id, item.nome, item.funcao, item.modelo, item.cls, item.tarefa, item.detalhe, item.historico]);
+    if (assinatura === view.detalheAssinatura && !view.detalhe.hidden) return;
+    view.detalheAssinatura = assinatura; view.detalhe.hidden = false;
+    const cabeca = el('div', 'org-d-cab');
+    cabeca.append(el('strong', 'org-d-nome', item.nome));
+    if (item.modelo) cabeca.append(el('span', 'org-d-modelo', item.modelo));
+    const bruto = view.brutos.get(item.id);
+    if (item.historico && bruto && window.api.agentHistory) cabeca.append(agentHistoryButton(bruto));
+    const fechar = button('', 'org-d-fechar', () => selecionar(view, item.id));
+    fechar.innerHTML = typeof ico === 'function' ? ico('x') : ''; fechar.title = 'Fechar o detalhe'; fechar.setAttribute('aria-label', fechar.title);
+    cabeca.append(fechar);
+    const partes = [cabeca];
+    if (item.tarefa && item.tarefa !== item.funcao) partes.push(el('p', 'org-d-tarefa', item.tarefa));
+    if (item.detalhe) partes.push(el('p', 'org-d-texto', item.detalhe));
+    view.detalhe.replaceChildren(...partes);
+  }
+  // o esqueleto da camada, feito uma vez: o cartao da conversa, a fileira dos filhos, o aviso de lista vazia, os sem vinculo, o aviso de erro e o detalhe
+  function montarEsqueleto(view) {
+    if (view.org) return;
+    const P = view.P, corpo = view.layer.body;
+    const org = el('div', 'org'); org.setAttribute('role', 'group'); org.setAttribute('aria-label', 'Equipe desta conversa');
+    const raizNo = el('div', 'org-no org-raiz');
+    const cartao = el('div', 'org-card org-conversa');
+    const topo = el('span', 'org-topo'), marca = el('span', 'org-logo'), modelo = el('span', 'org-modelo'), selo = el('span', 'org-selo'), titulo = el('span', 'org-nome');
+    selo.setAttribute('role', 'img');
+    // o logo e o nome dele sao escritos pelo pintarTopo (rodada 2 da leva 5i: no ACP com uma IA de preset o logo e' o da IA, e a troca de IA repinta)
+    topo.append(marca, modelo, selo); cartao.append(topo, titulo);
+    const linha = caixaDeFilhos('org-grupo org-linha'); linha.hidden = true;
+    raizNo.append(cartao, linha); org.append(raizNo);
+    const vazio = el('p', 'workflow-empty'); vazio.hidden = true;
+    const soltos = el('div', 'org-soltos'); soltos.hidden = true;
+    const listaSoltos = caixaDeFilhos('org-grupo org-solto');
+    soltos.append(el('p', 'workflow-note', 'Agentes da conversa cujo vínculo anterior não foi informado:'), listaSoltos);
+    const aviso = el('p', 'workflow-note'); aviso.setAttribute('role', 'status'); aviso.hidden = true;
+    const detalhe = el('section', 'org-detalhe'); detalhe.hidden = true;
+    corpo.append(org, vazio, soltos, aviso, detalhe);
+    Object.assign(view, { org, linha, vazio, soltos, listaSoltos, aviso, detalhe, topo: { cartao, marca, modelo, selo, titulo }, topoF: {} });
+    /* a largura da camada muda (janela redimensionada, rolagem que aparece): as fileiras podem quebrar de outro jeito. A medida fica para o
+       proximo quadro: mexer no que o ResizeObserver olha, dentro dele, faz o navegador reclamar de "loop" de redimensionamento */
+    if (typeof ResizeObserver === 'function') {
+      const noProximoQuadro = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => fn();
+      view.observador = new ResizeObserver(() => noProximoQuadro(() => { if (!view.layer.closed) medirFilas(view); }));
+      view.observador.observe(org);
+    }
+  }
+  function pintarTopo(view, topo) {
+    const t = view.topo, f = view.topoF;
+    // o logo e o nome dele (hover): o da IA do preset no ACP (OpenCode, Droid...), senao o do motor (rodada 2 da leva 5i). So' reescreve quando muda.
+    const chaveDoLogo = topo.ia + '|' + view.P.engine;
+    if (f.logo !== chaveDoLogo) {
+      t.marca.innerHTML = topo.ia && typeof svgIa === 'function' ? svgIa(topo.ia) : (typeof svgMotor === 'function' ? svgMotor(view.P.engine) : '');
+      t.marca.title = topo.iaNome || (typeof nomeDoMotor === 'function' ? nomeDoMotor(view.P.engine) : '');
+      f.logo = chaveDoLogo;
+    }
+    if (f.titulo !== topo.titulo) { t.titulo.textContent = topo.titulo || 'Esta conversa'; f.titulo = topo.titulo; }
+    if (f.modelo !== topo.modelo) { t.modelo.textContent = topo.modelo; t.modelo.hidden = !topo.modelo; f.modelo = topo.modelo; }
+    if (f.cls !== topo.cls) { t.cartao.dataset.estado = topo.cls; pintarSelo(t.selo, topo.icone, topo.estadoNome); f.cls = topo.cls; }
+  }
+  function pintarRodape(view, total, soltos, aviso) {
+    const f = view.rodapeF || (view.rodapeF = {});
+    const vazio = total ? '' : (aviso ? 'A lista está temporariamente indisponível.' : 'Nenhum subagente ou trabalho em segundo plano observado nesta conversa.');
+    if (f.vazio !== vazio) { view.vazio.textContent = vazio; view.vazio.hidden = !vazio; f.vazio = vazio; }
+    if (view.soltos.hidden === !!soltos) view.soltos.hidden = !soltos;
+    if (f.aviso !== aviso) { view.aviso.textContent = aviso; view.aviso.hidden = !aviso; f.aviso = aviso; }
+  }
+  // a tela inteira: dados do motor -> modelo de cada agente -> arvore -> DOM incremental. Sem mudanca nenhuma desde a ultima vez, nao faz nada.
+  function pintarOrganograma(view, agents, aviso) {
+    const P = view.P;
+    const nodes = window.CockpitWork.graph(P, agents);
+    const brutos = new Map(agents.map((a) => [String(a.id), a]));
+    const itens = nodes.map((n) => modeloDoNo(n, brutos.get(n.id)));
+    const conversa = estadoDaConversa(P);
+    const idModelo = P.model || (typeof modeloAtual === 'function' ? (modeloAtual(P) || {}).id : '');
+    /* Painel ACP numa IA de preset (OpenCode, Droid, Cursor...): o "modelo" do painel e' o COMANDO ("opencode acp"), que sairia cru no cartao, e o
+       logo seria o plugue. Aqui vale o mesmo que o chip usa: o logo da IA (svgIa) e o nome dela (modeloAtual(P).nome). Comando digitado em "Outro
+       comando…" (sem preset) segue como sempre. Rodada 2 da leva 5i. */
+    const ia = typeof iaDoPainel === 'function' ? iaDoPainel(P) : null;
+    const nomeDaIa = ia ? String((typeof modeloAtual === 'function' && (modeloAtual(P) || {}).nome) || ia.nome) : '';
+    const topo = { titulo: String(P.titulo || ''), modelo: ia ? cortar(nomeDaIa, 18) : modeloCurto(idModelo), ia: ia ? String(ia.ia) : '', iaNome: nomeDaIa,
+      cls: conversa.cls, icone: conversa.icone, estadoNome: conversa.nome };
+    const raiz = new Set([P.sessaoId, P.resumeId].filter(Boolean).map(String));
+    const assinatura = JSON.stringify([itens, aviso, topo, [...raiz]]);
+    if (assinatura === view.signature) return;
+    view.brutos = brutos;
+    montarEsqueleto(view);
+    pintarTopo(view, topo);
+    const arvore = montarArvore(itens, raiz);
+    try { pintarArvore(view, arvore); } catch { reiniciarArvore(view); pintarArvore(view, arvore); }
+    view.linha.hidden = !arvore.raiz.length;
+    pintarRodape(view, itens.length, arvore.soltos.length, aviso);
+    medirFilas(view);
+    pintarSelecao(view);
+    view.signature = assinatura;   // so' depois de pintar: se a pintura quebrar, a proxima leitura tenta de novo
+  }
+  // 1x por segundo: so' o TEXTO do tempo de quem esta trabalhando (os parados ja' estao escritos)
+  function tempoDoWorkflow(view) {
+    if (workflowView !== view || view.layer.closed) return;
+    const agora = Date.now();
+    for (const e of view.cards.values()) if (e.vivo) escreverTempo(e, agora);
+  }
+
+  let workflowView = null;
+  const chaveDoPainel = (P) => P.engine + ':' + (P.sessaoId || P.resumeId || '');
+  function workflow(P) {
+    if (!P?.el || !window.CockpitUI || !window.CockpitWork) return;
+    if (workflowView) window.CockpitUI.closeLayer(workflowView.layer);
+    const view = { P, key: chaveDoPainel(P), generation: 0, timer: null, relogio: null, observador: null, signature: '',
+      cards: new Map(), grupos: new Map(), abertos: new Set(), brutos: new Map(), selecionado: '' };
+    view.layer = window.CockpitUI.openLayer('Workflow dos agentes', {
+      className: 'ck-workflow',
+      // fechou: os dois relogios param (a leitura a cada 1,5 s e o tempo a cada 1 s) e a medida das fileiras sai de cena
+      onClose: () => { clearInterval(view.timer); clearInterval(view.relogio); view.observador?.disconnect(); view.generation++; if (workflowView === view) workflowView = null; },
+    });
+    view.layer.body.classList.add('workflow-body');
+    workflowView = view;
+    refreshWorkflow(P);
+    view.timer = setInterval(() => refreshWorkflow(P), 1500);
+    view.relogio = setInterval(() => tempoDoWorkflow(view), 1000);
+  }
+  async function refreshWorkflow(P) {
+    const view = workflowView;
+    if (!view || view.P !== P || view.layer.closed) return;
+    if (P.morto || view.key !== chaveDoPainel(P)) {
+      window.CockpitUI.closeLayer(view.layer); return;
+    }
+    if (view.loading) return;
+    view.loading = true;
+    const generation = ++view.generation;
+    let agents = [], aviso = '';
+    try {
+      if (!window.api.agentesSessao) throw new Error('Leitura de agentes indisponível.');
+      const result = check(await window.api.agentesSessao({ paneId: P.id, engine: P.engine }));
+      agents = Array.isArray(result.itens) ? result.itens : [];
+    } catch (error) { aviso = 'Não consegui atualizar os agentes: ' + (error.message || error); }
+    finally { view.loading = false; }
+    if (workflowView !== view || generation !== view.generation || view.layer.closed) return;
+    pintarOrganograma(view, agents, aviso);
+  }
+  /* UI 3.1: o Debater e o "Voz, imagens e nuvem" sairam da barra e foram para o menu "+" (app.js, menuMais). Leva 5i: o Debater voltou para a barra como
+     botao fixo (⚖, que tambem mostra o debate rodando, pintarBotao) e so' reaparece no menu "+" no nivel 5 do encaixe; o frasco segue so' no menu. */
+  function attach() {}
+  window.CockpitCollaboration = { open, health, paintAgents, resources, attach, workflow, refreshWorkflow,
+    _t: { esforcosDoModelo, esforcoEscolhido, contextOf, tamanhoTexto, estadoDaFala, statusDoDebate,
+      // leva 5i: as partes puras do organograma (sem DOM), para os testes
+      ESTADOS_AG, estadoDoAgente, estadoDaConversa, modeloCurto, modeloDoNo, montarArvore, cortar, humanizarTipo } };
   for (const P of panes.values()) attach(P);
 })();

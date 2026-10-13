@@ -53,3 +53,33 @@ test('remote snapshot sync is best effort but target write failures remain error
  assert.deepEqual(run('trocar'),['COCKPIT_OK']);assert.equal(JSON.parse(fs.readFileSync(h.active,'utf8')).claudeAiOauth.accountId,'B');
  locked=h.active;assert.deepEqual(run('trocar'),['COCKPIT_ERRO_OPERACAO']);
 }finally{h.clean()}});
+test('troca só confirma após conferir identidade no arquivo ativo, sem devolver credencial',()=>{const h=setup(),rename=fs.renameSync;try{
+ fs.writeFileSync(h.active,cred('conta-B','B'));h.store.save('claude','destino');
+ fs.writeFileSync(h.active,cred('conta-A','A'));
+ fs.renameSync=(from,to)=>{rename(from,to);if(to===h.active)fs.writeFileSync(to,cred('renovacao-do-processo-antigo','A'));};
+ const result=h.store.change('claude','destino');assert.match(result.error,/confirmar a troca/);assert.equal(result.ok,undefined);
+ assert.ok(!JSON.stringify(result).includes('renovacao-do-processo-antigo'));
+ assert.equal(JSON.parse(fs.readFileSync(h.active,'utf8')).claudeAiOauth.accountId,'A');
+ assert.equal(JSON.parse(fs.readFileSync(path.join(h.folder,'claude__destino.json'),'utf8')).claudeAiOauth.accountId,'B');
+}finally{fs.renameSync=rename;h.clean()}});
+test('renovação comprovada da conta escolhida continua sendo troca confirmada',()=>{const h=setup(),rename=fs.renameSync;try{
+ fs.writeFileSync(h.active,cred('conta-B','B'));h.store.save('claude','destino');fs.writeFileSync(h.active,cred('conta-A','A'));
+ fs.renameSync=(from,to)=>{rename(from,to);if(to===h.active)fs.writeFileSync(to,cred('B-renovada','B'));};
+ assert.deepEqual(h.store.change('claude','destino'),{ok:true});
+}finally{fs.renameSync=rename;h.clean()}});
+test('Codex confirma a conta selecionada pelo account_id, não pelo apelido',()=>{const h=setup(),rename=fs.renameSync;try{
+ const codex=(id,token)=>JSON.stringify({tokens:{account_id:id,access_token:token,refresh_token:'refresh-'+id}});
+ fs.writeFileSync(h.active,codex('B','token-B'));h.store.save('codex','trabalho');fs.writeFileSync(h.active,codex('A','token-A'));
+ assert.deepEqual(h.store.change('codex','trabalho'),{ok:true});
+ fs.writeFileSync(h.active,codex('A','token-A'));
+ fs.renameSync=(from,to)=>{rename(from,to);if(to===h.active)fs.writeFileSync(to,codex('A','token-A-novo'));};
+ assert.match(h.store.change('codex','trabalho').error,/confirmar a troca/);
+}finally{fs.renameSync=rename;h.clean()}});
+test('troca remota verifica identidade após escrita e não confirma processo que restaurou conta antiga',()=>{const h=setup();try{
+ const vm=require('node:vm'),{program}=require('../src/cockpit-remote-credential-program');
+ fs.writeFileSync(path.join(h.folder,'claude__destino.json'),cred('destino','B'));fs.writeFileSync(h.active,cred('antiga','A'));
+ const fakeFs=new Proxy(fs,{get:(o,k)=>k==='renameSync'?((from,to)=>{fs.renameSync(from,to);if(to===h.active)fs.writeFileSync(to,cred('antiga-renovada','A'));}):o[k]});
+ const lines=[];vm.runInNewContext(program(),{Buffer,Date,require:n=>n==='fs'?fakeFs:require(n),process:{argv:['node',h.folder,h.active,'claude__destino.json','trocar']},console:{log:line=>lines.push(line)}});
+ assert.deepEqual(lines,['COCKPIT_TROCA_NAO_CONFIRMADA']);
+ const reply=require('../src/cockpit-contas-remoto').lerResposta(lines.join('\n'));assert.match(reply.error,/confirmar a troca no servidor/);assert.ok(!JSON.stringify(reply).includes('antiga-renovada'));
+}finally{h.clean()}});

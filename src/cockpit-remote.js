@@ -6,8 +6,12 @@ const proto = require("./codex-protocol");
 const { codexApprovalDetails } = require("./cockpit-approval");
 const acp = require("./acp");
 const native = require("./cockpit-remote-native");
+const iasAcp = require("./renderer/acp-presets");
 const ENGINES = ["claude", "codex", "gemini", "grok", "acp"];
-function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
+/* Leva 5i: os programas que o servidor precisa ter para um motor ou uma IA do ACP existir. Alem dos quatro CLIs de sempre, o 1o termo do comando
+   de cada preset (opencode, qwen, cursor-agent, goose…); o npx fica de fora porque aqui a instalacao automatica de adaptador esta desligada. */
+const BINARIOS = [...new Set(["claude", "codex", "gemini", "grok", ...iasAcp.binarios({ semNpx: true })])];
+function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store, observeCodex, ownerOfThread, restoreCodex, onScopeClosed, interactions }) {
   const panes = new Map(),
     servers = new Map(),
     inspections = new Map(),
@@ -56,24 +60,29 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     const promise = transport
       .run(
         remote,
-        'for b in claude codex gemini grok; do if command -v "$b" >/dev/null 2>&1; then printf "%s\\n" "$b"; fi; done',
+        'for b in ' + BINARIOS.join(" ") + '; do if command -v "$b" >/dev/null 2>&1; then printf "%s\\n" "$b"; fi; done',
       )
       .then((out) => {
         const found = new Set(out.trim().split(/\s+/));
+        /* Leva 5i: o ACP fica disponivel se o servidor tem QUALQUER IA conhecida do ACP (antes so' contava o gemini), e a lista delas vai junto
+           para o menuzinho do motor mostrar so' os logos das que existem la'. Sem npx: a instalacao automatica esta desligada. */
+        const presets = iasAcp.instalados((b) => found.has(b), { semNpx: true });
+        const temEngine = (engine) => (engine === "acp" ? presets.length > 0 : found.has(engine));
         return Object.fromEntries(
           ENGINES.map((engine) => [
             engine,
             {
-              disponivel: found.has(engine === "acp" ? "gemini" : engine),
+              disponivel: temEngine(engine),
               remoto: true,
               detalhe:
-                !found.has(engine === "acp" ? "gemini" : engine)
+                !temEngine(engine)
                   ? engine === "acp"
-                    ? "Preset Gemini ACP não instalado neste servidor."
+                    ? "Nenhuma IA do ACP (Gemini, OpenCode, Qwen Code, Cursor…) instalada neste servidor."
                     : "Binário não encontrado no PATH deste servidor."
                   : engine === "acp"
-                    ? "Preset Gemini ACP; comando personalizado é conferido ao abrir."
+                    ? "IA do ACP detectada; comando personalizado é conferido ao abrir."
                     : "Binário detectado; login conferido ao iniciar.",
+              ...(engine === "acp" ? { presets } : {}),
               capacidades: {
                 conversa: true,
                 anexos: true,
@@ -111,6 +120,7 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     rpc.on("closed", (error) => {
       if (servers.get(destination) === s) servers.delete(destination);
       for (const st of s.threads.values()) {
+        onScopeClosed?.(st.paneId);
         clearApprovals(st);
         event(st, "engine-down", { engine: "codex", motivo: error.message });
         void cleanup(st);
@@ -120,9 +130,9 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     s.ready = rpc
       .request("initialize", {
         clientInfo: { name: "cockpit", version: "1.0.0" },
-        capabilities: { experimentalApi: true },
+        capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
       })
-      .then(() => rpc.notify("initialized", {}))
+      .then((info) => { s.info = require('./cockpit-capabilities').serverInfo(info); rpc.notify("initialized", {}); })
       .catch((e) => {
         rpc.close(e);
         throw e;
@@ -144,14 +154,16 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
       ...(presentation || codexApprovalDetails(kind, m.params || {}, true)),
     });
   }
-  function answer(id, responses, cancelled) {
+  function answer(id, responses, cancelled, freeText) {
     const q = questions.get(id);
     if (!q) return false;
     questions.delete(id);
+    // leva 5h: o texto livre ("responder por texto") vale como a resposta de cada pergunta do pedido
+    const text = !cancelled && typeof freeText === "string" ? freeText.trim() : "";
     try {
       q.rpc.reply(
         q.id,
-        proto.buildUserInputResponse(q.questions, responses, !!cancelled),
+        proto.buildUserInputResponse(q.questions, text ? q.questions.map(() => text) : responses, !!cancelled),
       );
       return { ok: true };
     } catch (e) {
@@ -159,6 +171,7 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     }
   }
   function clearApprovals(st) {
+    interactions?.cancelScope({ paneId: String(st.paneId), generation: st.generation, engine: 'codex' }, 'Sessão remota encerrada.');
     for (const [id, q] of questions)
       if (q.st === st) {
         answer(id, [], true);
@@ -206,15 +219,30 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     const p = m.params || {},
       tid = p.threadId || p.thread_id || p.thread?.id || p.conversationId;
     const st = s.threads.get(tid);
+    const requestOwner = st || panes.get(ownerOfThread?.(tid, s.destination));
+    const scope = requestOwner && { paneId: requestOwner.paneId, generation: requestOwner.generation, engine: 'codex', threadId: tid,
+      turnId: p.turnId || p.turn?.id || requestOwner.turn || '', cwd: requestOwner.cwd,
+      origin: { kind: 'remote', host: s.remote.host, user: s.remote.usuario, port: s.remote.porta || 22 } };
+    if (m.method === 'serverRequest/resolved' && scope) interactions?.resolved(scope, p.requestId);
+    if (m.method === 'turn/completed' && scope) interactions?.cancelScope({ ...scope }, 'Turno encerrado.');
+    if (m.id == null) observeCodex?.(m.method, p, st?.paneId, s.destination);
     if (m.id != null) {
+      if (m.method === 'mcpServer/elicitation/request' && interactions) {
+        if (!scope) return s.rpc.reply(m.id, { action: 'cancel' });
+        interactions.request(scope, m.id, p, r => { if (!s.rpc.closed) s.rpc.reply(m.id, r); }); return;
+      }
+      if (m.method === 'item/tool/call' && interactions) {
+        if (!scope) return s.rpc.reply(m.id, { success: false, contentItems: [{ type: 'inputText', text: 'Sessão remota não encontrada.' }] });
+        void interactions.callTool(scope, p).then(r => { if (!s.rpc.closed) s.rpc.reply(m.id, r); }); return;
+      }
       if (
-        st &&
+        requestOwner &&
         /requestApproval$|^execCommandApproval$|^applyPatchApproval$/.test(
           m.method,
         )
       )
         return approval(
-          st,
+          requestOwner,
           s.rpc,
           m,
           /permissions/.test(m.method)
@@ -227,16 +255,16 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
                   ? "file"
                   : "command",
         );
-      if (st && m.method === "item/tool/requestUserInput") {
+      if (requestOwner && m.method === "item/tool/requestUserInput") {
         const card = proto.normalizeUserInputRequest(m.id, p);
         card.id = "remote_q_" + crypto.randomUUID();
         questions.set(card.id, {
-          st,
+          st: requestOwner,
           rpc: s.rpc,
           id: m.id,
           questions: card.todas,
         });
-        event(st, "pergunta", card);
+        event(requestOwner, "pergunta", card);
         return;
       }
       if (m.method === "currentTime/read")
@@ -277,7 +305,13 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
         if (!st.cancelled) event(st, "think-delta", { text: p.delta || "" });
         break;
       case "item/started":
-        if (!["agentMessage", "reasoning", "userMessage"].includes(it.type))
+        /* Leva 5i: o agente que o Codex cria (spawnAgent) e' o mesmo passo "Chamando um agente" do Codex local e do Claude. Rodada 2: as outras
+           chamadas entre agentes (esperar, mandar mensagem, fechar) NAO viram passo, igual ao PC (main.js): antes viravam um passo com o nome
+           cru ("wait", "sendInput", "close") e um JSON de argumentos. O que o agente faz depois e' do registro (Torre e Workflow). */
+        if (it.type === "collabAgentToolCall") {
+          if (it.tool === "spawnAgent" && it.id)
+            event(st, "tool-start", { id: it.id, name: "Agent", arg: String(it.prompt || "").replace(/\s+/g, " ").trim().slice(0, 300) });
+        } else if (!["agentMessage", "reasoning", "userMessage"].includes(it.type))
           event(st, "tool-start", {
             id: it.id,
             name: it.tool || it.type,
@@ -292,18 +326,23 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
         event(st, "tool-output", proto.normalizeCommandOutput(m.method, p));
         break;
       case "item/completed":
+        if (it.type === 'imageGeneration') event(st, 'generated-image', require('./cockpit-media').nativeImage(it));
         if (it.type === "agentMessage") {
           if (!st.cancelled)
             event(st, "text-final", {
               id: it.id || "msg",
               ...proto.normalizeAgentMessage(it),
             });
+        } else if (it.type === "collabAgentToolCall") {
+          // rodada 2 da leva 5i: so' o spawnAgent virou passo (item/started), so' ele termina; a CHAMADA acabou (o agente nasceu), sem saida
+          if (it.tool === "spawnAgent" && it.id) event(st, "tool-end", { id: it.id, output: "", error: it.status === "failed" });
         } else if (!["reasoning", "userMessage"].includes(it.type))
           event(st, "tool-end", {
             id: it.id,
             output:
-              it.aggregatedOutput ||
-              JSON.stringify(it.result || it.changes || ""),
+              it.type === 'imageGeneration' ? (it.status === 'failed' ? 'A geração da imagem falhou.' : 'Imagem disponível na conversa.')
+              : (it.aggregatedOutput ||
+              JSON.stringify(it.result || it.changes || "")),
             error:
               it.status === "failed" ||
               !!it.error ||
@@ -372,6 +411,7 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     const st = {
       ...opts,
       paneId,
+      generation: crypto.randomUUID(),
       destination: key(opts.remoto),
       cwd: opts.remoto.caminhoRemoto || opts.cwd || "~",
       engine: opts.engine,
@@ -398,7 +438,14 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
           signal: st.abort.signal,
         });
         params.cwd = absolute.trim();
-        const r = await st.server.rpc.request(method, params);
+        st.cwd = params.cwd;
+        if (method === 'thread/start' && interactions) params.dynamicTools = require('./cockpit-interactions').dynamicTools();
+        let r;
+        try { r = await st.server.rpc.request(method, params); }
+        catch (e) {
+          if (params.dynamicTools && /unknown field.*dynamic|unsupported.*dynamic|dynamic.*not supported/i.test(e.message)) { delete params.dynamicTools; r = await st.server.rpc.request(method, params); }
+          else throw e;
+        }
         st.session = r.threadId || r.thread?.id || opts.resumeId;
         if (!alive(st)) return false;
         if (!st.session)
@@ -407,6 +454,21 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
         if (previous && previous !== st) await stop(previous.paneId);
         st.server.threads.set(st.session, st);
         event(st, "sessao", { id: st.session, file: "" });
+        // Descoberta só de leitura: retomar o pai não inicia nenhum filho.
+        if (restoreCodex) void (async () => {
+          try {
+            const threads = [], cursors = new Set(); let cursor;
+            for (let n = 0; n < 20; n++) {
+              const page = await st.server.rpc.request('thread/list', { ancestorThreadId: st.session, sourceKinds: ['subAgent'], limit: 100, ...(cursor ? { cursor } : {}) });
+              if (!alive(st) || !Array.isArray(page?.data)) return;
+              threads.push(...page.data);
+              if (!page.nextCursor) break;
+              if (cursors.has(page.nextCursor)) return;
+              cursors.add(page.nextCursor); cursor = page.nextCursor;
+            }
+            if (alive(st)) restoreCodex(st.paneId, st.session, threads, st.server.destination);
+          } catch { /* Servidores antigos continuam observando eventos ao vivo. */ }
+        })();
       } else if (st.engine === "acp") {
         const command = acp.comandoEmPartes(st.model || acp.COMANDO_PADRAO);
         if (!command.bin || /^(npx|npm|pnpm|yarn|bunx)$/.test(command.bin))
@@ -424,10 +486,16 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
           })
         ).trim();
         if (!alive(st)) return false;
+        /* Rodada 2 da leva 5i: as variaveis que o registro do ACP manda junto do comando de uma IA (so' o Droid: sem auto-atualizar no meio da
+           sessao) tambem valem no servidor, como o acp.js faz no PC (ambienteDoComando). Vao na frente do comando, por "env NOME=valor", com as
+           mesmas aspas do resto (q). O nome sai de uma tabela fixa, e mesmo assim so' passa se for um nome de variavel (letras, numeros e _). */
+        const ambiente = Object.entries(iasAcp.ambienteDoComando(st.model || acp.COMANDO_PADRAO) || {})
+          .filter(([nome]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(nome));
+        const comEnv = ambiente.length ? ["env", ...ambiente.map(([nome, valor]) => nome + "=" + valor)] : [];
         st.rpc = new Rpc(
           transport.spawn(
             st.remoto,
-            "exec " + [command.bin, ...command.args].map(q).join(" "),
+            "exec " + [...comEnv, command.bin, ...command.args].map(q).join(" "),
             st.cwd,
           ),
           transport.kill,
@@ -574,11 +642,17 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
         if (r.turn?.id && st.sending) st.turn = r.turn.id;
         if (st.cancelled && st.turn) await interruptTurn(st);
       } else if (st.engine === "acp") {
+        /* Leva 5i: a fala (msgId) e o texto somado (acc) so' eram postos a zero ao abrir o agente. Num servidor, o 2º turno continuava no id e no
+           texto do 1º, e a resposta nova colava na antiga. Agora cada turno nasce limpo, como no ACP local (enviar e fimDoTurno do acp.js). */
+        st.msgId = null;
+        st.acc = "";
         const r = await st.rpc.request(
           "session/prompt",
           { sessionId: st.session, prompt: [{ type: "text", text }] },
           900000,
         );
+        st.msgId = null;
+        st.acc = "";
         st.sending = false;
         event(st, "turn-end", {
           status:
@@ -749,6 +823,7 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
   async function stop(paneId) {
     const st = panes.get(paneId);
     if (!st) return true;
+    if (st.engine === "codex") onScopeClosed?.(st.paneId);
     st.stopped = true;
     st.cancelled = true;
     st.abort.abort();
@@ -802,9 +877,21 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     await s.ready;
     return s.rpc.request(method, params);
   }
+  /* Tarefa 6 (27/09): a marca de quem deu o nome, guardada no registro do
+     Cockpit, volta pra lista do jeito que a tela entende: nome seu vira "nome"
+     (o automatico nunca passa por cima dele) e o do Cockpit vira "tituloAuto"
+     (a conversa reaberta continua sendo revista, sem virar nome seu). */
+  function comNomeDoRegistro(row, salvo) {
+    if (!salvo || typeof salvo.title !== "string" || !salvo.title) return row;
+    if (salvo.nomeCustomizado) return { ...row, title: salvo.title, nome: salvo.title };
+    if (salvo.nomeAuto) return { ...row, title: salvo.title, tituloAuto: true };
+    return row;
+  }
   async function sessions(engine, remote) {
+    let doRegistro = [];
     try {
       const cached = store?.list(engine, remote) || [];
+      doRegistro = cached.map((c) => comNomeDoRegistro(c, c));
       if (engine === "gemini") {
         try {
           const nativeRows = JSON.parse(
@@ -814,16 +901,15 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
             ),
           );
           return [
-            ...nativeRows.map((n) => {
-              const c = cached.find((c) => c.id === n.id && c.nomeCustomizado);
-              return c ? { ...n, title: c.title } : n;
-            }),
-            ...cached.filter((c) => !nativeRows.some((n) => n.id === c.id)),
+            ...nativeRows.map((n) =>
+              comNomeDoRegistro(n, cached.find((c) => c.id === n.id)),
+            ),
+            ...doRegistro.filter((c) => !nativeRows.some((n) => n.id === c.id)),
           ];
         } catch (e) {
           return cached.length
             ? {
-                itens: cached,
+                itens: doRegistro,
                 aviso:
                   "Lista nativa indisponível; exibindo registro do Cockpit. " +
                   e.message,
@@ -831,25 +917,37 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
             : { error: e.message };
         }
       }
-      if (engine !== "codex") return cached;
-      const r = await query(remote, "thread/list", { limit: 500 });
-      const native = (r.data || r.threads || []).map((t) => ({
-        engine,
-        id: t.id,
-        cwd: t.cwd,
-        title: t.name || t.preview || "Conversa remota",
-        when: (t.updatedAt || t.createdAt || 0) * 1000,
-        file: "",
-        remoto: true,
-        destino: key(remote),
-        origem: "servidor",
-      }));
+      if (engine !== "codex") return doRegistro;
+      const threads = await require('./sessions-list').listAll((method, params) => query(remote, method, params));
+      /* o seu > o do Cockpit > o nome que o proprio Codex deu > o comeco da
+         conversa (igual a lista do PC). "nativos", e nao "native": com o mesmo
+         nome do modulo (require acima) neste bloco, o native.script da lista do
+         Gemini, logo acima, caia na zona morta do const e a lista nativa do
+         Gemini nunca vinha (sempre o aviso "Lista nativa indisponivel"). */
+      const nativos = threads.map((t) =>
+        comNomeDoRegistro(
+          {
+            engine,
+            id: t.id,
+            cwd: t.cwd,
+            title: t.name || t.preview || "Conversa remota",
+            when: (t.updatedAt || t.createdAt || 0) * 1000,
+            file: "",
+            remoto: true,
+            destino: key(remote),
+            origem: "servidor",
+          },
+          cached.find((c) => c.id === t.id),
+        ),
+      );
       return [
-        ...native,
-        ...cached.filter((c) => !native.some((n) => n.id === c.id)),
+        ...nativos,
+        ...doRegistro.filter((c) => !nativos.some((n) => n.id === c.id)),
       ];
     } catch (e) {
-      return { error: e.message };
+      return doRegistro.length
+        ? { itens: doRegistro, aviso: 'Lista nativa indisponível; exibindo registro do Cockpit. ' + e.message }
+        : { error: e.message };
     }
   }
   async function history(engine, remote, id) {
@@ -900,7 +998,18 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
       return cached?.msgs?.length ? cached.msgs : { error: e.message };
     }
   }
-  async function rename(engine, remote, id, name) {
+  /* opcoes.auto (Tarefa 6): o nome automatico do Cockpit fica so' no registro
+     daqui, marcado como automatico -- nao sobe pro app do Codex (la' viraria o
+     nome "do app", igual ao PC) e nunca passa por cima do nome que voce deu:
+     com nome seu gravado, devolve o conflito com o seu nome. */
+  async function rename(engine, remote, id, name, opcoes = {}) {
+    if (opcoes.auto) {
+      if (store?.rename?.(remote, engine, id, name, { auto: true }) === false) {
+        const salvo = store.read(remote, engine, id);
+        return { ok: false, conflito: true, manual: true, nome: salvo?.title || "" };
+      }
+      return true;
+    }
     if (engine === "codex")
       await query(remote, "thread/name/set", {
         threadId: id,
@@ -990,6 +1099,7 @@ function createRemote({ transport, emit, cliArgs, cliEvent, cliFlush, store }) {
     operation,
     inspect,
     query,
+    info: (remote) => servers.get(key(remote))?.info || {},
     sessions,
     history,
     rename,

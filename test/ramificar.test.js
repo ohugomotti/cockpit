@@ -201,6 +201,7 @@ function spawnFalso(bin, args, opts) {
 }
 
 const handlers = new Map();
+const ipcConfiavel = require('../testes/ipc-confiavel').criarIpcConfiavel();
 const enviados = [];
 class JanelaFalsa {
   constructor() {
@@ -227,7 +228,7 @@ const eletronFalso = {
   shell: { openExternal() {}, openPath() {}, showItemInFolder() {} },
   Menu: { setApplicationMenu() {}, buildFromTemplate: () => ({}) },
   nativeTheme: { on() {} },
-  clipboard: { readText: () => '', writeText() {} },
+  clipboard: { readText: async () => '', writeText: async () => {}, read: async () => [], has: async () => false },   // Electron 44: assincrono, sem readImage/readBuffer
   globalShortcut: { register() {}, unregisterAll() {} },
   session: { defaultSession: { webRequest: { onHeadersReceived() {} }, setPermissionRequestHandler() {} } },
   crashReporter: { start() {} },
@@ -255,6 +256,7 @@ let carregou = null;
   const requireOriginal = Module.prototype.require;
   Module.prototype.require = function (nome) {
     if (nome === 'electron') return eletronFalso;
+    if (nome === './cockpit-ipc-security') return ipcConfiavel.modulo;
     if (nome === 'os') {
       const real = requireOriginal.call(this, 'os');
       return new Proxy(real, { get: (alvo, k) => (k === 'homedir' ? () => HOME : alvo[k]) });
@@ -273,7 +275,7 @@ const chamar = (canal, arg) => {
   if (carregou !== true) throw carregou;
   const h = handlers.get(canal);
   if (!h) throw new Error('handler ausente: ' + canal);
-  return h({}, arg);
+  return h(ipcConfiavel.evento(), arg);
 };
 const eventos = (paneId, kind) => enviados.filter((e) => e.canal === 'pane:event' && e.paneId === paneId && (!kind || e.kind === kind));
 
@@ -330,10 +332,18 @@ test('main: ramo no servidor = --resume + --fork-session DENTRO do ssh (linha de
   assert.ok(s, 'subiu pelo ssh');
   assert.ok(s.args.includes('hugo@vps.exemplo'));
   const comando = s.args.at(-1);
-  assert.match(comando, /^cd ~\/'projeto' \|\| exit 1; claude /);
-  assert.ok(comando.includes("'--resume' '" + ORIG + "' '--fork-session'"), comando);
+  assert.ok(comando.startsWith("cd ~/'projeto' || exit 1; if command -v node"), 'a pasta remota precede o wrapper');
+  const wrapped = comando.match(/then exec node -e '([\s\S]+?)'; else printf/);
+  assert.ok(wrapped, 'o wrapper está dentro do comando SSH');
+  const code = wrapped[1].replaceAll("'\\''", "'");
+  const prefix = '(' + require('../src/cockpit-remote-host').remoteHostRuntime.toString() + ')(';
+  assert.ok(code.startsWith(prefix), 'código transitório corresponde ao helper revisado');
+  const payload = JSON.parse(code.slice(prefix.length, -1));
+  const resume = payload.args.indexOf('--resume');
+  assert.ok(resume >= 0);
+  assert.deepEqual(payload.args.slice(resume, resume + 3), ['--resume', ORIG, '--fork-session']);
   // a versao do CLI no servidor nao foi medida com --session-id junto do fork: o id chega no system init
-  assert.ok(!comando.includes('--session-id'), comando);
+  assert.ok(!payload.args.includes('--session-id'));
   assert.equal(eventos('r2', 'sessao').length, 0);
   await chamar('pane:stop', { paneId: 'r2', engine: 'claude' });
 });

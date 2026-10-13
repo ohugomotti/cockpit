@@ -137,8 +137,8 @@ const $dom = (sel, raiz) => (raiz && raiz.querySelector ? raiz.querySelector(sel
    1) botao de modo depois de Shift+Tab / menu Modos
    ===================================================================== */
 function ctxModo(extra) {
-  const bt = new El('button'); const ic = new El('span'); const nome = new El('span');
-  const el = { '.p-modo': bt, '.modo-ic': ic, '.modo-nome': nome, '.p-input': null };
+  // leva 4 (UI 3.5): a permissão mora no chip do modelo (.pm-modo); o botão .p-modo saiu da barra. Leva 5b (decisão do Hugo, 07/10: sempre símbolos): é o ícone do modo
+  const el = { '.pm-modo': new El('span'), '.p-input': null };
   const itens = [], notas = [];
   const ctx = {
     ...globaisFalsos(), console, cfg: { defMode: 'manual' }, itens, notas,
@@ -148,7 +148,7 @@ function ctxModo(extra) {
     note: (P, t, e) => notas.push({ t, e: !!e }),
     novoMenu: () => ({ appendChild: () => {}, innerHTML: '' }),
     tituloPopup: () => ({}), subPopup: () => ({}), elLinha: () => ({}), barraEsforco: () => ({}),
-    elItem: (o, cb) => { itens.push({ nome: o.nome, cb }); return {}; },
+    elItem: (o, cb) => { itens.push({ nome: o.nome, ic: o.ic, cb }); return {}; },
     guardarConversaPraVoltar: () => {}, destravarPainel: () => {}, setDot: () => {}, savePanes: () => {},
     modelosDe: () => [{ id: 'claude-haiku-4-5-20251001', nome: 'Haiku 4.5', efforts: ['low', 'medium', 'high'], padraoEffort: 'medium' }, { id: 'claude-sonnet-5', nome: 'Sonnet 5', efforts: ['low', 'medium', 'high'], padraoEffort: 'medium', padrao: true }],
     esforcosDe: () => [{ id: 'low' }, { id: 'medium' }, { id: 'high' }],
@@ -168,11 +168,12 @@ test('achado 1: depois do Shift+Tab o botao mostra o modo novo, nao o "real" da 
   // a sessao anterior subiu em Manual (Haiku nao tem Plano/Auto): botao rebaixado
   const P = { id: 'p', engine: 'claude', mode: 'plan', modoReal: 'manual', _avisouModo: true, el, busy: false };
   ctx.pintarModo(P);
-  assert.equal(el['.modo-nome'].textContent, 'Manual', 'antes da troca aparece o modo real');
+  assert.equal(el['.pm-modo'].innerHTML, '<svg data-ic="hand"></svg>', 'antes da troca aparece o ícone do modo real (Manual)');
+  assert.equal(el['.pm-modo'].classList.contains('rebaixado'), true);
   await ctx.girarModo(P);
   assert.equal(P.mode, 'auto');
-  assert.equal(el['.modo-nome'].textContent, 'Auto', 'Shift+Tab: o botao mostra o que voce escolheu');
-  assert.equal(el['.p-modo'].classList.contains('rebaixado'), false);
+  assert.equal(el['.pm-modo'].innerHTML, '<svg data-ic="wand-sparkles"></svg>', 'Shift+Tab: o chip mostra o ícone do que voce escolheu (Auto)');
+  assert.equal(el['.pm-modo'].classList.contains('rebaixado'), false);
   assert.equal(P.modoReal, null);
   assert.equal(P._avisouModo, false, 'o aviso do rebaixamento volta a valer na proxima sessao');
 });
@@ -185,8 +186,9 @@ test('achado 1: pelo menu Modos o botao tambem muda na hora', async () => {
   assert.ok(plano, 'item Plano no menu');
   await plano.cb();
   assert.equal(P.mode, 'plan');
-  assert.equal(el['.modo-nome'].textContent, 'Plano');
-  assert.equal(el['.p-modo'].classList.contains('rebaixado'), false);
+  assert.equal(plano.ic, 'clipboard-list');
+  assert.equal(el['.pm-modo'].innerHTML, '<svg data-ic="' + plano.ic + '"></svg>', 'o chip mostra o mesmo ícone do item Plano do menu Permissões');
+  assert.equal(el['.pm-modo'].classList.contains('rebaixado'), false);
   assert.equal(P.modoReal, null);
 });
 
@@ -211,20 +213,12 @@ test('achado 17: trocar o modelo com ele trabalhando avisa que a resposta foi co
 });
 
 /* =====================================================================
-   2) painel estreito: o botao "Desenhar fluxo" some antes de empurrar o Enviar
+   2) painel estreito: o "Desenhar fluxo" e o Entra/Fila sairam da barra (leva 4, UI 3.1)
    ===================================================================== */
-test('achado 2: @container no FIM do style.css esconde o .p-fluxo em painel estreito', () => {
-  const re = /@container\s*\(max-width:\s*(\d+)px\)\s*\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
-  let achou = null;
-  for (const m of CSS.matchAll(re)) if (/\.p-fluxo\s*\{[^}]*display\s*:\s*none/.test(m[2])) achou = m;
-  assert.ok(achou, 'regra @container com .p-fluxo{display:none}');
-  assert.ok(Number(achou[1]) >= 258, 'vale no painel de ~258 px (e acima dele): ' + achou[1]);
-  // "no fim": depois dela so' comentario e outras @container
-  const resto = CSS.slice(achou.index + achou[0].length).replace(/\/\*[\s\S]*?\*\//g, '').replace(re, '').trim();
-  assert.equal(resto, '', 'nada de regra comum depois dela (a @container perde pra regra escrita depois)');
-  // no minimo (240 px) ainda sobravam 4 px: o texto do "Fila" some abaixo de 250
-  const fila = [...CSS.matchAll(re)].find((m) => /\.p-modoenvio span\s*\{[^}]*display\s*:\s*none/.test(m[2]));
-  assert.ok(fila && Number(fila[1]) >= 240 && fila.index > achou.index, 'regra do "Fila" so no icone no painel minimo');
+test('achado 2 (leva 4): a barra não tem mais o Quadro nem o Entra/Fila, e o style.css não guarda regra para eles', () => {
+  const html = lerFonte('renderer', 'index.html');
+  assert.doesNotMatch(html, /p-fluxo|p-modoenvio/, 'Desenhar mora no menu +; Entra/Fila no chip do modelo');
+  assert.doesNotMatch(CSS, /\.cmp-bar \.p-fluxo\{display:none\}|\.p-modoenvio span\{display:none\}/);
 });
 
 /* =====================================================================
@@ -527,6 +521,9 @@ function telaQueda(extra) {
     mostrarAviso: (o) => ctx.avisos.push(o),
     setDot: (P, s) => { P.dot = s; }, trabalhando: (P) => { P.trab = true; }, pararTrabalho: (P) => { P.trab = false; },
     limparPassos: () => {}, esconderPermissao: () => {}, pintarAbasLocal: () => {}, pintarFila: () => {},
+    // Tarefa 2 (26/09): a fila volta pro campo pelo voltarDaFila (tira o trecho citado pelo
+    // Responder). As filas daqui nao tem trecho: devolve o texto como veio.
+    voltarDaFila: (P, texto) => texto,
     zerarTurno: () => {}, userMsg: () => ({}),
     opcoesDeStart: (P) => ({ paneId: P.id, engine: P.engine, resumeId: P.resumeId || undefined }),
     esforcoDe: () => 'high', nomeDoMotor: (e) => ({ claude: 'Claude', codex: 'Codex' })[e] || e,
@@ -839,7 +836,9 @@ test('achado 7: conversa do Opus 5 reaberta volta no claude-opus-5[1m] (o Hugo u
   const m = (model) => ({ role: 'bot', text: 'x', model });
   assert.equal(ctx.modeloDoHistorico([m('claude-opus-5')]), 'claude-opus-5[1m]');
   assert.equal(ctx.modeloDoHistorico([m('claude-opus-5[1m]')]), 'claude-opus-5[1m]');
-  assert.equal(ctx.modeloDoHistorico([m('opus')]), 'claude-opus-5[1m]');
+  // 08/10/2026: o apelido "opus" agora e' o Opus 5.5 (como no Claude Code), e ele tambem volta com 1M
+  assert.equal(ctx.modeloDoHistorico([m('opus')]), 'claude-opus-5-5[1m]');
+  assert.equal(ctx.modeloDoHistorico([m('claude-opus-5-5')]), 'claude-opus-5-5[1m]');
   assert.equal(ctx.modeloDoHistorico([m('claude-sonnet-5')]), 'claude-sonnet-5', 'os outros ficam como estao');
   assert.equal(ctx.modeloDoHistorico([m('claude-fable-5-1')]), 'claude-fable-5-1');
 });
@@ -881,6 +880,54 @@ test('achado 8: painel remoto preserva Codex; ficha de motor desconhecido nao re
   assert.equal(Q.cwd, '/srv/app');
 });
 
+/* Rodada 2 da leva 5i, item 8: o newPane de verdade (o mesmo andaime do achado 8) com o Grok nativo que nao funciona mais com o CLI oficial: um config
+   antigo com lastEngine 'grok' e a ficha de um painel Grok antigo nascem no ACP, rodando "grok agent stdio". Sem o modulo das IAs, o nativo de sempre. */
+test('rodada 2, item 8: newPane com lastEngine "grok" (config antigo) ou ficha de Grok antigo nasce no ACP com "grok agent stdio"; os outros motores nao mudam', () => {
+  const montar = ({ lastEngine, comModulo = true } = {}) => {
+    const fake = () => new El('div');
+    const tpl = { content: { firstElementChild: { cloneNode: () => fake() } } };
+    const ctx = {
+      ...globaisFalsos(), console, panes: new Map(), bootId: 'b', paneSeq: 0, HOME: 'C:\\Users\\hugom', quadro: null, TITULO_MIC: '',
+      cfg: { abaAtiva: 'pc', defMode: 'manual', lastEngine, abas: [{ id: 'pc', nome: 'PC', tipo: 'local', caminhos: ['C:\\proj'] }] },
+      $: (sel) => (sel === '#tplPane' ? tpl : fake()),
+      sairDaAbertura() {}, window: { CockpitCollaboration: null, api: {}, ...(comModulo ? { CockpitAcpPresets: require('../src/renderer/acp-presets') } : {}) },
+      ico: () => '', nomePasta: (p) => 'Pasta: ' + p, ligarDitado() {}, fillModels() {}, paintEngine() {}, pintarModo() {}, ligarArrastarPainel() {},
+      montarColunas() {}, setFocus() {}, note() {}, nomeDoMotor: e => e, savePanes() {}, menuMotores() {}, menuModelos() {},
+    };
+    vm.createContext(ctx);
+    vm.runInContext([constBloco('MODOS', 'const MODOS = {'), ...['abasLocais', 'abaPorId', 'abaAtual', 'remotoDoAba', 'remotoDoPane', 'pastasDaAba', 'cwdPadraoDaAba',
+      'motorDoPainelNovo', 'modoValido', 'comandoDoGrokNoAcp', 'opcoesDoMotor', 'painelSemGrokNativo', 'newPane'].map((n) => recorte(n))].join('\n'), ctx);
+    return ctx;
+  };
+  // o botao "+ painel" com o ultimo motor "grok" guardado: antes nascia no Grok nativo
+  const velho = montar({ lastEngine: 'grok' });
+  const P = velho.newPane({});
+  assert.equal(P.engine, 'acp');
+  assert.equal(P.model, 'grok agent stdio');
+  assert.equal(P.abaId, 'pc');
+  assert.equal(velho.newPane().engine, 'acp', 'newPane() sem argumento nenhum');
+  // a ficha de um painel Grok antigo: motor e comando novos, a pasta e o titulo seguem, a conversa nativa nao
+  const ficha = velho.newPane({ engine: 'grok', cwd: 'C:\\pedro', model: '', titulo: 'Pesquisa', resumeId: 'sessao-nativa', abaId: 'pc' });
+  assert.equal(ficha.engine, 'acp');
+  assert.equal(ficha.model, 'grok agent stdio');
+  assert.equal(ficha.cwd, 'C:\\pedro', 'a pasta segue (nao e o caso do motor recusado, que volta para a pasta da aba)');
+  assert.equal(ficha.titulo, 'Pesquisa');
+  assert.equal(ficha.resumeId, null, 'a sessao do Grok nativo nao abre no ACP');
+  assert.equal(ficha.mode, 'manual', 'o modo vale para o motor de agora (ACP)');
+  // os outros motores, com o mesmo config antigo, nao mudam
+  const claude = velho.newPane({ engine: 'claude', cwd: 'C:\\proj', model: 'claude-sonnet-5-5', resumeId: 'c1' });
+  assert.deepEqual([claude.engine, claude.model, claude.resumeId], ['claude', 'claude-sonnet-5-5', 'c1']);
+  const outraIa = velho.newPane({ engine: 'acp', model: 'opencode acp' });
+  assert.deepEqual([outraIa.engine, outraIa.model], ['acp', 'opencode acp']);
+  // config sem ultimo motor: o Claude de sempre
+  assert.equal(montar({}).newPane({}).engine, 'claude');
+  // sem o modulo das IAs (nao deveria acontecer): o Grok nativo de sempre, com a ficha inteira
+  const semModulo = montar({ lastEngine: 'grok', comModulo: false });
+  assert.equal(semModulo.newPane({}).engine, 'grok');
+  const nativo = semModulo.newPane({ engine: 'grok', resumeId: 'sessao-nativa', cwd: 'C:\\pedro' });
+  assert.deepEqual([nativo.engine, nativo.resumeId, nativo.cwd], ['grok', 'sessao-nativa', 'C:\\pedro']);
+});
+
 /* =====================================================================
    10) PowerShell: aspas tipograficas tambem sao aspas
    ===================================================================== */
@@ -915,7 +962,8 @@ test('achado 12: "Rate limit reached" nao e limite de uso (religa); os limites d
    ===================================================================== */
 test('achado 15: conversa reaberta sem modelo mostra o nome do padrao, nao "(indisponivel)"', () => {
   const alvoModelo = new El('button');
-  const ctx = vm.createContext({ cfg: {}, ico: () => '', $: (sel) => (sel === '.p-model' ? alvoModelo : null), MODELOS_CODEX: null, EF_DESC_PT: {},
+  // leva 5h: o fillModels escreve só no botão do MEIO do chip (.pm-modelo); a permissão e o motor são de outros pintores
+  const ctx = vm.createContext({ cfg: {}, ico: () => '', $: (sel) => (sel === '.pm-modelo' ? alvoModelo : null), MODELOS_CODEX: null, EF_DESC_PT: {},
     MODELOS_GEMINI: [], MODELOS_GROK: [], modelosAcp: () => [] });
   vm.runInContext([constLista('MODELOS_CLAUDE'), 'var catClaudeCache = { chave: "", lista: MODELOS_CLAUDE };',
     ...['catalogoClaude', 'modelosDe', 'modeloAtual', 'esforcosDe', 'fillModels'].map((n) => recorte(n))].join('\n'), ctx);

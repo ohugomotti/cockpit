@@ -8,7 +8,7 @@ const hash=b=>crypto.createHash('sha256').update(b).digest('hex').toUpperCase();
    (Get-FileHash "$env:LOCALAPPDATA/Programs/Cockpit/resources/app.asar").Hash
    rodado no pwsh 7: o powershell.exe 5.1 lancado a partir do pwsh herda o
    PSModulePath dele e fica sem o Get-FileHash. */
-const baselineHash='7A97B9975531407910A2F1E8A1A9D487881CDD1395C68E18898BB8351B09E350';
+const baselineHash='01A19942C98EE030F13947F72ADE4E49993E0854E76A1D3AC83996654B4C569E';
 if(hash(fs.readFileSync(installed))!==baselineHash)throw Error('Instalação mudou; rever baseline.');
 /* A lista NAO e' escrita a mao. Era, e em 21/09/2026 ela esqueceu o
    renderer/style.css: o pacote saiu com o CSS velho e o verificador da linha 15

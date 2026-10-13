@@ -111,6 +111,11 @@ function ctxTitulo(extra) {
     destravarPainel() {}, limparSessoesDeTodosMotores() {}, limparPlano() {}, limparAuditoria() {}, mostrarPastaNoPainel() {},
     nomePasta: (p) => p, shortPath: (p) => p, atualizarGit() {}, loadTree() {}, focusPane: null, remotoDoPane: () => null,
     window: { api: { paneStop: async () => true } },
+    /* Tarefa 6 (27/09): o podeGerarTituloAuto passou a perguntar o que conta como
+       pedido (saudacao e teste de conexao nao sao) ao arquivo compartilhado
+       src/renderer/nome-conversa.js (no app, window.NomeConversa pelo <script>)
+       -- ele entra no contexto. O que os testes daqui provam e' o mesmo. */
+    NomeConversa: require('../src/renderer/nome-conversa'),
     ...(extra || {}),
   };
   vm.createContext(ctx);

@@ -45,7 +45,12 @@ function createCredentialStore({folder,activePath,now=Date.now,validate=(engine,
     list(engine);
     const text=read(file),info=validate(engine,text);
     if(!info.valido||!info.podeUsar)return{error:info.motivo};
-    atomicWrite(activePath(engine),text);return{ok:true};
+    atomicWrite(activePath(engine),text);
+    // O rename confirmar não basta: um motor ainda vivo pode regravar a conta
+    // anterior. Conferir a identidade efetivamente ativa sem consultar a rede.
+    const applied=validate(engine,read(activePath(engine)));
+    if(!applied.valido||!applied.podeUsar||!sameCredentialAccount(info,applied))return{error:'Não consegui confirmar a troca: a credencial ativa mudou durante a operação. Nenhuma conversa foi enviada. Feche o terminal que usa essa conta e tente novamente.'};
+    return{ok:true};
   }
   function forget(engine,nickname){fs.unlinkSync(name(engine,nickname));return{ok:true};}
   return{list,save,change,forget,readActive:engine=>supported(engine)?read(activePath(engine)):null};

@@ -1,15 +1,39 @@
 /* Cockpit: tokens gerados do design system (tokens.json). Nao edite a mao: mude o tokens.json. */
+/* Leva 5e (07/10/2026), editado a mao porque o tokens.json nao esta neste repositorio (levar la': os quatro tokens abaixo e o
+   degrau novo do Escuro). Quatro tokens por tema, nos 6 jeitos de pintar (o Motti e o Azul em tempo de execucao):
+   --work   o FUNDO: a area de trabalho atras dos paineis, entre as colunas e atras da faixa de pastas. Cor explicita e opaca;
+            no visual Mac nao e' mais o Mica do Windows. Painel (--raised) x --work >= 1,20:1.
+   --side   a LATERAL (sem o visual Mac; com ele a lateral e' o vidro --mac-glass). Lateral x --work >= 1,10:1.
+   --tab    a aba de pasta da faixa de cima. Aba x --work >= 1,10:1.
+   --tab-on a aba de pasta ATIVA, mais marcada que a --tab.
+   A conta esta em test/contraste-painel-fundo.test.js. No Escuro, que ja tinha o fundo preto, quem subiu foi a escada de baixo
+   (--sunken, --surface, --raised, --high, --line, --line-strong), junta, para os degraus entre o painel e o que mora dentro dele
+   (bolha, caixa de escrever, cartoes) seguirem os mesmos. No Claro e no Jornal o --control-border ficou um tom mais escuro: o
+   polegar da barra de rolagem da esteira cai sobre o --work, mais escuro que os outros fundos, e precisa de 3:1 (era 2,68 e 2,96).
+   2a rodada (07/10, depois dos prints): nos escuros (Escuro e Azul) os tokens seguem uma ESCADA de elevacao, de baixo para cima:
+   --work (fundo, o mais escuro, sem ser preto puro) < --side (lateral) < --raised (painel) < --high (popups e cartoes). A aba
+   inativa (--tab) tem a cor do painel e a ativa (--tab-on) fica um degrau acima. Razoes: painel x fundo >= 1,20; lateral x fundo
+   >= 1,06; painel x lateral >= 1,08; aba x fundo >= 1,10. O Escuro subiu o painel de #1c1c20 para #1f1f23 para fechar o 1,20 com o
+   fundo fora do preto puro (#08080a); o --canvas dele acompanha o fundo. */
 
+/* O Automatico nao tem tokens proprios (leva 5e, 2a rodada): com o Windows escuro ele E' o Escuro, com o Windows claro ele E' o Claro,
+   com o visual Mac ligado ou nao. A luz vem do visual-mac.js (data-mac-luz). Por isso os seletores dele moram na lista do tema fixo
+   aqui e no visual-mac.css; mudar uma cor do Escuro ou do Claro muda a do Automatico junto. */
+html[data-tema="automatico"][data-mac-luz="escuro"],
 :root, html[data-tema="escuro"] {
-  --canvas: #000000;
-  --sunken: #0b0b0c;
-  --surface: #0c0c0d;
-  --raised: #141416;
-  --high: #202024;
+  --canvas: #08080a;
+  --work: #08080a;
+  --side: #141417;
+  --tab: #1f1f23;
+  --tab-on: #2b2b31;
+  --sunken: #0f0f11;
+  --surface: #131316;
+  --raised: #1f1f23;
+  --high: #2b2b31;
   --hover: #ffffff0f;
   --scrim: #000000cc;
-  --line: #1c1c1f;
-  --line-strong: #2c2c31;
+  --line: #28282d;
+  --line-strong: #3a3a40;
   --control-border: #6a6a73;
   --ink: #f2f2f3;
   --ink-muted: #a1a1aa;
@@ -40,6 +64,10 @@
 
 html[data-tema="azul"] {
   --canvas: #07182f;
+  --work: #050d1a;
+  --side: #0c1b33;
+  --tab: #0d2748;
+  --tab-on: #143560;
   --sunken: #051226;
   --surface: #0a203d;
   --raised: #0d2748;
@@ -76,8 +104,13 @@ html[data-tema="azul"] {
   --halo-attention: 0 0 0 3px #ff8a5c40;
 }
 
+html[data-tema="automatico"][data-mac-luz="claro"],
 html[data-tema="claro"] {
   --canvas: #eef1f6;
+  --work: #dde3ec;
+  --side: #f6f8fb;
+  --tab: #f0f3f8;
+  --tab-on: #ffffff;
   --sunken: #e3e8f0;
   --surface: #f6f8fb;
   --raised: #ffffff;
@@ -86,7 +119,7 @@ html[data-tema="claro"] {
   --scrim: #07182f59;
   --line: #d6dde8;
   --line-strong: #c1cbdb;
-  --control-border: #7d8ba1;
+  --control-border: #718094;
   --ink: #07182f;
   --ink-muted: #3d5170;
   --ink-faint: #56688a;
@@ -116,6 +149,10 @@ html[data-tema="claro"] {
 
 html[data-tema="jornal"] {
   --canvas: #f3eee3;
+  --work: #e2dac7;
+  --side: #f8f4eb;
+  --tab: #f3eee3;
+  --tab-on: #fdfbf6;
   --sunken: #ebe4d4;
   --surface: #f8f4eb;
   --raised: #fdfbf6;
@@ -124,7 +161,7 @@ html[data-tema="jornal"] {
   --scrim: #2a272159;
   --line: #e0d8c6;
   --line-strong: #cfc5ad;
-  --control-border: #877c66;
+  --control-border: #827761;
   --ink: #1f2433;
   --ink-muted: #4e5466;
   --ink-faint: #62687a;
@@ -167,7 +204,9 @@ html[data-tema="jornal"] {
   --layout-sidebar: 272px;
   --layout-rail: 56px;
   --layout-pane-head: 36px;
-  --layout-pane-min: 280px;
+  /* 29/09 (Hugo): 280 era estreito demais. É só o piso: a largura de verdade
+     sai do monitor (--colunas-visiveis, ver cockpit-ui.css e app.js). */
+  --layout-pane-min: 340px;
   --layout-hit: 28px;
   --layout-glyph: 12px;
   --layout-logo: 16px;

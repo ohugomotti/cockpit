@@ -106,7 +106,8 @@ test('tool_result Claude usa extração rica real do main com o shape de imagens
 
 test('queda do Claude encerra acompanhamento só quando o processo ainda é dono do painel', () => {
   const proc = new EventEmitter(), st = { erro: '' }, novo = {};
-  const ctx = { proc, st, paneId: 0, remoto: null, claudePanes: new Map([[0, st]]), events: [],
+  const closed = [];
+  const ctx = { interactionBroker: {cancelScope() {}}, remoteHost: { dispose() { closed.push(true); } }, proc, st, paneId: 0, remoto: null, claudePanes: new Map([[0, st]]), events: [],
     observabilidade: { encerrarPainel: (...args) => ctx.events.push({ encerrou: args }) },
     emit: (...args) => ctx.events.push({ evento: args }),
   };
@@ -115,6 +116,7 @@ test('queda do Claude encerra acompanhamento só quando o processo ainda é dono
   const fim = source.indexOf("  proc.on('error', (e) => {", inicio);
   vm.runInContext(source.slice(inicio, fim), ctx);
   ctx.claudePanes.set(0, novo); proc.emit('close', 1);
+  assert.equal(closed.length, 1, 'o wrapper antigo encerra suas próprias chamadas');
   assert.equal(ctx.events.length, 0, 'processo antigo não interrompe os agentes da nova sessão');
   ctx.claudePanes.set(0, st); proc.emit('close', 1);
   assert.equal(ctx.events[0].encerrou[1], 'claude');

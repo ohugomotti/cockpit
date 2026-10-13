@@ -29,6 +29,9 @@ async function rodar(pasta, mexerCtx, motorAlvo) {
     note() {}, remotoDoPane: () => null,
     fillModels() {}, paintEngine() {}, mostrarPastaNoPainel() {}, pintarModo() {}, setDot() {},
     pintarTokens() {}, pintarFila() {}, pararTrabalho() {}, limparPassos() {},
+    // Tarefa 2 (26/09): a fila volta pro campo pelo voltarDaFila (tira o trecho citado pelo
+    // Responder). A fila daqui nao tem trecho: devolve o texto como veio.
+    voltarDaFila: (P, texto) => texto,
     savePanes: () => { chamou.savePanes++; },
     marcaTroca() {}, esconderPermissao() {},
     $: () => ({ value: '', style: {}, scrollHeight: 40 }),

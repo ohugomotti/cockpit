@@ -126,10 +126,33 @@ function harness(overrides = {}) {
     cliArgs: () => [],
     cliEvent() {},
     cliFlush() {},
-    store: overrides.store
+    store: overrides.store,
+    ...overrides.callbacks
   });
   return { manager, transport, processes, events, runs, uploads, cleaned };
 }
+
+test('VPS anuncia formulário e ferramentas; pedidos da filha usam seu painel e param junto', async () => {
+  const requests = [], closed = [];
+  const h = harness({ callbacks: {
+    ownerOfThread: (thread, origin) => thread === 'child' && origin === key(A) ? 'p' : undefined,
+    onScopeClosed: pane => closed.push(pane),
+    interactions: { request: (...a) => requests.push(a), cancelScope() {} },
+  } });
+  try {
+    await h.manager.start('p', { engine: 'codex', remoto: A });
+    const proc = h.processes[0].p;
+    assert.equal(proc.sent.find(m=>m.method==='initialize').params.capabilities.mcpServerOpenaiFormElicitation, true);
+    assert.ok(proc.sent.find(m=>m.method==='thread/start').params.dynamicTools.every(t=>t.type==='function'));
+    proc.stdout.emit('data', JSON.stringify({ id: 9901, method:'mcpServer/elicitation/request', params:{threadId:'child',turnId:'child-turn',mode:'url',url:'https://example.test'} })+'\n');
+    assert.equal(requests[0][0].paneId, 'p'); assert.equal(requests[0][0].threadId, 'child'); assert.equal(requests[0][0].origin.host, A.host);
+    assert.equal(proc.sent.some(m=>m.id===9901), false);
+    requests[0][3]({action:'decline'}); assert.deepEqual(proc.sent.at(-1).result,{action:'decline'});
+    proc.stdout.emit('data', JSON.stringify({ id:9902, method:'item/tool/requestUserInput', params:{threadId:'child',questions:[{id:'q',header:'Destino',question:'Onde?',options:[{label:'PC',description:'Local'}]}]} })+'\n');
+    assert.equal(h.events.find(e=>e.kind==='pergunta').pane,'p');
+    await h.manager.stop('p'); assert.deepEqual(closed,['p']);
+  } finally { await h.manager.close(); }
+});
 test('SSH quotes paths and arguments, never uses remote cwd locally; host injection is rejected', () => {
   let call;
   const t = createTransport({
@@ -263,6 +286,32 @@ test('CLI spawns once per turn and ACP keeps fs capabilities local disabled', as
   assert.equal(h.processes[2].r.host, B.host);
   await h.manager.close();
 });
+/* Rodada 2 da leva 5i (achado 5): o Droid no servidor subia sem as variaveis do registro do ACP (DROID_DISABLE_AUTO_UPDATE e
+   FACTORY_DROID_AUTO_UPDATE_ENABLED, que o acp.js aplica no PC): ele se atualizava no meio da sessao. Agora o comando remoto leva "env NOME=valor". */
+test('ACP no servidor: o ambiente do registro (so o Droid) vai na frente do comando por "env", com as aspas de sempre; os outros comandos nao mudam (rodada 2 da leva 5i)', async () => {
+  const comando = async (model) => {
+    const h = harness();
+    await h.manager.start('acp', { engine: 'acp', remoto: A, model });
+    const spawn = h.processes[0];
+    await h.manager.close();
+    return { cmd: spawn.cmd, cwd: spawn.cwd, verificou: h.runs.map((r) => r.cmd).filter((c) => c.includes('command -v')) };
+  };
+  const droid = await comando('droid exec --output-format acp-daemon');
+  assert.equal(droid.cmd, "exec 'env' 'DROID_DISABLE_AUTO_UPDATE=true' 'FACTORY_DROID_AUTO_UPDATE_ENABLED=false' 'droid' 'exec' '--output-format' 'acp-daemon'");
+  assert.deepEqual(droid.verificou, ["command -v 'droid' >/dev/null"], 'a conferencia do programa nao leva o env');
+  // espacos a mais no comando guardado no painel: e o mesmo preset
+  assert.equal((await comando('  droid   exec --output-format acp-daemon ')).cmd, droid.cmd);
+  // as outras IAs do registro (sem variavel), o Gemini de sempre e um comando digitado a mao: exatamente como antes
+  assert.equal((await comando('opencode acp')).cmd, "exec 'opencode' 'acp'");
+  assert.equal((await comando('gemini --acp')).cmd, "exec 'gemini' '--acp'");
+  assert.equal((await comando('')).cmd, "exec 'gemini' '--acp'", 'sem comando guardado: o padrao');
+  assert.equal((await comando('meu-agente --acp --x')).cmd, "exec 'meu-agente' '--acp' '--x'");
+  // um comando parecido com o do Droid, mas que nao e o do registro, nao ganha o ambiente dele
+  assert.equal((await comando('droid exec --output-format acp-daemon --extra')).cmd, "exec 'droid' 'exec' '--output-format' 'acp-daemon' '--extra'");
+  // o env nunca fica solto: cada palavra e uma palavra entre aspas simples (o valor e o nome vem da tabela fixa)
+  assert.match(droid.cmd, /^exec 'env'( '[A-Z_]+=[^']*')+ 'droid'/);
+});
+
 test('session cache persists independently per destination and engine, never opens remote paths locally', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-cache-'));
   try {

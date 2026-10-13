@@ -122,6 +122,7 @@ function lerResposta(out, recados) {
   if (s.includes('COCKPIT_SEM_NODE')) return { error: 'O servidor precisa de Node.js para validar perfis. Use o terminal para entrar na conta.' };
   if (s.includes('COCKPIT_EXPIRADA')) return { error: 'A credencial guardada expirou e não pode ser renovada. Entre novamente.' };
   if (s.includes('COCKPIT_APELIDO_USADO')) return { error: 'Esse apelido já pertence a outra conta. Escolha outro apelido.' };
+  if (s.includes('COCKPIT_TROCA_NAO_CONFIRMADA')) return { error: 'Não consegui confirmar a troca no servidor: outro processo alterou a credencial ativa. Feche o terminal que usa essa conta e tente novamente.' };
   if (s.includes('COCKPIT_ERRO_OPERACAO')) return { error: 'Não foi possível concluir a operação nos arquivos da conta do servidor.' };
   for (const [chave, frase] of Object.entries(recados || {})) {
     if (s.includes(chave)) return { error: frase };
